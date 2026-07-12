@@ -1,0 +1,47 @@
+# IMANI SUPERDEALER - full stack (app + MySQL).
+# Usage:
+#   export JWT_SECRET=$(openssl rand -hex 32)
+#   docker compose up --build
+# The app runs pending DB migrations automatically on boot (server/db/migrations).
+
+services:
+  db:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: imani_superdealer
+      MYSQL_USER: imani
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-imani_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_DRIVER: mysql
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_USER: imani
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-imani_pass}
+      MYSQL_DATABASE: imani_superdealer
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a long random string}
+      SEED_SA_PASS: ${SEED_SA_PASS:-imani123}
+      SEED_OM_PASS: ${SEED_OM_PASS:-imani123}
+      SEED_MD_PASS: ${SEED_MD_PASS:-imani123}
+    ports:
+      - "3000:3000"
+
+volumes:
+  db_data:

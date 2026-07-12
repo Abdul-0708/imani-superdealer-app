@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "imani",
+      "runtimeExecutable": "C:\\Crdb-tracker-app\\.node\\node-v20.18.0-win-x64\\node.exe",
+      "runtimeArgs": ["server/index.js"],
+      "port": 3000
+    }
+  ]
+}
