@@ -1,0 +1,16 @@
+# IMANI SUPERDEALER - Apache config for shared hosting (cPanel)
+
+# Block direct download of config / library sources
+<FilesMatch "\.(local\.php|sample\.php)$">
+  Require all denied
+</FilesMatch>
+
+# No directory listings
+Options -Indexes
+
+# Sensible security headers
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "same-origin"
+</IfModule>

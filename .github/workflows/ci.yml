@@ -2,31 +2,33 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 jobs:
-  test:
-    name: Validate + smoke tests
+  php-lint:
+    name: PHP syntax check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: shivammathur/setup-php@v2
         with:
-          node-version: "20"
-          cache: npm
-      - run: npm ci
-      - run: npm test   # validate + 90+ smoke assertions (file driver, no MySQL needed)
+          php-version: "8.2"
+          extensions: pdo_mysql
+      - name: Lint all PHP files
+        run: |
+          set -e
+          find public_html -name "*.php" -print0 | xargs -0 -n1 php -l
 
-  mysql-validation:
-    name: MySQL integration
+  mysql-integration:
+    name: Boot against MySQL
     runs-on: ubuntu-latest
     services:
       mysql:
         image: mysql:8
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: imani_superdealer
+          MYSQL_DATABASE: imani
         ports:
           - 3306:3306
         options: >-
@@ -34,24 +36,26 @@ jobs:
           --health-interval=10s --health-timeout=5s --health-retries=12
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: shivammathur/setup-php@v2
         with:
-          node-version: "20"
-          cache: npm
-      - run: npm ci
-      - name: Migrate + validate against MySQL
-        run: node scripts/validate-mysql.js
+          php-version: "8.2"
+          extensions: pdo_mysql
+      - name: Serve and smoke-test the API
         env:
-          MYSQL_HOST: 127.0.0.1
-          MYSQL_PORT: "3306"
-          MYSQL_USER: root
-          MYSQL_PASSWORD: root
-          MYSQL_DATABASE: imani_superdealer
-
-  docker-build:
-    name: Docker image builds
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build production image
-        run: docker build -t imani-superdealer:ci .
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_NAME: imani
+          DB_USER: root
+          DB_PASS: root
+        run: |
+          php -S 127.0.0.1:8080 -t public_html &
+          sleep 2
+          # health (also creates schema + seeds)
+          curl -sf "http://127.0.0.1:8080/api.php?action=health" | grep '"ok":true'
+          # login as seeded superadmin
+          curl -sf -c /tmp/cj -H "Content-Type: application/json" \
+            -d '{"username":"superadmin","password":"imani123"}' \
+            "http://127.0.0.1:8080/api.php?action=login" | grep '"superadmin"'
+          # authenticated call
+          curl -sf -b /tmp/cj "http://127.0.0.1:8080/api.php?action=months" | grep '"open"'
+          echo "API smoke OK"

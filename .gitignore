@@ -1,16 +1,7 @@
-# Dependencies
-node_modules/
+# Local secrets - real DB credentials live only on the server
+public_html/lib/config.local.php
 
-# Local dev database (file driver) + generated dev secret
-data/
-!data/.gitkeep
-
-# Environment / secrets
-.env
-.env.local
-*.local
-
-# Temporary MySQL validation data (portable server)
+# Local dev MySQL data (portable MariaDB used for testing)
 .mdb/
 
 # Logs / OS
