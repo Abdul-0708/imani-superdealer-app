@@ -16,7 +16,8 @@ KPI, agent-management and commission-intelligence platform for a super-dealer ne
 | **Weekly upload** | Excel parsed in the browser; a BDO/Officer column links each row automatically (new BDOs get accounts); rows without one go to Unassigned. |
 | **Month lifecycle** | OM can **open a new month for BDOs while the previous month waits for its final commission**. Statuses: OPEN → AWAITING → CLOSED. |
 | **Commission** | OM uploads the special commission Excel before closing the month → Calculate (SERVED-only total, 30% fixed / 70% variable, achievement release table) → **Close month** (served agents carry forward as next month's PRIORITY base). |
-| **BDO serving** | BDOs log in on their phones, see their priority-ordered base, and serve agents (Visit/APK YES-NO). Serving goes into the currently OPEN month. |
+| **BDO KPI marking** | BDOs see their priority-ordered base and mark each agent's KPIs for the OPEN month: **Served, Visit, APK, Active**. Each mark credits the BDO who did it. A KPI already done by ANY BDO shows who did it and is locked — nobody can repeat it. |
+| **BDO targets & weighted scores** | OM sets each BDO's monthly target per KPI **plus a weight %** (must total 100). The BDO sees his weighted score live; OM sees a ranked table. Flags: **red below 50%**, amber 50–79%, **green "excellent" at 80%+**. |
 | **Design** | Dark fire-orange + yellow theme, sidebar navigation with glow effects, responsive for phone + desktop. |
 
 **Variable release table:** `<50% → 0 · 50–59 → 20% · 60–69 → 40% · 70–79 → 60% · 80–89 → 80% · ≥90 → 100%`

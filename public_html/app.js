@@ -226,46 +226,76 @@
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
-  /* ---------------- my base (BDO) ---------------- */
+  /* ---------------- my base (BDO): KPI chips + weighted score ---------------- */
+  var KPI_CHIPS = [
+    { key: 'served', label: 'Served' },
+    { key: 'visit', label: 'Visit' },
+    { key: 'apk', label: 'APK' },
+    { key: 'active', label: 'Active' }
+  ];
+  function flagPill(flag, score) {
+    if (score == null) return '<span class="pill dim">no targets yet</span>';
+    if (flag === 'red') return '<span class="pill bad">' + score + '% &mdash; BELOW 50</span>';
+    if (flag === 'excellent') return '<span class="pill ok">' + score + '% &mdash; EXCELLENT</span>';
+    return '<span class="pill gold">' + score + '%</span>';
+  }
+  function perfBars(kpis) {
+    return TARGET_DEFS.map(function (t) {
+      var k = kpis[t.key]; if (!k) return '';
+      var pct = k.pct == null ? 0 : k.pct;
+      var cls = k.pct == null ? '' : (k.pct < 50 ? ' red' : (k.pct >= 80 ? ' green' : ''));
+      return '<div class="tg-row"><span class="tg-ic">' + svg(t.icon) + '</span>' +
+        '<span class="tg-name">' + esc(t.label) + ' <span class="note">(' + k.weight + '%)</span></span>' +
+        '<div class="bar" style="flex:1"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
+        '<span class="tg-meta">' + fmt(k.actual) + ' / ' + fmt(k.target) + '</span>' +
+        '<span class="tg-pct">' + (k.pct == null ? '-' : k.pct + '%') + '</span></div>';
+    }).join('');
+  }
   function viewMyBase(v) {
     api('base', { qs: state.month ? '&month=' + state.month : '' }).then(function (d) {
       state.month = d.month;
+      var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var rows = (d.agents || []).map(function (a) {
-        var act = a.servedThisMonth
-          ? '<span class="pill ok">Served</span>'
-          : (can('mybase', 'e') && d.monthStatus === 'OPEN'
-            ? '<button class="btn mini" data-action="serveAgent" data-id="' + a.id + '" data-name="' + esc(a.name) + '">Serve</button>'
-            : '<span class="note">-</span>');
+        var chips = KPI_CHIPS.map(function (c) {
+          var by = a.kpi && a.kpi[c.key];
+          if (by) {
+            var mine = state.user && by === state.user.username;
+            return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(by) + '">' + esc(c.label) + ' &#10003; <small>' + esc(by) + '</small></span>';
+          }
+          return editable
+            ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(c.label) + '</button>'
+            : '<span class="kchip off">' + esc(c.label) + '</span>';
+        }).join('');
         var lv = a.level === 'priority' ? 'Priority' : a.level === 'new' ? 'New' : 'Never';
         var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
         return '<tr><td><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
-          '<td>' + esc(a.name) + '</td><td>' + esc(a.acc) + '</td><td>' + esc(a.branch || '-') + '</td><td>' + act + '</td></tr>';
-      }).join('') || '<tr><td colspan="5">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
+          '<td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td>' + esc(a.branch || '-') + '</td><td><div class="kchips">' + chips + '</div></td></tr>';
+      }).join('') || '<tr><td colspan="4">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
+
+      var perfPanel = d.performance
+        ? '<div class="panel"><h2>' + svg('percent') + 'My Performance ' + flagPill(d.performance.flag, d.performance.score) + '</h2>' +
+          perfBars(d.performance.kpis) + '</div>'
+        : '<div class="panel"><div class="note">Your OM has not set your targets for ' + esc(d.month) + ' yet - your weighted score will appear here.</div></div>';
+
       v.innerHTML =
         '<h1 class="page-title">My Agent Base</h1><p class="page-sub">' + esc(d.month) +
-        ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span></p>' +
+        ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
+        ' &middot; tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' +
         card('flame', 'Priority', fmt(d.counts.priority), 'served last month') +
         card('users', 'New', fmt(d.counts.newAgents)) +
         card('users', 'Total Base', fmt(d.counts.total)) +
-        card('check', 'Served This Month', fmt(d.counts.served)) +
-        '</div>' +
-        '<div class="panel"><h2>' + svg('phone') + 'Agents</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Name</th><th>Account</th><th>Branch</th><th>Action</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        card('check', 'My Served', fmt(d.counts.served)) +
+        '</div>' + perfPanel +
+        '<div class="panel"><h2>' + svg('phone') + 'Agents &mdash; mark KPIs</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
-  function serveModal(id, name) {
-    openModal('<h2>Serve ' + esc(name) + '</h2>' +
-      '<div class="field"><label>Agent Visit (ODK)</label><select id="svOdk"><option value="YES">YES</option><option value="NO">NO</option></select></div>' +
-      '<div class="field"><label>APK Update</label><select id="svApk"><option value="YES">YES</option><option value="NO">NO</option></select></div>' +
-      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
-      '<button class="ghost" data-action="closeModal">Cancel</button>' +
-      '<button class="btn" data-action="confirmServe" data-id="' + id + '">Confirm served</button></div>');
-  }
-  function confirmServe(id) {
-    api('serve', { body: { agentId: Number(id), odk: elById('svOdk').value, apk: elById('svApk').value } })
-      .then(function () { closeModal(); toast('Agent served', 'ok'); renderTab(); })
-      .catch(function (e) { toast(e.message, 'err'); });
+  function kpiMark(id, kpi, name) {
+    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi } })
+      .then(function () { toast(name + ': ' + kpi + ' marked - counted for you', 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); renderTab(); });
   }
 
   /* ---------------- weekly upload ---------------- */
@@ -324,12 +354,66 @@
     return s;
   }
 
-  /* ---------------- targets (typed) ---------------- */
+  /* ---------------- targets (typed) + per-BDO targets & weights ---------------- */
+  var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15 };
+  function bdoTargetsPanel(bt) {
+    var m = bt.month;
+    var byBdo = {};
+    (bt.targets || []).forEach(function (t) { byBdo[t.bdo] = t; });
+    var sel = state._btBdo && bt.bdos.some(function (b) { return b.username === state._btBdo; }) ? state._btBdo : (bt.bdos[0] ? bt.bdos[0].username : '');
+    state._btBdo = sel;
+    var t = byBdo[sel] || {};
+    var opts = bt.bdos.map(function (b) {
+      return '<option value="' + esc(b.username) + '"' + (b.username === sel ? ' selected' : '') + '>' + esc(b.name) + (byBdo[b.username] ? ' ✓' : '') + '</option>';
+    }).join('');
+    var rows = TARGET_DEFS.map(function (td) {
+      var col = td.key;
+      var tv = t[col + '_target'], wv = t[col + '_w'];
+      return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
+        '<span class="tg-name">' + esc(td.label) + '</span>' +
+        '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
+        '<div class="field"><label>Weight %</label><input id="btw_' + col + '" type="number" min="0" max="100" style="width:90px" class="bt-w" value="' + (wv != null ? esc(wv) : DEFAULT_W[col]) + '"></div>' +
+        '<span class="note" style="flex:1">' + esc(td.hint) + '</span></div>';
+    }).join('');
+    return '<div class="panel"><h2>' + svg('users') + 'BDO Targets &amp; KPI Weights &mdash; ' + esc(m) + '</h2>' +
+      '<p class="note">Set each BDO\'s monthly target per KPI and how much each KPI weighs in his score. Weights must total <b>100%</b>. Score flags: <span class="pill bad">below 50%</span> <span class="pill gold">50-79%</span> <span class="pill ok">80%+ excellent</span></p>' +
+      '<div class="row" style="margin:10px 0 4px"><div class="field"><label>BDO</label><select id="btBdo">' + opts + '</select></div>' +
+      '<div class="spacer"></div><span class="note">Weights total: <b id="btSum">?</b>%</span>' +
+      (can('targets', 'e') ? '<button class="btn" data-action="btSave">Save BDO targets</button>' : '') + '</div>' +
+      rows + '</div>';
+  }
+  function bdoPerfPanel(perf) {
+    var rows = (perf.rows || []).map(function (r) {
+      var mini = TARGET_DEFS.map(function (t) {
+        var k = r.kpis[t.key];
+        var cls = !k || k.pct == null ? 'dim' : (k.pct < 50 ? 'bad' : (k.pct >= 80 ? 'ok' : 'gold'));
+        return '<span class="pill ' + cls + '" title="' + esc(t.label) + ': ' + (k ? fmt(k.actual) + '/' + fmt(k.target) : '-') + '">' + esc(t.label.split(' ')[0]) + ' ' + (k && k.pct != null ? k.pct + '%' : '-') + '</span>';
+      }).join(' ');
+      return '<tr><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td><td><div class="kchips">' + mini + '</div></td></tr>';
+    }).join('') || '<tr><td colspan="3" class="note">No BDO targets set for this month yet.</td></tr>';
+    return '<div class="panel"><h2>' + svg('percent') + 'BDO Performance &mdash; ' + esc(perf.month) + '</h2>' +
+      '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Weighted Score</th><th>Per-KPI</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
+  function btSave() {
+    var body = { month: elById('tgMonth') ? elById('tgMonth').value : (state.month || state.openMonth), bdo: elById('btBdo').value };
+    TARGET_DEFS.forEach(function (td) { body[td.key] = elById('bt_' + td.key).value; body[td.key + '_w'] = elById('btw_' + td.key).value; });
+    api('bdo_targets_save', { body: body })
+      .then(function () { toast('Targets & weights saved for ' + body.bdo, 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function btUpdateSum() {
+    var s = 0;
+    TARGET_DEFS.forEach(function (td) { var el = elById('btw_' + td.key); if (el) s += Number(el.value) || 0; });
+    var el = elById('btSum');
+    if (el) { el.textContent = s; el.style.color = s === 100 ? 'var(--ok)' : 'var(--bad)'; }
+  }
   function viewTargets(v) {
-    api('targets_get').then(function (list) {
+    var m0 = state.month || state.openMonth || curMonth();
+    Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 }), api('bdo_performance', { qs: '&month=' + m0 })]).then(function (rr) {
+      var list = rr[0], bt = rr[1], perf = rr[2];
       var byMonth = {};
       list.forEach(function (t) { byMonth[t.month] = t; });
-      var m = state.month || state.openMonth || curMonth();
+      var m = m0;
       var t = byMonth[m] || {};
       var fields = TARGET_DEFS.map(function (td) {
         var val = t[td.key === 'float' ? 'float_target' : td.key + '_target'];
@@ -348,7 +432,10 @@
         '<button class="ghost" data-action="tgLoad">Load month</button><div class="spacer"></div>' +
         (can('targets', 'e') ? '<button class="btn" data-action="tgSave">Save targets</button>' : '<span class="note">View only.</span>') + '</div>' +
         fields + '</div>' +
-        '<div class="panel"><h2>' + svg('cal') + 'Saved Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+        bdoTargetsPanel(bt) +
+        bdoPerfPanel(perf) +
+        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+      btUpdateSum();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function tgSave() {
@@ -576,8 +663,8 @@
     if (a === 'agentClear') { state._agentSearch = ''; state.agentPage = 1; renderTab(); return; }
     if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); renderTab(); return; }
     if (a === 'nextPage') { state.agentPage = (state.agentPage || 1) + 1; renderTab(); return; }
-    if (a === 'serveAgent') { serveModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
-    if (a === 'confirmServe') { confirmServe(node.getAttribute('data-id')); return; }
+    if (a === 'kpiMark') { kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name')); return; }
+    if (a === 'btSave') { btSave(); return; }
     if (a === 'doUpload') { doUpload(); return; }
     if (a === 'loadDemo') { loadDemo(); return; }
     if (a === 'tgLoad') { state.month = elById('tgMonth').value; renderTab(); return; }
@@ -618,7 +705,11 @@
   }
   function onChange(e) {
     var n = e.target;
-    if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') uPatch(n.getAttribute('data-id'), { role: n.value });
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
+    if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
+  }
+  function onInput(e) {
+    if (e.target && e.target.classList && e.target.classList.contains('bt-w')) btUpdateSum();
   }
   function onSubmit(e) {
     if (e.target && e.target.id === 'loginForm') { e.preventDefault(); doLogin(); }
@@ -627,6 +718,7 @@
 
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
+  document.addEventListener('input', onInput);
   document.addEventListener('submit', onSubmit);
   document.addEventListener('keydown', onKeydown);
   boot();

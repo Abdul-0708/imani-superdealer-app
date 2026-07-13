@@ -238,15 +238,7 @@ try {
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
 
       $tot = (int)db()->query('SELECT COUNT(*) c FROM agents')->fetch()['c'];
-      $st = db()->prepare('SELECT
-          COUNT(DISTINCT CASE WHEN served_status="SERVED" THEN agent_id END) served,
-          COALESCE(SUM(float_served),0) float_sum,
-          SUM(odk="YES") visits,
-          SUM(apk="YES") apk,
-          COUNT(DISTINCT CASE WHEN activeness LIKE "Active%" THEN agent_id END) active
-        FROM service_history WHERE month = ?');
-      $st->execute(array($month));
-      $a = $st->fetch();
+      $a = month_actuals($month);
 
       $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
       $tg->execute(array($month));
@@ -254,11 +246,11 @@ try {
 
       $att = array(); $sum = 0; $nn = 0;
       $pairs = array(
-        'serving' => array((int)$a['served'], $t ? (int)$t['serving_target'] : 0),
-        'float' => array((float)$a['float_sum'], $t ? (int)$t['float_target'] : 0),
-        'visits' => array((int)$a['visits'], $t ? (int)$t['visits_target'] : 0),
-        'apk' => array((int)$a['apk'], $t ? (int)$t['apk_target'] : 0),
-        'activeness' => array((int)$a['active'], $t ? (int)$t['activeness_target'] : 0),
+        'serving' => array($a['served'], $t ? (int)$t['serving_target'] : 0),
+        'float' => array($a['float'], $t ? (int)$t['float_target'] : 0),
+        'visits' => array($a['visit'], $t ? (int)$t['visits_target'] : 0),
+        'apk' => array($a['apk'], $t ? (int)$t['apk_target'] : 0),
+        'activeness' => array($a['active'], $t ? (int)$t['activeness_target'] : 0),
       );
       foreach ($pairs as $k => $p) {
         $pct = $p[1] > 0 ? min(100, round($p[0] / $p[1] * 100)) : null;
@@ -317,15 +309,25 @@ try {
       }
       $ever = array();
       foreach (db()->query('SELECT DISTINCT agent_id FROM service_history WHERE served_status = "SERVED"')->fetchAll() as $r) $ever[$r['agent_id']] = true;
-      $sv = db()->prepare('SELECT DISTINCT agent_id FROM service_history WHERE month = ? AND bdo = ? AND served_status = "SERVED"');
-      $sv->execute(array($month, $bdo));
-      $servedNow = array();
-      foreach ($sv->fetchAll() as $r) $servedNow[$r['agent_id']] = true;
+
+      /* Shared KPI state for these agents this month: kpi => {bdo} - visible to
+       * every BDO so nobody repeats work already done by a colleague. */
+      $kpiMap = array(); $servedNow = 0;
+      if ($ids) {
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq->execute(array_merge(array($month), $ids));
+        foreach ($kq->fetchAll() as $r) {
+          if (!isset($kpiMap[$r['agent_id']])) $kpiMap[$r['agent_id']] = array();
+          $kpiMap[$r['agent_id']][$r['kpi']] = $r['bdo'];
+          if ($r['kpi'] === 'served' && $r['bdo'] === $bdo) $servedNow++;
+        }
+      }
 
       foreach ($agents as &$a) {
         $id = (int)$a['id'];
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
-        $a['servedThisMonth'] = isset($servedNow[$id]);
+        $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
       }
       unset($a);
       $order = array('priority'=>0,'new'=>1,'never'=>2);
@@ -334,28 +336,53 @@ try {
         return strcmp($x['name'], $y['name']);
       });
 
+      /* This BDO's weighted performance for the month (if OM set his targets). */
+      $perf = null;
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      $tq->execute(array($month, $bdo));
+      if ($t = $tq->fetch()) $perf = bdo_score(bdo_actuals($month, $bdo), $t);
+
       respond(array(
         'bdo' => $bdo, 'month' => $month, 'monthStatus' => month_status($month),
-        'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)), 'total' => count($ids), 'served' => count($servedNow)),
-        'agents' => $agents,
+        'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)), 'total' => count($ids), 'served' => $servedNow),
+        'agents' => $agents, 'performance' => $perf,
       ));
     }
 
-    case 'serve': {
+    /*
+     * BDO marks ONE KPI on an agent for the currently OPEN month:
+     *   served (NOT_SERVED -> SERVED), visit (NO -> YES), apk (NO -> YES),
+     *   active (Inactive -> Active).
+     * The unique ledger row means the FIRST BDO gets the credit; anyone else is
+     * blocked and told who already did it.
+     */
+    case 'kpi_mark': {
       $u = require_auth(); require_perm($u, 'mybase', 'e');
       $agentId = (int)bval('agentId');
-      $month = open_month(); // serving always goes into the currently OPEN month
+      $kpi = (string)bval('kpi');
+      if (!in_array($kpi, array('served', 'visit', 'apk', 'active'), true)) fail('Unknown KPI');
+      $month = open_month();
       $ag = db()->prepare('SELECT * FROM agents WHERE id = ?');
       $ag->execute(array($agentId));
       if (!$ag->fetch()) fail('Agent not found', 404);
       $bdo = $u['username'];
-      db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, odk, apk, activeness, served_status, source)
-                     VALUES (?,?,?,?,?,?,?,?, "SERVED", "bdo")')
-          ->execute(array($agentId, $bdo, $month, date('Y-m-d'), date('H:i'),
-                          bval('odk') === 'YES' ? 'YES' : 'NO', bval('apk') === 'YES' ? 'YES' : 'NO', 'Active'));
+
+      /* already done by someone? */
+      $chk = db()->prepare('SELECT bdo, at FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
+      $chk->execute(array($month, $agentId, $kpi));
+      if ($done = $chk->fetch()) {
+        fail('Already done by ' . $done['bdo'] . ' on ' . substr($done['at'], 0, 16) . ' - no need to repeat', 409);
+      }
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)')
+          ->execute(array($month, $agentId, $kpi, $bdo));
+      if ($kpi === 'served') {
+        db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, served_status, source)
+                       VALUES (?,?,?,?,?, "SERVED", "bdo")')
+            ->execute(array($agentId, $bdo, $month, date('Y-m-d'), date('H:i')));
+      }
       db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
-      audit($u['id'], 'serve', $bdo . ' agent=' . $agentId . ' ' . $month);
-      respond(array('ok' => true, 'month' => $month));
+      audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
+      respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo));
     }
 
     /* ================= WEEKLY UPLOAD (rows parsed in the browser) ================= */
@@ -386,6 +413,7 @@ try {
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly")');
       $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
+      $insKpi = db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)');
 
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw);
@@ -425,6 +453,11 @@ try {
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk'], $r['float'], $r['activeness'], $r['sa'], $r['served']));
         $insBase->execute(array($month, $key, $id));
+        /* Feed the shared KPI ledger (first credit wins; duplicates ignored). */
+        if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key));
+        if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key));
+        if ($r['apk'] === 'YES') $insKpi->execute(array($month, $id, 'apk', $key));
+        if (stripos($r['activeness'], 'active') === 0) $insKpi->execute(array($month, $id, 'active', $key));
       }
       audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
@@ -451,6 +484,69 @@ try {
                           (int)num(bval('apk')), (int)num(bval('activeness'))));
       audit($u['id'], 'targets_save', $month);
       respond(array('ok' => true, 'month' => $month));
+    }
+
+    /* ================= PER-BDO TARGETS + WEIGHTED PERFORMANCE ================= */
+
+    case 'bdo_targets_get': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
+      $st->execute(array($month));
+      $rows = $st->fetchAll();
+      $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      respond(array('month' => $month, 'targets' => $rows, 'bdos' => $bdos));
+    }
+
+    /*
+     * OM sets ONE BDO's monthly targets for every KPI plus the weight % of each.
+     * Weights must add up to 100.
+     */
+    case 'bdo_targets_save': {
+      $u = require_auth(); require_perm($u, 'targets', 'e');
+      $month = (string)bval('month');
+      if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
+      $bdo = strtolower(trim((string)bval('bdo')));
+      $bq = db()->prepare('SELECT 1 FROM users WHERE username = ?');
+      $bq->execute(array($bdo));
+      if ($bdo === '' || !$bq->fetch()) fail('Choose a BDO');
+      $vals = array(); $wsum = 0;
+      foreach (array_keys(kpi_defs()) as $col) {
+        $vals[$col . '_target'] = (int)num(bval($col));
+        $w = (int)num(bval($col . '_w'));
+        $vals[$col . '_w'] = $w; $wsum += $w;
+      }
+      if ($wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%)');
+      db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
+                       serving_w, float_w, visits_w, apk_w, activeness_w)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
+                       visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
+                       serving_w=VALUES(serving_w), float_w=VALUES(float_w), visits_w=VALUES(visits_w),
+                       apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w)')
+          ->execute(array($month, $bdo, $vals['serving_target'], $vals['float_target'], $vals['visits_target'],
+                          $vals['apk_target'], $vals['activeness_target'], $vals['serving_w'], $vals['float_w'],
+                          $vals['visits_w'], $vals['apk_w'], $vals['activeness_w']));
+      audit($u['id'], 'bdo_targets_save', $month . ' ' . $bdo);
+      respond(array('ok' => true));
+    }
+
+    /* Weighted scores for every BDO with targets in the month (OM/MD view). */
+    case 'bdo_performance': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
+      $st->execute(array($month));
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $r) $names[$r['username']] = $r['name'];
+      $out = array();
+      foreach ($st->fetchAll() as $t) {
+        $s = bdo_score(bdo_actuals($month, $t['bdo']), $t);
+        $out[] = array('bdo' => $t['bdo'], 'name' => isset($names[$t['bdo']]) ? $names[$t['bdo']] : $t['bdo'],
+                       'score' => $s['score'], 'flag' => $s['flag'], 'kpis' => $s['kpis']);
+      }
+      usort($out, function ($a, $b) { return ($b['score'] ?? -1) - ($a['score'] ?? -1); });
+      respond(array('month' => $month, 'rows' => $out));
     }
 
     /* ================= COMMISSION ================= */
@@ -486,17 +582,11 @@ try {
       $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
       $tg->execute(array($month));
       if ($t = $tg->fetch()) {
-        $st = db()->prepare('SELECT
-            COUNT(DISTINCT CASE WHEN served_status="SERVED" THEN agent_id END) served,
-            COALESCE(SUM(float_served),0) f, SUM(odk="YES") v, SUM(apk="YES") ap,
-            COUNT(DISTINCT CASE WHEN activeness LIKE "Active%" THEN agent_id END) act
-          FROM service_history WHERE month = ?');
-        $st->execute(array($month));
-        $a = $st->fetch();
+        $a = month_actuals($month);
         $sum = 0; $nn = 0;
-        foreach (array(array($a['served'],$t['serving_target']), array($a['f'],$t['float_target']),
-                       array($a['v'],$t['visits_target']), array($a['ap'],$t['apk_target']),
-                       array($a['act'],$t['activeness_target'])) as $p) {
+        foreach (array(array($a['served'],$t['serving_target']), array($a['float'],$t['float_target']),
+                       array($a['visit'],$t['visits_target']), array($a['apk'],$t['apk_target']),
+                       array($a['active'],$t['activeness_target'])) as $p) {
           if ((int)$p[1] > 0) { $sum += min(100, round($p[0] / $p[1] * 100)); $nn++; }
         }
         if ($nn) $ach = round($sum / $nn);

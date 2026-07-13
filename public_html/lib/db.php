@@ -32,7 +32,8 @@ function db() {
 function ensure_schema($pdo) {
   try {
     $pdo->query('SELECT 1 FROM app_settings LIMIT 1');
-    return; // schema exists
+    upgrade_schema($pdo); // schema exists - apply any pending upgrades
+    return;
   } catch (Exception $e) { /* create below */ }
 
   $pdo->exec("
@@ -155,7 +156,62 @@ function ensure_schema($pdo) {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
 
+  $pdo->exec(schema_v2_ddl());
   seed($pdo);
+}
+
+/*
+ * Agent-month KPI ledger + per-BDO weighted targets (schema v2).
+ * agent_month_kpi: ONE row per agent+KPI+month - the first BDO to do a KPI owns
+ * the credit, and the unique key blocks every other BDO from repeating it.
+ */
+function schema_v2_ddl() {
+  return "
+  CREATE TABLE IF NOT EXISTS agent_month_kpi (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    kpi VARCHAR(12) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_amk (month, agent_id, kpi),
+    INDEX idx_amk_bdo (month, bdo, kpi)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS bdo_targets (
+    month CHAR(7) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    serving_target BIGINT NOT NULL DEFAULT 0,
+    float_target BIGINT NOT NULL DEFAULT 0,
+    visits_target BIGINT NOT NULL DEFAULT 0,
+    apk_target BIGINT NOT NULL DEFAULT 0,
+    activeness_target BIGINT NOT NULL DEFAULT 0,
+    serving_w INT NOT NULL DEFAULT 0,
+    float_w INT NOT NULL DEFAULT 0,
+    visits_w INT NOT NULL DEFAULT 0,
+    apk_w INT NOT NULL DEFAULT 0,
+    activeness_w INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (month, bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ";
+}
+
+function upgrade_schema($pdo) {
+  $r = $pdo->query('SELECT value FROM app_settings WHERE name = "schema_version"')->fetch();
+  $ver = $r ? (int)$r['value'] : 1;
+  if ($ver < 2) {
+    $pdo->exec(schema_v2_ddl());
+    /* Back-fill the KPI ledger from existing service history (first event wins). */
+    $pdo->exec('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo)
+                SELECT month, agent_id, "served", bdo FROM service_history WHERE served_status = "SERVED"');
+    $pdo->exec('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo)
+                SELECT month, agent_id, "visit", bdo FROM service_history WHERE odk = "YES"');
+    $pdo->exec('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo)
+                SELECT month, agent_id, "apk", bdo FROM service_history WHERE apk = "YES"');
+    $pdo->exec('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo)
+                SELECT month, agent_id, "active", bdo FROM service_history WHERE activeness LIKE "Active%"');
+    $pdo->prepare('UPDATE app_settings SET value = "2" WHERE name = "schema_version"')->execute();
+  }
 }
 
 function seed($pdo) {
@@ -194,5 +250,5 @@ function seed($pdo) {
 
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","1")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","2")')->execute();
 }

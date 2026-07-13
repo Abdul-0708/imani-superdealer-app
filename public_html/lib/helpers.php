@@ -181,6 +181,64 @@ function parse_commission_row($row) {
   );
 }
 
+/* ---------- KPI actuals + weighted BDO scoring ---------- */
+
+/* Office-wide actuals for a month. Flag KPIs come from the shared agent_month_kpi
+ * ledger (deduplicated across BDOs); float is the sum from service history. */
+function month_actuals($month) {
+  $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? GROUP BY kpi');
+  $st->execute(array($month));
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+  $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ?');
+  $f->execute(array($month));
+  $k['float'] = (float)$f->fetch()['f'];
+  return $k;
+}
+
+/* One BDO's actuals for a month (only KPIs credited to him in the ledger). */
+function bdo_actuals($month, $bdo) {
+  $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? AND bdo = ? GROUP BY kpi');
+  $st->execute(array($month, $bdo));
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+  $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
+  $f->execute(array($month, $bdo));
+  $k['float'] = (float)$f->fetch()['f'];
+  return $k;
+}
+
+/* KPI key mapping: target/weight column prefix => actuals key */
+function kpi_defs() {
+  return array(
+    'serving' => 'served',
+    'float' => 'float',
+    'visits' => 'visit',
+    'apk' => 'apk',
+    'activeness' => 'active',
+  );
+}
+
+/*
+ * Weighted score for one BDO: per-KPI attainment (capped 100) weighted by the
+ * OM-assigned percentages. KPIs with no weight or no target are skipped and the
+ * remaining weights are renormalized. Flag: red < 50, excellent >= 80.
+ */
+function bdo_score($actuals, $t) {
+  $kpis = array(); $wsum = 0; $acc = 0;
+  foreach (kpi_defs() as $col => $ak) {
+    $target = (float)$t[$col . '_target'];
+    $w = (int)$t[$col . '_w'];
+    $actual = (float)$actuals[$ak];
+    $pct = $target > 0 ? min(100, round($actual / $target * 100)) : null;
+    $kpis[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct);
+    if ($w > 0 && $target > 0) { $acc += $pct * $w; $wsum += $w; }
+  }
+  $score = $wsum > 0 ? round($acc / $wsum) : null;
+  $flag = $score === null ? 'none' : ($score < 50 ? 'red' : ($score >= 80 ? 'excellent' : 'mid'));
+  return array('kpis' => $kpis, 'score' => $score, 'flag' => $flag);
+}
+
 /* ---------- commission math (30% fixed / 70% variable; release table) ---------- */
 
 function release_for($achievement) {
