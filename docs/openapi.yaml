@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: IMANI SUPERDEALER API
+  version: 1.2.0
+  description: >
+    RPC-style JSON API. MAPPING RULE: every path `/actions/{name}` below is called in
+    production as `GET|POST /api.php?action={name}`. Auth is a PHP session cookie
+    (IMANISESS) obtained via the login action. All errors return {"error": string}.
+servers:
+  - url: https://hardwaresupermarkets.co.tz
+    description: Production (prepend /api.php?action= per the mapping rule)
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: IMANISESS
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: string } }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { type: string, description: superadmin|md|om|bdo|custom }
+        name: { type: string }
+    PermLevels:
+      type: object
+      properties: { v: {type: boolean}, e: {type: boolean}, d: {type: boolean} }
+    Agent:
+      type: object
+      description: partner present only for callers with agents.v (full view)
+      properties:
+        id: { type: integer }
+        acc: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        branch: { type: string }
+        physical_location: { type: string }
+        partner: { type: integer, nullable: true }
+        kpi:
+          type: object
+          description: kpi name -> username who did it this month
+          additionalProperties: { type: string }
+    KpiAttainment:
+      type: object
+      properties:
+        actual: { type: number }
+        target: { type: number }
+        weight: { type: integer }
+        pct: { type: integer, nullable: true }
+    CommissionCalc:
+      type: object
+      properties:
+        servedCount: { type: integer }
+        total: { type: number }
+        fixedPool: { type: number, description: 30% of total }
+        variablePool: { type: number, description: 70% of total }
+        achievement: { type: number }
+        releasePct: { type: number, description: "<50:0 50-59:.2 60-69:.4 70-79:.6 80-89:.8 >=90:1" }
+        variablePaid: { type: number }
+        final: { type: number }
+  responses:
+    Err400: { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Err401: { description: Not signed in, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Err403: { description: No permission, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Err409: { description: Conflict (already done / duplicate), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+security:
+  - session: []
+paths:
+  /actions/health:
+    get:
+      summary: Liveness (public; also triggers schema create/upgrade)
+      security: []
+      responses:
+        '200': { description: OK }
+  /actions/login:
+    post:
+      summary: Authenticate; sets session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties: { username: {type: string}, password: {type: string} }
+      responses:
+        '200':
+          description: user + effective permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  perms:
+                    type: object
+                    additionalProperties: { $ref: '#/components/schemas/PermLevels' }
+        '401': { $ref: '#/components/responses/Err401' }
+        '429': { description: Locked out after repeated failures }
+  /actions/logout:
+    post: { summary: Destroy session, responses: { '200': { description: OK } } }
+  /actions/me:
+    get: { summary: Current user + perms, responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Err401' } } }
+  /actions/change_password:
+    post:
+      summary: Self password change (min 8 chars)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { current: {type: string}, new: {type: string} } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Err400' } }
+  /actions/dashboard:
+    get:
+      summary: Month KPIs + attainment vs office targets (dashboard.v)
+      parameters: [ { name: month, in: query, schema: { type: string, example: 2026-08 } } ]
+      responses: { '200': { description: totals + attainment + achievement }, '403': { $ref: '#/components/responses/Err403' } }
+  /actions/agents:
+    get:
+      summary: Master agent list (agents.v full; mybase.v restricted columns)
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: search, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: paginated agents + month KPI map; restricted=true for BDO callers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Agent' } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pages: { type: integer }
+                  restricted: { type: boolean }
+                  month: { type: string }
+                  monthStatus: { type: string, enum: [OPEN, AWAITING, CLOSED] }
+        '403': { $ref: '#/components/responses/Err403' }
+  /actions/base:
+    get:
+      summary: BDO working base (levels, KPI state, counts, weighted performance)
+      parameters:
+        - { name: bdo, in: query, schema: { type: string }, description: BDO callers are forced to their own }
+        - { name: month, in: query, schema: { type: string } }
+      responses: { '200': { description: base payload }, '403': { $ref: '#/components/responses/Err403' } }
+  /actions/kpi_mark:
+    post:
+      summary: Mark a KPI on an agent for the OPEN month (first BDO wins; mybase.e)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId, kpi]
+              properties:
+                agentId: { type: integer }
+                kpi: { type: string, enum: [served, visit, apk, active] }
+      responses:
+        '200': { description: credited to caller }
+        '409': { $ref: '#/components/responses/Err409' }
+  /actions/upload_weekly:
+    post:
+      summary: Ingest browser-parsed Excel rows (upload.e)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                month: { type: string }
+                week: { type: string }
+                bdo: { type: string, description: optional global assignment; row BDO column wins }
+                rows: { type: array, items: { type: object, additionalProperties: true } }
+      responses: { '200': { description: import summary incl. createdBdos }, '400': { $ref: '#/components/responses/Err400' } }
+  /actions/targets_get:
+    get: { summary: Office targets history (targets.v), responses: { '200': { description: OK } } }
+  /actions/targets_save:
+    post:
+      summary: Save typed office targets (targets.e)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                month: { type: string }
+                serving: { type: number }
+                float: { type: number }
+                visits: { type: number }
+                apk: { type: number }
+                activeness: { type: number }
+      responses: { '200': { description: OK } }
+  /actions/bdo_targets_get:
+    get:
+      summary: Per-BDO targets + weights for a month (targets.v)
+      parameters: [ { name: month, in: query, schema: { type: string } } ]
+      responses: { '200': { description: targets rows + bdo list } }
+  /actions/bdo_targets_save:
+    post:
+      summary: Save one BDO's targets + KPI weights; weights must total 100 (targets.e)
+      responses: { '200': { description: OK }, '400': { description: weights must add up to 100% } }
+  /actions/bdo_performance:
+    get:
+      summary: Weighted scores + flags (red<50, excellent>=80) for all BDOs (targets.v)
+      parameters: [ { name: month, in: query, schema: { type: string } } ]
+      responses:
+        '200':
+          description: ranked rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  month: { type: string }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        bdo: { type: string }
+                        name: { type: string }
+                        score: { type: integer, nullable: true }
+                        flag: { type: string, enum: [red, mid, excellent, none] }
+                        kpis:
+                          type: object
+                          additionalProperties: { $ref: '#/components/schemas/KpiAttainment' }
+  /actions/months:
+    get: { summary: Month list + statuses + current OPEN, responses: { '200': { description: OK } } }
+  /actions/month_open:
+    post: { summary: Open next month; current OPEN becomes AWAITING (commission.e), responses: { '200': { description: OK } } }
+  /actions/month_close:
+    post:
+      summary: Close month (requires saved calc); carries served agents as next month priority (commission.e)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { month: { type: string } } }
+      responses: { '200': { description: closed + carried count }, '400': { $ref: '#/components/responses/Err400' } }
+  /actions/commission_upload:
+    post:
+      summary: Store final commission rows for a month; replaces previous (commission.e)
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Err400' } }
+  /actions/commission_get:
+    get:
+      summary: Uploaded row counts, saved calc, suggested achievement (commission.v)
+      parameters: [ { name: month, in: query, schema: { type: string } } ]
+      responses: { '200': { description: OK } }
+  /actions/commission_calc:
+    post:
+      summary: Compute + save commission (SERVED-only, 30/70, release table) (commission.e)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { month: {type: string}, achievement: {type: number} } }
+      responses:
+        '200':
+          description: saved calculation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  calc: { $ref: '#/components/schemas/CommissionCalc' }
+  /actions/admin_meta:
+    get: { summary: Modules + roles (admin.v), responses: { '200': { description: OK } } }
+  /actions/admin_perms:
+    get: { summary: Full permission matrix (admin.v), responses: { '200': { description: OK } } }
+  /actions/admin_perms_save:
+    post: { summary: Save permission matrix (admin.e; superadmin stays full), responses: { '200': { description: OK } } }
+  /actions/admin_role_add:
+    post: { summary: Create custom role (admin.e), responses: { '200': { description: OK } } }
+  /actions/admin_users:
+    get: { summary: List members (admin.v), responses: { '200': { description: OK } } }
+  /actions/admin_user_add:
+    post: { summary: Create member with role + password (admin.e), responses: { '200': { description: OK }, '409': { $ref: '#/components/responses/Err409' } } }
+  /actions/admin_user_update:
+    post: { summary: Update member (role/station/active/password) (admin.e), responses: { '200': { description: OK } } }
+  /actions/admin_user_delete:
+    post: { summary: Delete member (admin.d; superadmin protected), responses: { '200': { description: OK } } }
+  /actions/admin_audit:
+    get: { summary: Last 100 audit entries (admin.v), responses: { '200': { description: OK } } }

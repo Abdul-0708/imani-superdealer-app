@@ -5,6 +5,9 @@ KPI, agent-management and commission-intelligence platform for a super-dealer ne
 
 > The earlier Node.js version is preserved on the [`node-legacy`](../../tree/node-legacy) branch.
 
+> 📚 **Full documentation suite** (PRD, BRD, system design, database, API/OpenAPI, security & RBAC,
+> NFR, test plan, deployment, user/admin manuals, risks & decisions, changelog): **[docs/](docs/)**
+
 ---
 
 ## Features
