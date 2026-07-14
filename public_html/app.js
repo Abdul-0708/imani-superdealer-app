@@ -94,7 +94,7 @@
   }
   function defaultTab() {
     if (state.user && state.user.role === 'superadmin') return 'admin';
-    var t = MODULES.filter(function (m) { return can(m.key, 'v'); });
+    var t = visibleModules();
     return t.length ? t[0].key : 'dashboard';
   }
   function render() {
@@ -115,8 +115,16 @@
       '</form></div></div>';
     var f = elById('lUser'); if (f) f.focus();
   }
+  /* Which tabs the user sees. BDOs get the Agents tab too (restricted columns,
+   * enforced by the server) so the uploaded list is visible to everyone. */
+  function visibleModules() {
+    return MODULES.filter(function (m) {
+      if (can(m.key, 'v')) return true;
+      return m.key === 'agents' && can('mybase', 'v');
+    });
+  }
   function renderShell() {
-    var tabs = MODULES.filter(function (m) { return can(m.key, 'v'); });
+    var tabs = visibleModules();
     if (!tabs.some(function (m) { return m.key === state.tab; })) state.tab = tabs.length ? tabs[0].key : 'dashboard';
     var nav = tabs.map(function (m) {
       return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' + svg(m.icon) + '<span>' + esc(m.label) + '</span></button>';
@@ -205,24 +213,32 @@
   }
   function errBox(e) { return '<div class="panel"><div class="err">' + esc(e.message || String(e)) + '</div></div>'; }
 
-  /* ---------------- agents ---------------- */
+  /* ---------------- agents (all roles; BDOs get restricted columns) ---------------- */
   function viewAgents(v) {
     var qs = '&page=' + (state.agentPage || 1) + (state._agentSearch ? '&search=' + encodeURIComponent(state._agentSearch) : '');
     api('agents', { qs: qs }).then(function (d) {
+      var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
+      var cols = 6 + (d.restricted ? 0 : 1);
       var rows = (d.items || []).map(function (a) {
-        return '<tr><td>' + esc(a.acc) + '</td><td>' + esc(a.name) + '</td><td>' + esc(a.phone) + '</td><td>' + esc(a.branch) + '</td>' +
-          '<td>' + esc(a.physical_location || '-') + '</td><td>' + (Number(a.partner) ? 'Yes' : '-') + '</td></tr>';
-      }).join('') || '<tr><td colspan="6">' + emptyState('users', 'No agents yet', 'Import a weekly file to add agents.') + '</td></tr>';
+        return '<tr><td>' + esc(a.acc) + '</td><td>' + esc(a.name) + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
+          '<td>' + esc(a.physical_location || '-') + '</td>' +
+          '<td><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
+          (d.restricted ? '' : '<td>' + (Number(a.partner) ? 'Yes' : '-') + '</td>') + '</tr>';
+      }).join('') || '<tr><td colspan="' + cols + '">' + emptyState('users', 'No agents yet', 'The OM uploads the agent performance file.') + '</td></tr>';
       var pager = d.pages > 1
         ? '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" data-action="prevPage"' + (d.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
           '<div class="note">Page ' + d.page + ' of ' + d.pages + '</div>' +
           '<button class="ghost" data-action="nextPage"' + (d.page >= d.pages ? ' disabled' : '') + '>Next</button></div>' : '';
+      var sub = d.restricted
+        ? fmt(d.total) + ' agents &middot; ' + esc(d.month) + ' KPI status &mdash; a KPI already done shows who did it, so nobody repeats it'
+        : fmt(d.total) + ' agents in the master list &middot; ' + esc(d.month) + ' KPI status';
       v.innerHTML =
-        '<h1 class="page-title">Agents</h1><p class="page-sub">' + fmt(d.total) + ' agents in the master list</p>' +
+        '<h1 class="page-title">' + (d.restricted ? 'All Agents' : 'Agents') + '</h1><p class="page-sub">' + sub + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Search</label><input id="agentSearch" placeholder="name, account, phone" value="' + esc(state._agentSearch || '') + '"></div>' +
         '<button class="btn" data-action="agentSearch">Search</button>' +
         '<button class="ghost" data-action="agentClear">Clear</button></div></div>' +
-        '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Location</th><th>Partner</th></tr></thead><tbody>' + rows + '</tbody></table></div>' + pager + '</div>';
+        '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs (Served / Visit / APK / Active)</th>' +
+        (d.restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager + '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -251,21 +267,25 @@
         '<span class="tg-pct">' + (k.pct == null ? '-' : k.pct + '%') + '</span></div>';
     }).join('');
   }
+  /* KPI chips for one agent: done -> who did it (locked); open -> markable. */
+  function kpiChips(a, editable) {
+    return KPI_CHIPS.map(function (c) {
+      var by = a.kpi && a.kpi[c.key];
+      if (by) {
+        var mine = state.user && by === state.user.username;
+        return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(by) + '">' + esc(c.label) + ' &#10003; <small>' + esc(by) + '</small></span>';
+      }
+      return editable
+        ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(c.label) + '</button>'
+        : '<span class="kchip off">' + esc(c.label) + '</span>';
+    }).join('');
+  }
   function viewMyBase(v) {
     api('base', { qs: state.month ? '&month=' + state.month : '' }).then(function (d) {
       state.month = d.month;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var rows = (d.agents || []).map(function (a) {
-        var chips = KPI_CHIPS.map(function (c) {
-          var by = a.kpi && a.kpi[c.key];
-          if (by) {
-            var mine = state.user && by === state.user.username;
-            return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(by) + '">' + esc(c.label) + ' &#10003; <small>' + esc(by) + '</small></span>';
-          }
-          return editable
-            ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(c.label) + '</button>'
-            : '<span class="kchip off">' + esc(c.label) + '</span>';
-        }).join('');
+        var chips = kpiChips(a, editable);
         var lv = a.level === 'priority' ? 'Priority' : a.level === 'new' ? 'New' : 'Never';
         var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
         return '<tr><td><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +

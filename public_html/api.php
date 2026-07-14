@@ -267,8 +267,16 @@ try {
 
     /* ================= AGENTS ================= */
 
+    /*
+     * Agent list. Full details for roles with the `agents` permission (OM/MD).
+     * BDOs (mybase permission) also get the WHOLE uploaded list - but with a
+     * restricted column set: account, name, phone, branch, physical location
+     * and the month's KPI status. Everything else is stripped server-side.
+     */
     case 'agents': {
-      $u = require_auth(); require_perm($u, 'agents', 'v');
+      $u = require_auth();
+      $full = can($u, 'agents', 'v');
+      if (!$full && !can($u, 'mybase', 'v')) fail('No access', 403);
       $search = trim((string)($_GET['search'] ?? ''));
       $page = max(1, (int)($_GET['page'] ?? 1));
       $limit = 50; $off = ($page - 1) * $limit;
@@ -282,7 +290,33 @@ try {
       $total = (int)$tot->fetch()['c'];
       $st = db()->prepare("SELECT * FROM agents $where ORDER BY name LIMIT $limit OFFSET $off");
       $st->execute($vals);
-      respond(array('items' => $st->fetchAll(), 'total' => $total, 'page' => $page, 'pages' => max(1, (int)ceil($total / $limit))));
+      $rows = $st->fetchAll();
+
+      /* Current-month KPI status for the page's agents (who did what). */
+      $month = open_month();
+      $kpiMap = array();
+      if ($rows) {
+        $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq->execute(array_merge(array($month), $ids));
+        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = $r['bdo'];
+      }
+
+      $items = array();
+      foreach ($rows as $r) {
+        $id = (int)$r['id'];
+        $base = array(
+          'id' => $id, 'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
+          'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
+          'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
+        );
+        if ($full) $base['partner'] = (int)$r['partner'];
+        $items[] = $base;
+      }
+      respond(array('items' => $items, 'total' => $total, 'page' => $page,
+                    'pages' => max(1, (int)ceil($total / $limit)),
+                    'restricted' => !$full, 'month' => $month, 'monthStatus' => month_status($month)));
     }
 
     /* ================= BDO BASE + SERVE ================= */
