@@ -153,6 +153,13 @@ tbody tr:hover{background:rgba(255,140,26,.07)}
 .kchip.done{background:rgba(143,209,79,.13);color:var(--ok);border-color:rgba(143,209,79,.35)}
 .kchip.done.mine{background:var(--grad);color:#2b1000;border-color:transparent;box-shadow:var(--glow)}
 .kchip.off{color:var(--muted);opacity:.55}
+
+/* password show/hide */
+.pwwrap{position:relative;display:flex;align-items:center}
+.pwwrap input{width:100%;padding-right:44px}
+.pweye{position:absolute;right:6px;background:transparent;border:0;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px;display:flex}
+.pweye:hover{color:var(--yellow)}
+.pweye svg{width:19px;height:19px}
 .tg-row{display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--line)}
 .tg-row:last-child{border-bottom:0}
 .tg-ic{width:34px;height:34px;border-radius:10px;background:var(--grad-soft);color:var(--fire2);display:flex;align-items:center;justify-content:center}

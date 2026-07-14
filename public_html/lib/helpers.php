@@ -10,7 +10,22 @@ function respond($data, $status = 200) {
   echo json_encode($data);
   exit;
 }
-function fail($msg, $status = 400) { respond(array('error' => $msg), $status); }
+function fail($msg, $status = 400, $extra = null) {
+  $out = array('error' => $msg);
+  if (is_array($extra)) foreach ($extra as $k => $v) $out[$k] = $v;
+  respond($out, $status);
+}
+
+function setting_get($name, $default = '') {
+  $st = db()->prepare('SELECT value FROM app_settings WHERE name = ?');
+  $st->execute(array($name));
+  $r = $st->fetch();
+  return $r ? $r['value'] : $default;
+}
+function setting_set($name, $value) {
+  db()->prepare('INSERT INTO app_settings (name, value) VALUES (?,?) ON DUPLICATE KEY UPDATE value = VALUES(value)')
+      ->execute(array($name, $value));
+}
 
 function body() {
   static $b = null;
@@ -65,8 +80,18 @@ function modules_meta() {
     array('key'=>'upload',     'label'=>'Weekly Upload'),
     array('key'=>'targets',    'label'=>'Monthly Targets'),
     array('key'=>'commission', 'label'=>'Commission & Months'),
+    array('key'=>'reports',    'label'=>'Reports & Ranks'),
     array('key'=>'admin',      'label'=>'Admin & Permissions'),
   );
+}
+
+/* Working days: '1,2,...,7' (Mon=1..Sun=7). Per-user override falls back to global. */
+function working_days_for($user) {
+  $own = isset($user['working_days']) ? trim((string)$user['working_days']) : '';
+  $csv = $own !== '' ? $own : setting_get('working_days', '1,2,3,4,5,6');
+  $out = array();
+  foreach (explode(',', $csv) as $d) { $d = (int)$d; if ($d >= 1 && $d <= 7) $out[$d] = true; }
+  return $out;
 }
 
 function perms_for_role($role) {
@@ -147,7 +172,29 @@ function num($v) {
   return $n === '' ? 0 : (float)$n;
 }
 
-function parse_weekly_row($row) {
+/*
+ * Activeness: performance files often carry one activeness column per month
+ * (e.g. "May Activeness", "June Activeness"). Pick the CURRENT upload month's
+ * column when present; otherwise the right-most activeness-like column.
+ */
+function pick_activeness($row, $month) {
+  $monthNames = array('','january','february','march','april','may','june','july','august','september','october','november','december');
+  $m = (int)substr((string)$month, 5, 2);
+  $wantFull = $monthNames[$m];
+  $want3 = substr($wantFull, 0, 3);
+  $candidates = array(); $preferred = '';
+  foreach ($row as $k => $v) {
+    $nk = norm_key($k);
+    if (strpos($nk, 'activ') === false) continue;
+    if (trim((string)$v) === '') continue;
+    $candidates[] = $v;
+    if (strpos($nk, $wantFull) !== false || strpos($nk, $want3) !== false) $preferred = $v;
+  }
+  if ($preferred !== '') return $preferred;
+  return count($candidates) ? $candidates[count($candidates) - 1] : '';
+}
+
+function parse_weekly_row($row, $month = '') {
   $idx = row_index($row);
   $acc = trim((string)pick($idx, array('Agent Account','account','accountnumber','acc','agentacc')));
   if ($acc === '') return null;
@@ -157,11 +204,11 @@ function parse_weekly_row($row) {
     'phone' => trim((string)pick($idx, array('Phone','phonenumber','mobile','simu'))),
     'branch' => trim((string)pick($idx, array('Branch','tawi'))),
     'float' => num(pick($idx, array('Float Served','float','floatserved'))),
-    'visit' => yesno(pick($idx, array('Agent Visit','visit','odk','agentvisitodk'))),
+    'visit' => yesno(pick($idx, array('Agent Visit','Agent Visits','visit','odk','agentvisitodk'))),
     'apk' => yesno(pick($idx, array('APK Update','apk','apkupdate'))),
-    'activeness' => trim((string)pick($idx, array('Agent Activeness','activeness','active'))),
+    'activeness' => trim((string)pick_activeness($row, $month)),
     'sa' => num(pick($idx, array('SA Commission','sacommission','commission'))),
-    'served' => served_status(pick($idx, array('Served Status','served','servedstatus','status'))),
+    'served' => served_status(pick($idx, array('Serving Status','Served Status','served','servedstatus','servingstatus','status'))),
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
@@ -192,11 +239,13 @@ function month_actuals($month) {
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ?');
   $f->execute(array($month));
-  $k['float'] = (float)$f->fetch()['f'];
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
+  $d->execute(array($month));
+  $k['float'] = (float)$f->fetch()['f'] + (float)$d->fetch()['f'];
   return $k;
 }
 
-/* One BDO's actuals for a month (only KPIs credited to him in the ledger). */
+/* One BDO's actuals for a month: ledger credits + float (uploads + his typed daily reports). */
 function bdo_actuals($month, $bdo) {
   $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? AND bdo = ? GROUP BY kpi');
   $st->execute(array($month, $bdo));
@@ -204,7 +253,9 @@ function bdo_actuals($month, $bdo) {
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
   $f->execute(array($month, $bdo));
-  $k['float'] = (float)$f->fetch()['f'];
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? AND bdo = ?');
+  $d->execute(array($month, $bdo));
+  $k['float'] = (float)$f->fetch()['f'] + (float)$d->fetch()['f'];
   return $k;
 }
 

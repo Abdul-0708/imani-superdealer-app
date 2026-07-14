@@ -157,6 +157,8 @@ function ensure_schema($pdo) {
   ");
 
   $pdo->exec(schema_v2_ddl());
+  $pdo->exec(schema_v3_ddl());
+  try { $pdo->exec('ALTER TABLE users ADD COLUMN working_days VARCHAR(16) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   seed($pdo);
 }
 
@@ -196,6 +198,60 @@ function schema_v2_ddl() {
   ";
 }
 
+/*
+ * v3: daily BDO reports, upload-vs-ledger flags, OM broadcast messages,
+ * confidential float shortages, working days, per-user working-day override.
+ */
+function schema_v3_ddl() {
+  return "
+  CREATE TABLE IF NOT EXISTS daily_reports (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bdo VARCHAR(64) NOT NULL,
+    report_date DATE NOT NULL,
+    month CHAR(7) NOT NULL,
+    float_served BIGINT NOT NULL DEFAULT 0,
+    visited INT NOT NULL DEFAULT 0,
+    waked INT NOT NULL DEFAULT 0,
+    apk INT NOT NULL DEFAULT 0,
+    note VARCHAR(255) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_daily (bdo, report_date),
+    INDEX idx_daily_month (month)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS flags (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    kpi VARCHAR(12) NOT NULL DEFAULT 'served',
+    detail VARCHAR(255) NOT NULL DEFAULT '',
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_flag (month, agent_id, bdo, kpi),
+    INDEX idx_flags_month (month)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    from_user VARCHAR(64) NOT NULL,
+    body VARCHAR(500) NOT NULL,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS float_shortages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bdo VARCHAR(64) NOT NULL,
+    month CHAR(7) NOT NULL,
+    amount BIGINT NOT NULL DEFAULT 0,
+    reason VARCHAR(255) NOT NULL DEFAULT '',
+    recover_by VARCHAR(64) NOT NULL DEFAULT '',
+    notified TINYINT(1) NOT NULL DEFAULT 0,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_short_month (month)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ";
+}
+
 function upgrade_schema($pdo) {
   $r = $pdo->query('SELECT value FROM app_settings WHERE name = "schema_version"')->fetch();
   $ver = $r ? (int)$r['value'] : 1;
@@ -211,6 +267,18 @@ function upgrade_schema($pdo) {
     $pdo->exec('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo)
                 SELECT month, agent_id, "active", bdo FROM service_history WHERE activeness LIKE "Active%"');
     $pdo->prepare('UPDATE app_settings SET value = "2" WHERE name = "schema_version"')->execute();
+    $ver = 2;
+  }
+  if ($ver < 3) {
+    $pdo->exec(schema_v3_ddl());
+    try { $pdo->exec('ALTER TABLE users ADD COLUMN working_days VARCHAR(16) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+    /* new module: reports (visible to everyone; om edits) */
+    $pins = $pdo->prepare('INSERT IGNORE INTO permissions (role, module, v, e, d) VALUES (?,?,?,?,?)');
+    $pins->execute(array('om', 'reports', 1, 1, 0));
+    $pins->execute(array('md', 'reports', 1, 0, 0));
+    $pins->execute(array('bdo', 'reports', 1, 0, 0));
+    $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
+    $pdo->prepare('UPDATE app_settings SET value = "3" WHERE name = "schema_version"')->execute();
   }
 }
 
@@ -241,6 +309,7 @@ function seed($pdo) {
     'upload'     => array('om'=>array(1,1,0), 'md'=>array(0,0,0), 'bdo'=>array(0,0,0)),
     'targets'    => array('om'=>array(1,1,0), 'md'=>array(1,0,0), 'bdo'=>array(0,0,0)),
     'commission' => array('om'=>array(1,1,0), 'md'=>array(1,0,0), 'bdo'=>array(0,0,0)),
+    'reports'    => array('om'=>array(1,1,0), 'md'=>array(1,0,0), 'bdo'=>array(1,0,0)),
     'admin'      => array('om'=>array(0,0,0), 'md'=>array(0,0,0), 'bdo'=>array(0,0,0)),
   );
   $pins = $pdo->prepare('INSERT IGNORE INTO permissions (role, module, v, e, d) VALUES (?,?,?,?,?)');
@@ -250,5 +319,6 @@ function seed($pdo) {
 
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","2")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","3")')->execute();
 }

@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, _roles: [], _permMatrix: {}, _permRole: 'om' };
+  var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
   /* ---------------- helpers ---------------- */
   function elById(id) { return document.getElementById(id); }
@@ -26,7 +26,7 @@
     return fetch(url, init).then(function (r) {
       return r.json().catch(function () { return { error: 'Bad server response' }; }).then(function (d) {
         if (r.status === 401) { state.user = null; render(); throw new Error(d.error || 'Please sign in'); }
-        if (!r.ok) throw new Error(d.error || ('Error ' + r.status));
+        if (!r.ok) { var err = new Error(d.error || ('Error ' + r.status)); err.data = d; throw err; }
         return d;
       });
     });
@@ -52,7 +52,12 @@
     percent: '<path d="M19 5L5 19"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
     zap: '<path d="M13 2L4 14h6l-1 8 9-12h-6z"/>',
     cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>',
-    check: '<path d="M20 6L9 17l-5-5"/>'
+    check: '<path d="M20 6L9 17l-5-5"/>',
+    chart: '<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-8"/><path d="M22 20H2"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    alert: '<path d="M12 3l9 16H3z"/><path d="M12 10v4"/><path d="M12 17h.01"/>',
+    pin: '<path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>'
   };
   function svg(name) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.grid) + '</svg>';
@@ -65,6 +70,7 @@
     { key: 'upload', label: 'Weekly Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
+    { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
   ];
   var TARGET_DEFS = [
@@ -109,7 +115,8 @@
       '<p class="hint">Business Management Platform</p>' +
       '<form id="loginForm">' +
       '<div class="field"><label>Username</label><input id="lUser" autocomplete="username"></div>' +
-      '<div class="field"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>' +
+      '<div class="field"><label>Password</label><div class="pwwrap"><input id="lPass" type="password" autocomplete="current-password">' +
+      '<button type="button" class="pweye" data-action="togglePw" data-for="lPass" aria-label="Show password">' + svg('eye') + '</button></div></div>' +
       '<button class="btn" type="submit">Sign in</button>' +
       '<div class="err" id="lErr"></div>' +
       '</form></div></div>';
@@ -149,6 +156,7 @@
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
+    else if (state.tab === 'reports') viewReports(v);
     else if (state.tab === 'admin') viewAdmin(v);
   }
 
@@ -214,32 +222,71 @@
   function errBox(e) { return '<div class="panel"><div class="err">' + esc(e.message || String(e)) + '</div></div>'; }
 
   /* ---------------- agents (all roles; BDOs get restricted columns) ---------------- */
-  function viewAgents(v) {
-    var qs = '&page=' + (state.agentPage || 1) + (state._agentSearch ? '&search=' + encodeURIComponent(state._agentSearch) : '');
+  function agentRowHtml(a, editable, restricted) {
+    var partnerServed = a.kpi && a.kpi.served === 'partners';
+    var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
+    return '<tr data-agent="' + a.id + '"><td>' + esc(a.acc) + '</td><td>' + name + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
+      '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+      '<td><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
+      (restricted ? '' : '<td>' + (Number(a.partner) ? 'Yes' : '-') + '</td>') + '</tr>';
+  }
+  function agentsBodyLoad() {
+    var body = elById('agentsBody'); if (!body) return;
+    var seq = ++state._agentSeq;
+    var qs = '&page=' + (state.agentPage || 1) + '&per=' + (state.agentPer || 50) +
+      (state._agentSearch ? '&search=' + encodeURIComponent(state._agentSearch) : '');
     api('agents', { qs: qs }).then(function (d) {
+      if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
+      state._agentsMeta = d;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var cols = 6 + (d.restricted ? 0 : 1);
-      var rows = (d.items || []).map(function (a) {
-        return '<tr><td>' + esc(a.acc) + '</td><td>' + esc(a.name) + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
-          '<td>' + esc(a.physical_location || '-') + '</td>' +
-          '<td><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
-          (d.restricted ? '' : '<td>' + (Number(a.partner) ? 'Yes' : '-') + '</td>') + '</tr>';
-      }).join('') || '<tr><td colspan="' + cols + '">' + emptyState('users', 'No agents yet', 'The OM uploads the agent performance file.') + '</td></tr>';
-      var pager = d.pages > 1
-        ? '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" data-action="prevPage"' + (d.page <= 1 ? ' disabled' : '') + '>Prev</button>' +
-          '<div class="note">Page ' + d.page + ' of ' + d.pages + '</div>' +
-          '<button class="ghost" data-action="nextPage"' + (d.page >= d.pages ? ' disabled' : '') + '>Next</button></div>' : '';
-      var sub = d.restricted
-        ? fmt(d.total) + ' agents &middot; ' + esc(d.month) + ' KPI status &mdash; a KPI already done shows who did it, so nobody repeats it'
-        : fmt(d.total) + ' agents in the master list &middot; ' + esc(d.month) + ' KPI status';
-      v.innerHTML =
-        '<h1 class="page-title">' + (d.restricted ? 'All Agents' : 'Agents') + '</h1><p class="page-sub">' + sub + '</p>' +
-        '<div class="panel"><div class="row"><div class="field"><label>Search</label><input id="agentSearch" placeholder="name, account, phone" value="' + esc(state._agentSearch || '') + '"></div>' +
-        '<button class="btn" data-action="agentSearch">Search</button>' +
-        '<button class="ghost" data-action="agentClear">Clear</button></div></div>' +
-        '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs (Served / Visit / APK / Active)</th>' +
-        (d.restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody>' + rows + '</tbody></table></div>' + pager + '</div>';
-    }).catch(function (e) { v.innerHTML = errBox(e); });
+      var rows = (d.items || []).map(function (a) { return agentRowHtml(a, editable, d.restricted); }).join('')
+        || '<tr><td colspan="' + cols + '">' + emptyState('users', 'No agents found', state._agentSearch ? 'Try a different search.' : 'The OM uploads the agent performance file.') + '</td></tr>';
+      body.innerHTML = rows;
+      var info = elById('agentsInfo');
+      if (info) info.textContent = fmt(d.total) + ' agents - page ' + d.page + ' of ' + d.pages;
+      var prev = elById('agentsPrev'), next = elById('agentsNext');
+      if (prev) prev.disabled = d.page <= 1;
+      if (next) next.disabled = d.page >= d.pages;
+    }).catch(function (e) { body.innerHTML = '<tr><td colspan="7"><span class="err">' + esc(e.message) + '</span></td></tr>'; });
+  }
+  function viewAgents(v) {
+    var restricted = !can('agents', 'v');
+    var perOpts = [20, 50, 100].map(function (n) {
+      return '<option value="' + n + '"' + (n === (state.agentPer || 50) ? ' selected' : '') + '>' + n + ' / page</option>';
+    }).join('');
+    v.innerHTML =
+      '<h1 class="page-title">' + (restricted ? 'All Agents' : 'Agents') + '</h1>' +
+      '<p class="page-sub">' + (restricted
+        ? 'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.'
+        : 'Master list with live KPI status.') + '</p>' +
+      '<div class="panel"><div class="row">' +
+      '<div class="field" style="flex:1;min-width:200px"><label>Search (live)</label><input id="agentSearch" placeholder="type one letter to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      '<div class="field"><label>Show</label><select id="agentPer">' + perOpts + '</select></div>' +
+      '<button class="ghost" data-action="agentClear">Clear</button>' +
+      (restricted ? '' : '<button class="btn" data-action="locExport">' + svg('pin') + ' Download agents with location</button>') +
+      '</div><div class="note" id="agentsInfo" style="margin-top:8px">Loading...</div></div>' +
+      '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs (Served / Visit / APK / Active)</th>' +
+      (restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
+      '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
+      '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>';
+    agentsBodyLoad();
+    var s = elById('agentSearch'); if (s && state._agentSearch) s.focus();
+  }
+  function locExport() {
+    api('agents_location_export').then(function (d) {
+      if (!d.count) { toast('No agents with a physical location yet', 'warn'); return; }
+      var rows = d.items.map(function (a) {
+        return { 'Agent Account': a.acc, 'Agent Name': a.name, 'Phone': a.phone, 'Branch': a.branch,
+                 'Station': a.station, 'Physical Location': a.physical_location,
+                 'Last Served By': a.last_served_by || '', 'Last Served At': a.last_served_at || '' };
+      });
+      var ws = XLSX.utils.json_to_sheet(rows);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Agents with location');
+      XLSX.writeFile(wb, 'agents_with_locations_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      toast(fmt(d.count) + ' agents exported', 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
   }
 
   /* ---------------- my base (BDO): KPI chips + weighted score ---------------- */
@@ -281,7 +328,8 @@
     }).join('');
   }
   function viewMyBase(v) {
-    api('base', { qs: state.month ? '&month=' + state.month : '' }).then(function (d) {
+    Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' }), api('messages_get')]).then(function (rr) {
+      var d = rr[0], msgs = rr[1];
       state.month = d.month;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var rows = (d.agents || []).map(function (a) {
@@ -290,8 +338,58 @@
         var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
         return '<tr><td><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
           '<td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
           '<td>' + esc(a.branch || '-') + '</td><td><div class="kchips">' + chips + '</div></td></tr>';
-      }).join('') || '<tr><td colspan="4">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
+      }).join('') || '<tr><td colspan="5">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
+
+      /* OM broadcast messages */
+      var msgPanel = (msgs && msgs.length)
+        ? '<div class="panel"><h2>' + svg('mail') + 'Messages from management</h2>' +
+          msgs.slice(0, 5).map(function (m) {
+            return '<div class="tg-row"><span class="tg-ic">' + svg('mail') + '</span><div style="flex:1">' + esc(m.body) +
+              '<div class="note">' + esc(m.from_user) + ' &middot; ' + esc((m.at || '').slice(0, 16)) + '</div></div></div>';
+          }).join('') + '</div>'
+        : '';
+
+      /* Daily typed report */
+      var dailyPanel = editable
+        ? '<div class="panel"><h2>' + svg('cal') + 'My Daily Report</h2>' +
+          '<p class="note">Report each working day BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents below.</p>' +
+          '<div class="row"><div class="field"><label>Date</label><input id="drDate" type="date" value="' + new Date().toISOString().slice(0, 10) + '" max="' + new Date().toISOString().slice(0, 10) + '"></div>' +
+          '<div class="field"><label>Total float served</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
+          '<div class="field"><label>Agents visited</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
+          '<div class="field"><label>Inactive waked</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
+          '<div class="field"><label>APK updated</label><input id="drApk" type="number" min="0" placeholder="0"></div>' +
+          '<button class="btn" data-action="drSave">Save report</button>' +
+          '<button class="ghost" data-action="shortage">' + svg('alert') + ' Report float shortage</button></div></div>'
+        : '';
+
+      /* Priority agents still to serve this month */
+      var prioLeft = (d.agents || []).filter(function (a) { return a.level === 'priority' && !(a.kpi && a.kpi.served); });
+      var prioPanel = prioLeft.length
+        ? '<div class="panel"><h2>' + svg('flame') + 'Priority to serve (' + prioLeft.length + ')</h2>' +
+          '<p class="note">Your carried base - you already know where they are. Serve them first.</p>' +
+          '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Location</th><th>Branch</th><th>Action</th></tr></thead><tbody>' +
+          prioLeft.map(function (a) {
+            return '<tr><td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+              '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+              '<td>' + esc(a.branch || '-') + '</td>' +
+              '<td>' + (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="served" data-name="' + esc(a.name) + '">Serve</button>' : '-') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>'
+        : '';
+
+      /* Special: partner-served agents everyone should adopt + locate */
+      var specialPanel = (d.special && d.special.length)
+        ? '<div class="panel"><h2>' + svg('alert') + 'Special agents - served by PARTNERS (' + d.special.length + ')</h2>' +
+          '<p class="note">The partner served these agents. Visit them, build the relationship and capture the physical location.</p>' +
+          '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
+          d.special.map(function (a) {
+            return '<tr><td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td><td>' + esc(a.phone || '-') + '</td>' +
+              '<td>' + esc(a.branch || '-') + '</td>' +
+              '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+              '<td>' + (editable && !a.physical_location ? '<button class="kchip todo" data-action="setLoc" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('pin') + ' Set location</button>' : '-') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>'
+        : '';
 
       var perfPanel = d.performance
         ? '<div class="panel"><h2>' + svg('percent') + 'My Performance ' + flagPill(d.performance.flag, d.performance.score) + '</h2>' +
@@ -302,20 +400,73 @@
         '<h1 class="page-title">My Agent Base</h1><p class="page-sub">' + esc(d.month) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
         ' &middot; tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.</p>' +
+        msgPanel +
         '<div class="grid cards" style="margin-bottom:16px">' +
         card('flame', 'Priority', fmt(d.counts.priority), 'served last month') +
         card('users', 'New', fmt(d.counts.newAgents)) +
         card('users', 'Total Base', fmt(d.counts.total)) +
         card('check', 'My Served', fmt(d.counts.served)) +
-        '</div>' + perfPanel +
+        '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
         '<div class="panel"><h2>' + svg('phone') + 'Agents &mdash; mark KPIs</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
-  function kpiMark(id, kpi, name) {
-    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi } })
-      .then(function () { toast(name + ': ' + kpi + ' marked - counted for you', 'ok'); renderTab(); })
-      .catch(function (e) { toast(e.message, 'err'); renderTab(); });
+  function drSave() {
+    api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value, visited: elById('drVisited').value, waked: elById('drWaked').value, apk: elById('drApk').value } })
+      .then(function (d) { toast('Daily report saved for ' + d.date, 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function shortageModal() {
+    openModal('<h2>' + svg('alert') + ' Float shortage</h2>' +
+      '<p class="note">Seen by management only.</p>' +
+      '<div class="field"><label>Amount short</label><input id="shAmt" type="number" min="1" placeholder="0"></div>' +
+      '<div class="field"><label>Reason</label><input id="shReason" placeholder="what happened"></div>' +
+      '<div class="field"><label>When will you recover it? (within 24hrs)</label><input id="shRecover" placeholder="e.g. today 18:00"></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;margin:8px 0"><input type="checkbox" id="shNotified"> I have already notified the manager</label>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:10px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+      '<button class="danger" data-action="shortageSave">Submit</button></div>');
+  }
+  function shortageSave() {
+    api('shortage_save', { body: { amount: elById('shAmt').value, reason: elById('shReason').value, recoverBy: elById('shRecover').value, notified: elById('shNotified').checked } })
+      .then(function () { closeModal(); toast('Shortage reported to management', 'ok'); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function setLocModal(id, name) {
+    openModal('<h2>' + svg('pin') + ' Location of ' + esc(name) + '</h2>' +
+      '<div class="field"><label>Physical location</label><input id="locInput" placeholder="e.g. Sakina, near the mosque"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+      '<button class="btn" data-action="setLocGo" data-id="' + id + '">Save location</button></div>');
+  }
+  /* Fast path: swap the tapped chip in place (no full page reload). */
+  function chipDoneHtml(kpiKey) {
+    var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
+    return '<span class="kchip done mine" title="Done by you">' + esc(c ? c.label : kpiKey) + ' &#10003; <small>' + esc(state.user.username) + '</small></span>';
+  }
+  function kpiMark(id, kpi, name, node, location) {
+    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '' } })
+      .then(function () {
+        toast(name + ': ' + kpi + ' marked - counted for you', 'ok');
+        if (node && node.parentNode) {
+          var span = document.createElement('span');
+          span.innerHTML = chipDoneHtml(kpi);
+          node.parentNode.replaceChild(span.firstChild, node);
+        } else { renderTab(); }
+      })
+      .catch(function (e) {
+        if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
+        toast(e.message, 'err');
+        if (String(e.message).indexOf('Already done') >= 0) renderTab(); // refresh to show the owner
+      });
+  }
+  /* Forced physical-location entry before an agent can be marked served. */
+  function locationModal(id, kpi, name, node) {
+    openModal('<h2>' + svg('pin') + ' Where is ' + esc(name) + '?</h2>' +
+      '<p class="note">Type the agent\'s physical location before saving him as served. It becomes his known location for the coming months.</p>' +
+      '<div class="field"><label>Physical location</label><input id="locInput" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">Cancel</button>' +
+      '<button class="btn" data-action="locConfirm" data-id="' + id + '" data-kpi="' + kpi + '" data-name="' + esc(name) + '">Save location &amp; mark served</button></div>');
+    state._locNode = node;
   }
 
   /* ---------------- weekly upload ---------------- */
@@ -330,7 +481,10 @@
       '<div class="field"><label>Week</label><input id="upWeek" placeholder="e.g. W1"></div>' +
       '<div class="field"><label>Excel file (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
       (can('upload', 'e') ? '<button class="btn" data-action="doUpload">Upload</button><button class="ghost" data-action="loadDemo">Load demo data</button>' : '<span class="note">View only.</span>') +
-      '</div><div id="upResult" class="note" style="margin-top:12px"></div></div>';
+      '</div>' +
+      '<label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="upPriority"> ' +
+      'This is a <b>&nbsp;priority base list&nbsp;</b> (agents with physical locations + BDO names) - place agents into each BDO\'s priority base</label>' +
+      '<div id="upResult" class="note" style="margin-top:12px"></div></div>';
   }
   function readExcel(fileInput, cb) {
     var f = fileInput.files && fileInput.files[0];
@@ -347,7 +501,8 @@
   }
   function doUpload() {
     readExcel(elById('upFile'), function (rows) {
-      api('upload_weekly', { body: { month: elById('upMonth').value, week: elById('upWeek').value, rows: rows } })
+      var mode = elById('upPriority') && elById('upPriority').checked ? 'priority' : '';
+      api('upload_weekly', { body: { month: elById('upMonth').value, week: elById('upWeek').value, mode: mode, rows: rows } })
         .then(function (d) { elById('upResult').innerHTML = uploadSummary(d); toast('Upload complete', 'ok'); })
         .catch(function (e) { elById('upResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
     });
@@ -369,8 +524,9 @@
       .catch(function (e) { elById('upResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
   }
   function uploadSummary(d) {
-    var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) + ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.';
+    var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) + (d.priorityMode ? ' as <b>PRIORITY base</b>' : '') + ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.';
     if (d.createdBdos && d.createdBdos.length) s += ' New BDO accounts: ' + d.createdBdos.map(esc).join(', ') + ' (password imani123).';
+    if (d.flagged) s += ' <span class="pill bad">' + d.flagged + ' flag' + (d.flagged > 1 ? 's' : '') + ' raised</span> (claimed served but file says NOT served - see Reports & Ranks).';
     return s;
   }
 
@@ -552,6 +708,120 @@
       .catch(function (e) { toast(e.message, 'err'); });
   }
 
+  /* ---------------- reports & ranks ---------------- */
+  var DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function isoDow(dateStr) { var d = new Date(dateStr + 'T12:00:00'); var n = d.getDay(); return n === 0 ? 7 : n; }
+  function viewReports(v) {
+    var m = state._repMonth || state.openMonth || curMonth();
+    state._repMonth = m;
+    var period = state._rankPeriod || 'daily';
+    var calls = [api('daily_reports_get', { qs: '&month=' + m }), api('flags_get', { qs: '&month=' + m }),
+                 api('rank_get', { qs: '&period=' + period + '&date=' + (state._rankDate || new Date().toISOString().slice(0, 10)) }),
+                 api('messages_get')];
+    if (can('targets', 'v')) calls.push(api('shortages_get', { qs: '&month=' + m }));
+    Promise.all(calls).then(function (rr) {
+      var dr = rr[0], fl = rr[1], rk = rr[2], msgs = rr[3], sh = rr[4] || null;
+
+      /* --- daily report matrix: BDO x day, OK / LATE / MISSING(red) --- */
+      var byKey = {};
+      (dr.reports || []).forEach(function (r) { byKey[r.bdo + '|' + r.date] = r; });
+      var today = dr.today;
+      var days = [];
+      var dim = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).getDate();
+      for (var i = 1; i <= dim; i++) {
+        var ds = m + '-' + String(i).padStart(2, '0');
+        if (ds > today) break;
+        days.push(ds);
+      }
+      var shown = days.slice(-10); // last 10 elapsed days keep the matrix readable
+      var head = '<th>BDO</th>' + shown.map(function (ds) { return '<th>' + Number(ds.slice(8)) + '<div class="note">' + DAY_NAMES[isoDow(ds)] + '</div></th>'; }).join('');
+      var matrix = (dr.bdos || []).map(function (b) {
+        var cells = shown.map(function (ds) {
+          var wd = (b.workingDays || []).indexOf(isoDow(ds)) >= 0;
+          var r = byKey[b.username + '|' + ds];
+          if (r) {
+            var cls = r.late ? 'gold' : 'ok', label = r.late ? 'LATE' : 'OK';
+            return '<td><span class="pill ' + cls + '" title="Float ' + fmt(r.float) + ', visited ' + r.visited + ', waked ' + r.waked + ', APK ' + r.apk + '">' + label + '</span></td>';
+          }
+          if (!wd) return '<td><span class="pill dim">-</span></td>';
+          return '<td><span class="pill bad" title="No report on a working day">MISS</span></td>';
+        }).join('');
+        return '<tr><td>' + esc(b.name) + '</td>' + cells + '</tr>';
+      }).join('') || '<tr><td class="note">No BDOs yet.</td></tr>';
+
+      /* --- rankings --- */
+      var rankRows = (rk.rows || []).map(function (r, i) {
+        return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + fmt(r.served) + '</td><td>' + fmt(r.visit) + '</td><td>' + fmt(r.active) + '</td>' + (rk.hasApk ? '<td>' + fmt(r.apk) + '</td>' : '') + '</tr>';
+      }).join('') || '<tr><td colspan="6" class="note">No KPI activity in this period.</td></tr>';
+
+      /* --- flags ranking --- */
+      var flagRank = (fl.rank || []).map(function (r, i) {
+        return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.bdo) + '</td><td><span class="pill bad">' + r.n + ' flag' + (r.n > 1 ? 's' : '') + '</span></td></tr>';
+      }).join('') || '<tr><td colspan="3" class="note">No flags this month. Clean.</td></tr>';
+      var flagDetails = (fl.flags || []).slice(0, 20).map(function (f) {
+        return '<tr><td>' + esc(f.bdo) + '</td><td>' + esc(f.agent_name || f.acc || '') + '</td><td class="note">' + esc(f.detail) + '</td></tr>';
+      }).join('');
+
+      /* --- management extras --- */
+      var omTools = can('reports', 'e')
+        ? '<div class="panel"><h2>' + svg('mail') + 'Send message to all BDOs</h2>' +
+          '<div class="row"><input id="msgBody" placeholder="Type the announcement..." style="flex:1;min-width:220px" maxlength="500">' +
+          '<button class="btn" data-action="msgSend">Send</button></div>' +
+          ((msgs && msgs.length) ? '<div class="note" style="margin-top:8px">Last: "' + esc(msgs[0].body) + '" - ' + esc(msgs[0].from_user) + '</div>' : '') + '</div>' +
+          '<div class="panel"><h2>' + svg('cal') + 'Working days</h2>' +
+          '<p class="note">Default applies to everyone; override per BDO below (e.g. works Sunday instead of Saturday).</p>' +
+          '<div class="row"><div class="field"><label>Default working days</label><input id="wdGlobal" value="' + esc(dr.globalWorkingDays) + '" placeholder="1,2,3,4,5,6"></div>' +
+          '<div class="field"><label>BDO override</label><select id="wdBdo">' + (dr.bdos || []).map(function (b) { return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>'; }).join('') + '</select></div>' +
+          '<div class="field"><label>His days (1=Mon..7=Sun)</label><input id="wdDays" placeholder="1,2,3,4,5,7"></div>' +
+          '<button class="btn" data-action="wdSave">Save</button></div>' +
+          '<div class="note" style="margin-top:6px">1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat 7=Sun</div></div>'
+        : '';
+      var shortPanel = (sh !== null)
+        ? '<div class="panel"><h2>' + svg('alert') + 'Float shortages (management only)</h2>' +
+          '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Amount</th><th>Reason</th><th>Recover by</th><th>Notified?</th><th>When</th></tr></thead><tbody>' +
+          ((sh || []).map(function (s) {
+            return '<tr><td>' + esc(s.bdo) + '</td><td>' + fmt(s.amount) + '</td><td>' + esc(s.reason) + '</td><td>' + esc(s.recover_by || '-') + '</td>' +
+              '<td>' + (Number(s.notified) ? '<span class="pill ok">Yes</span>' : '<span class="pill bad">No</span>') + '</td><td class="note">' + esc((s.at || '').slice(0, 16)) + '</td></tr>';
+          }).join('') || '<tr><td colspan="6" class="note">No shortages reported.</td></tr>') + '</tbody></table></div></div>'
+        : '';
+
+      v.innerHTML =
+        '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">Daily reports, rankings and flags - visible to every member.</p>' +
+        '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="repMonth" type="month" value="' + esc(m) + '"></div>' +
+        '<button class="btn" data-action="repLoad">Load</button></div></div>' +
+        omTools +
+        '<div class="panel"><h2>' + svg('cal') + 'Daily reports - last ' + shown.length + ' days</h2>' +
+        '<p class="note"><span class="pill ok">OK</span> on time &middot; <span class="pill gold">LATE</span> after midnight &middot; <span class="pill bad">MISS</span> working day without a report</p>' +
+        '<div class="tablewrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + matrix + '</tbody></table></div></div>' +
+        '<div class="panel"><h2>' + svg('chart') + 'BDO Ranking</h2>' +
+        '<div class="row" style="margin-bottom:8px">' +
+        ['daily', 'weekly', 'monthly'].map(function (p) { return '<button class="role-chip' + (p === period ? ' active' : '') + '" data-action="rankPeriod" data-p="' + p + '">' + p.charAt(0).toUpperCase() + p.slice(1) + '</button>'; }).join('') +
+        '<div class="field"><label>Date</label><input id="rankDate" type="date" value="' + esc(state._rankDate || new Date().toISOString().slice(0, 10)) + '"></div>' +
+        '<button class="ghost" data-action="rankLoad">Load</button>' +
+        '<div class="spacer"></div><span class="note">' + esc(rk.from) + (rk.from !== rk.to ? ' to ' + esc(rk.to) : '') + '</span></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Unique Served</th><th>Visits (ODK)</th><th>Activeness</th>' + (rk.hasApk ? '<th>APK</th>' : '') + '</tr></thead><tbody>' + rankRows + '</tbody></table></div></div>' +
+        '<div class="panel"><h2>' + svg('alert') + 'Flagged BDOs - ' + esc(fl.month) + ' (most to fewest)</h2>' +
+        '<p class="note">A flag = claimed served, but the released performance file said NOT served.</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Flags</th></tr></thead><tbody>' + flagRank + '</tbody></table></div>' +
+        (flagDetails ? '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>BDO</th><th>Agent</th><th>Detail</th></tr></thead><tbody>' + flagDetails + '</tbody></table></div>' : '') +
+        '</div>' + shortPanel;
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  function msgSend() {
+    api('message_send', { body: { body: elById('msgBody').value } })
+      .then(function () { toast('Message sent to all BDOs', 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function wdSave() {
+    var per = {};
+    var bdo = elById('wdBdo') ? elById('wdBdo').value : '';
+    var days = elById('wdDays') ? elById('wdDays').value.trim() : '';
+    if (bdo && days) per[bdo] = days;
+    api('working_days_save', { body: { global: elById('wdGlobal').value.trim(), perBdo: per } })
+      .then(function () { toast('Working days saved', 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
   /* ---------------- admin: users + permissions ---------------- */
   function viewAdmin(v) {
     Promise.all([api('admin_meta'), api('admin_perms'), api('admin_users'), api('admin_audit')]).then(function (r) {
@@ -679,11 +949,23 @@
     if (a === 'pwdSave') { pwdSave(); return; }
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
-    if (a === 'agentSearch') { state._agentSearch = elById('agentSearch').value.trim(); state.agentPage = 1; renderTab(); return; }
-    if (a === 'agentClear') { state._agentSearch = ''; state.agentPage = 1; renderTab(); return; }
-    if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); renderTab(); return; }
-    if (a === 'nextPage') { state.agentPage = (state.agentPage || 1) + 1; renderTab(); return; }
-    if (a === 'kpiMark') { kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name')); return; }
+    if (a === 'agentClear') { state._agentSearch = ''; state.agentPage = 1; var si = elById('agentSearch'); if (si) si.value = ''; agentsBodyLoad(); return; }
+    if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); agentsBodyLoad(); return; }
+    if (a === 'nextPage') { state.agentPage = (state.agentPage || 1) + 1; agentsBodyLoad(); return; }
+    if (a === 'kpiMark') { kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), node); return; }
+    if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
+    if (a === 'setLoc') { setLocModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
+    if (a === 'setLocGo') { api('agent_location_set', { body: { agentId: Number(node.getAttribute('data-id')), location: elById('locInput').value } }).then(function () { closeModal(); toast('Location saved', 'ok'); renderTab(); }).catch(function (e2) { toast(e2.message, 'err'); }); return; }
+    if (a === 'togglePw') { var pi = elById(node.getAttribute('data-for')); if (pi) pi.type = pi.type === 'password' ? 'text' : 'password'; return; }
+    if (a === 'locExport') { locExport(); return; }
+    if (a === 'drSave') { drSave(); return; }
+    if (a === 'shortage') { shortageModal(); return; }
+    if (a === 'shortageSave') { shortageSave(); return; }
+    if (a === 'msgSend') { msgSend(); return; }
+    if (a === 'wdSave') { wdSave(); return; }
+    if (a === 'repLoad') { state._repMonth = elById('repMonth').value; renderTab(); return; }
+    if (a === 'rankPeriod') { state._rankPeriod = node.getAttribute('data-p'); renderTab(); return; }
+    if (a === 'rankLoad') { state._rankDate = elById('rankDate').value; renderTab(); return; }
     if (a === 'btSave') { btSave(); return; }
     if (a === 'doUpload') { doUpload(); return; }
     if (a === 'loadDemo') { loadDemo(); return; }
@@ -727,9 +1009,19 @@
     var n = e.target;
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
+    if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
   }
+  var _searchTimer = null;
   function onInput(e) {
-    if (e.target && e.target.classList && e.target.classList.contains('bt-w')) btUpdateSum();
+    if (e.target && e.target.classList && e.target.classList.contains('bt-w')) { btUpdateSum(); return; }
+    if (e.target && e.target.id === 'agentSearch') {
+      /* live search from the first letter, debounced so typing stays fast */
+      clearTimeout(_searchTimer);
+      var val = e.target.value.trim();
+      _searchTimer = setTimeout(function () {
+        state._agentSearch = val; state.agentPage = 1; agentsBodyLoad();
+      }, 220);
+    }
   }
   function onSubmit(e) {
     if (e.target && e.target.id === 'loginForm') { e.preventDefault(); doLogin(); }

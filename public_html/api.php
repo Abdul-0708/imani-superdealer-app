@@ -17,12 +17,15 @@ try {
       $st = db()->prepare('SELECT * FROM users WHERE username = ?');
       $st->execute(array($username));
       $u = $st->fetch();
-      if ($u && (int)$u['locked_until'] > time()) fail('Account temporarily locked after too many failed attempts. Try again later.', 429);
+      if ($u && (int)$u['locked_until'] > time()) fail('Account blocked after 5 failed attempts. Contact your admin for a new password.', 429);
       if (!$u || !(int)$u['active'] || !password_verify($password, $u['password_hash'])) {
         if ($u) {
           $f = (int)$u['failed'] + 1;
-          $lock = $f >= 6 ? time() + 900 : 0;
+          /* 5 strikes -> blocked until an admin sets a new password (which clears the lock) */
+          $lock = $f >= 5 ? time() + 86400 * 3650 : 0;
           db()->prepare('UPDATE users SET failed = ?, locked_until = ? WHERE id = ?')->execute(array($f, $lock, $u['id']));
+          if ($lock) fail('Account blocked after 5 failed attempts. Contact your admin for a new password.', 429);
+          fail('Invalid username or password (' . (5 - $f) . ' attempts left)', 401);
         }
         fail('Invalid username or password', 401);
       }
@@ -279,7 +282,9 @@ try {
       if (!$full && !can($u, 'mybase', 'v')) fail('No access', 403);
       $search = trim((string)($_GET['search'] ?? ''));
       $page = max(1, (int)($_GET['page'] ?? 1));
-      $limit = 50; $off = ($page - 1) * $limit;
+      $limit = (int)($_GET['per'] ?? 50);
+      if (!in_array($limit, array(20, 50, 100), true)) $limit = 50;
+      $off = ($page - 1) * $limit;
       $where = ''; $vals = array();
       if ($search !== '') {
         $where = 'WHERE name LIKE ? OR acc LIKE ? OR phone LIKE ? OR branch LIKE ?';
@@ -376,10 +381,19 @@ try {
       $tq->execute(array($month, $bdo));
       if ($t = $tq->fetch()) $perf = bdo_score(bdo_actuals($month, $bdo), $t);
 
+      /* SPECIAL agents: served by partners this month - every BDO should build
+       * the relationship and capture the physical location. */
+      $sp = db()->prepare('SELECT a.id, a.acc, a.name, a.phone, a.branch, a.physical_location
+                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                           WHERE k.month = ? AND k.kpi = "served" AND k.bdo = "partners"
+                           ORDER BY (a.physical_location = "") DESC, a.name LIMIT 100');
+      $sp->execute(array($month));
+      $special = $sp->fetchAll();
+
       respond(array(
         'bdo' => $bdo, 'month' => $month, 'monthStatus' => month_status($month),
         'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)), 'total' => count($ids), 'served' => $servedNow),
-        'agents' => $agents, 'performance' => $perf,
+        'agents' => $agents, 'performance' => $perf, 'special' => $special,
       ));
     }
 
@@ -398,8 +412,19 @@ try {
       $month = open_month();
       $ag = db()->prepare('SELECT * FROM agents WHERE id = ?');
       $ag->execute(array($agentId));
-      if (!$ag->fetch()) fail('Agent not found', 404);
+      $agent = $ag->fetch();
+      if (!$agent) fail('Agent not found', 404);
       $bdo = $u['username'];
+
+      /* Serving requires the agent's physical location (typed now or already known). */
+      if ($kpi === 'served') {
+        $loc = trim((string)bval('location'));
+        if ($loc !== '') {
+          db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?')->execute(array($loc, $agentId));
+        } elseif (trim((string)$agent['physical_location']) === '') {
+          fail('Physical location required before marking served', 400, array('needLocation' => true));
+        }
+      }
 
       /* already done by someone? */
       $chk = db()->prepare('SELECT bdo, at FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
@@ -445,12 +470,17 @@ try {
       $insSvc = db()->prepare('INSERT INTO service_history
           (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly")');
-      $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")');
+      $priorityMode = bval('mode') === 'priority'; // OM seeding priority bases (agents + locations + BDO names)
+      $kind = $priorityMode ? 'priority' : 'uploaded';
+      $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
       $insKpi = db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)');
+      $getKpiOwner = db()->prepare('SELECT bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "served"');
+      $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
+      $flagged = 0;
 
       foreach ($rows as $raw) {
-        $r = parse_weekly_row($raw);
+        $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
 
         // resolve BDO: row column -> global choice -> unassigned; auto-create unknown
@@ -471,6 +501,10 @@ try {
             }
           }
         }
+        /* Positive results with no BDO named and no prior BDO credit = the
+         * partner served this agent -> credit "partners", not "unassigned". */
+        $positive = ($r['served'] === 'SERVED' || $r['visit'] === 'YES' || $r['apk'] === 'YES' || stripos($r['activeness'], 'active') === 0);
+        if ($key === 'unassigned' && $positive) $key = 'partners';
         $bdos[$key] = true;
 
         $findAgent->execute(array($r['acc']));
@@ -486,16 +520,30 @@ try {
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk'], $r['float'], $r['activeness'], $r['sa'], $r['served']));
-        $insBase->execute(array($month, $key, $id));
-        /* Feed the shared KPI ledger (first credit wins; duplicates ignored). */
+        $insBase->execute(array($month, $key, $id, $kind));
+        /* Feed the shared KPI ledger (first credit wins; duplicates ignored).
+         * If a BDO already served the agent this month, his credit stands. */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key));
         if ($r['apk'] === 'YES') $insKpi->execute(array($month, $id, 'apk', $key));
         if (stripos($r['activeness'], 'active') === 0) $insKpi->execute(array($month, $id, 'active', $key));
+
+        /* Cross-check: a BDO claimed "served" but the released performance file
+         * says NOT_SERVED -> raise a visible flag against that BDO. */
+        if ($r['served'] === 'NOT_SERVED') {
+          $getKpiOwner->execute(array($month, $id));
+          $owner = $getKpiOwner->fetch();
+          if ($owner && $owner['bdo'] !== 'partners' && $owner['bdo'] !== 'unassigned') {
+            $insFlag->execute(array($month, $id, $owner['bdo'], 'served',
+              'Marked served by ' . $owner['bdo'] . ' but performance file says NOT_SERVED (' . $r['acc'] . ')'));
+            $flagged++;
+          }
+        }
       }
-      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)));
+      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged);
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
-                    'bdos' => array_keys($bdos), 'createdBdos' => $created));
+                    'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
+                    'priorityMode' => $priorityMode));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
@@ -581,6 +629,187 @@ try {
       }
       usort($out, function ($a, $b) { return ($b['score'] ?? -1) - ($a['score'] ?? -1); });
       respond(array('month' => $month, 'rows' => $out));
+    }
+
+    /* ================= DAILY BDO REPORTS ================= */
+
+    /*
+     * BDO types his day's totals: float served, agents visited, inactive agents
+     * waked, APK updated. Float feeds his performance directly; visits/activeness/
+     * APK are declarations - the per-agent KPI marks remain the proof (and what
+     * scores him), so totals never double-count.
+     */
+    case 'daily_report_save': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $date = (string)bval('date');
+      if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) fail('Choose the date of the day');
+      if ($date > date('Y-m-d')) fail('Cannot report a future date');
+      $month = substr($date, 0, 7);
+      if (month_status($month) === 'CLOSED') fail('Month ' . $month . ' is closed');
+      db()->prepare('INSERT INTO daily_reports (bdo, report_date, month, float_served, visited, waked, apk, note)
+                     VALUES (?,?,?,?,?,?,?,?)
+                     ON DUPLICATE KEY UPDATE float_served=VALUES(float_served), visited=VALUES(visited),
+                       waked=VALUES(waked), apk=VALUES(apk), note=VALUES(note)')
+          ->execute(array($u['username'], $date, $month, (int)num(bval('float')), (int)num(bval('visited')),
+                          (int)num(bval('waked')), (int)num(bval('apk')), trim((string)bval('note'))));
+      audit($u['id'], 'daily_report', $u['username'] . ' ' . $date);
+      respond(array('ok' => true, 'date' => $date));
+    }
+
+    /* Everyone sees all BDOs' daily reports + late/missing status per working day. */
+    case 'daily_reports_get': {
+      $u = require_auth();
+      if (!can($u, 'reports', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT * FROM daily_reports WHERE month = ? ORDER BY report_date, bdo');
+      $st->execute(array($month));
+      $reports = array();
+      foreach ($st->fetchAll() as $r) {
+        $late = substr($r['created_at'], 0, 10) > $r['report_date']; // after 00:00 next day = LATE
+        $reports[] = array('bdo' => $r['bdo'], 'date' => $r['report_date'], 'float' => (float)$r['float_served'],
+                           'visited' => (int)$r['visited'], 'waked' => (int)$r['waked'], 'apk' => (int)$r['apk'],
+                           'note' => $r['note'], 'late' => $late);
+      }
+      $bdoRows = db()->query('SELECT username, name, working_days FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      $bdos = array();
+      foreach ($bdoRows as $b) {
+        $wd = working_days_for($b);
+        $bdos[] = array('username' => $b['username'], 'name' => $b['name'], 'workingDays' => array_keys($wd));
+      }
+      respond(array('month' => $month, 'today' => date('Y-m-d'), 'reports' => $reports, 'bdos' => $bdos,
+                    'globalWorkingDays' => setting_get('working_days', '1,2,3,4,5,6')));
+    }
+
+    /* OM: default working days (Mon..Sat) + per-BDO override (e.g. Sunday man). */
+    case 'working_days_save': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $global = trim((string)bval('global'));
+      if ($global !== '') {
+        $days = array_filter(array_map('intval', explode(',', $global)), function ($d) { return $d >= 1 && $d <= 7; });
+        if (!count($days)) fail('Pick at least one working day');
+        setting_set('working_days', implode(',', $days));
+      }
+      $per = bval('perBdo', array());
+      if (is_array($per)) {
+        $up = db()->prepare('UPDATE users SET working_days = ? WHERE username = ? AND role = "bdo"');
+        foreach ($per as $bdo => $csv) {
+          $days = array_filter(array_map('intval', explode(',', (string)$csv)), function ($d) { return $d >= 1 && $d <= 7; });
+          $up->execute(array(implode(',', $days), strtolower((string)$bdo)));
+        }
+      }
+      audit($u['id'], 'working_days', 'updated');
+      respond(array('ok' => true));
+    }
+
+    /* ================= OM BROADCAST MESSAGES ================= */
+
+    case 'message_send': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $body = trim((string)bval('body'));
+      if ($body === '' || mb_strlen($body) > 500) fail('Message must be 1-500 characters');
+      db()->prepare('INSERT INTO messages (from_user, body) VALUES (?,?)')->execute(array($u['username'], $body));
+      audit($u['id'], 'message_send', mb_substr($body, 0, 80));
+      respond(array('ok' => true));
+    }
+
+    case 'messages_get': {
+      $u = require_auth();
+      $rows = db()->query('SELECT from_user, body, at FROM messages ORDER BY id DESC LIMIT 10')->fetchAll();
+      respond($rows);
+    }
+
+    /* ================= FLOAT SHORTAGE (management-only visibility) ================= */
+
+    case 'shortage_save': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $amount = (int)num(bval('amount'));
+      $reason = trim((string)bval('reason'));
+      if ($amount <= 0 || $reason === '') fail('Enter the amount and the reason');
+      db()->prepare('INSERT INTO float_shortages (bdo, month, amount, reason, recover_by, notified)
+                     VALUES (?,?,?,?,?,?)')
+          ->execute(array($u['username'], open_month(), $amount, $reason,
+                          trim((string)bval('recoverBy')), bval('notified') ? 1 : 0));
+      audit($u['id'], 'float_shortage', $u['username'] . ' ' . $amount);
+      respond(array('ok' => true));
+    }
+
+    case 'shortages_get': {
+      $u = require_auth(); require_perm($u, 'targets', 'v'); // management only (om/md/superadmin)
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT bdo, amount, reason, recover_by, notified, at FROM float_shortages WHERE month = ? ORDER BY id DESC');
+      $st->execute(array($month));
+      respond($st->fetchAll());
+    }
+
+    /* ================= FLAGS (upload cross-check) & RANKINGS ================= */
+
+    /* Visible to ALL members; ranked most-flagged first. */
+    case 'flags_get': {
+      $u = require_auth();
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT f.bdo, COUNT(*) n FROM flags f WHERE f.month = ? GROUP BY f.bdo ORDER BY n DESC');
+      $st->execute(array($month));
+      $rank = $st->fetchAll();
+      $det = db()->prepare('SELECT f.bdo, f.detail, f.at, a.name agent_name, a.acc FROM flags f
+                            LEFT JOIN agents a ON a.id = f.agent_id WHERE f.month = ? ORDER BY f.id DESC LIMIT 100');
+      $det->execute(array($month));
+      respond(array('month' => $month, 'rank' => $rank, 'flags' => $det->fetchAll()));
+    }
+
+    /* BDO ranking for a day / ISO week / month: unique served, visits, activeness, APK. */
+    case 'rank_get': {
+      $u = require_auth();
+      $period = (string)($_GET['period'] ?? 'daily');
+      $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date'] ?? '')) ? $_GET['date'] : date('Y-m-d');
+      if ($period === 'weekly') {
+        $ts = strtotime($date);
+        $from = date('Y-m-d', strtotime('monday this week', $ts));
+        $to = date('Y-m-d', strtotime('sunday this week', $ts));
+      } elseif ($period === 'monthly') {
+        $from = substr($date, 0, 7) . '-01';
+        $to = date('Y-m-t', strtotime($from));
+      } else { $from = $date; $to = $date; }
+      $st = db()->prepare('SELECT bdo, kpi, COUNT(*) n FROM agent_month_kpi
+                           WHERE DATE(at) BETWEEN ? AND ? AND bdo NOT IN ("partners","unassigned")
+                           GROUP BY bdo, kpi');
+      $st->execute(array($from, $to));
+      $byBdo = array(); $hasApk = false;
+      foreach ($st->fetchAll() as $r) {
+        if (!isset($byBdo[$r['bdo']])) $byBdo[$r['bdo']] = array('bdo' => $r['bdo'], 'served' => 0, 'visit' => 0, 'active' => 0, 'apk' => 0);
+        $byBdo[$r['bdo']][$r['kpi']] = (int)$r['n'];
+        if ($r['kpi'] === 'apk') $hasApk = true;
+      }
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
+      $rows = array_values($byBdo);
+      foreach ($rows as &$r2) { $r2['name'] = isset($names[$r2['bdo']]) ? $names[$r2['bdo']] : $r2['bdo']; }
+      unset($r2);
+      usort($rows, function ($a, $b) { return ($b['served'] - $a['served']) ?: ($b['visit'] - $a['visit']); });
+      respond(array('period' => $period, 'from' => $from, 'to' => $to, 'hasApk' => $hasApk, 'rows' => $rows));
+    }
+
+    /* ================= PHYSICAL LOCATION TOOLS ================= */
+
+    case 'agent_location_set': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $agentId = (int)bval('agentId');
+      $loc = trim((string)bval('location'));
+      if ($loc === '') fail('Type the physical location');
+      $r = db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?');
+      $r->execute(array($loc, $agentId));
+      audit($u['id'], 'location_set', 'agent=' . $agentId);
+      respond(array('ok' => true));
+    }
+
+    /* OM/MD: every agent with a known physical location (any time, all history). */
+    case 'agents_location_export': {
+      $u = require_auth(); require_perm($u, 'agents', 'v');
+      $rows = db()->query('SELECT a.acc, a.name, a.phone, a.branch, a.station, a.physical_location,
+                             (SELECT k.bdo FROM agent_month_kpi k WHERE k.agent_id = a.id AND k.kpi = "served"
+                              ORDER BY k.at DESC LIMIT 1) last_served_by,
+                             (SELECT MAX(k.at) FROM agent_month_kpi k WHERE k.agent_id = a.id AND k.kpi = "served") last_served_at
+                           FROM agents a WHERE a.physical_location <> "" ORDER BY a.branch, a.name')->fetchAll();
+      respond(array('count' => count($rows), 'items' => $rows));
     }
 
     /* ================= COMMISSION ================= */

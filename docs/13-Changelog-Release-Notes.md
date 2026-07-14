@@ -5,6 +5,38 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.3.0 — 2026-07-14 · "Field operations pack"
+
+### Release notes
+Seventeen field-requested upgrades. BDOs now file a **typed daily report** (date, float served,
+agents visited, inactive waked, APK updated) — float feeds their weighted score directly, and the
+per-agent marks stay the proof for the rest. Reports are due **before midnight**: late ones show
+LATE, and a missed **working day** shows a red MISS — with OM-configurable working days (default
+Mon–Sat, per-BDO override e.g. Sunday-instead-of-Saturday). A new **Reports & Ranks** tab (visible
+to everyone) adds daily/weekly/monthly **BDO rankings** (unique served, visits, activeness, APK when
+present) and the **flag ranking**: when a released performance file says NOT SERVED for an agent a
+BDO had marked served, that BDO is flagged for all to see. Serving now **requires the agent's
+physical location** (typed once, remembered for future months); the OM can **download all agents
+with known locations** as Excel any time and can upload a **priority base list** per BDO. Rows in a
+performance file that are positive but carry no BDO are now credited to **PARTNERS** (not
+"unassigned"), and partner-served agents appear to every BDO as **special agents** to adopt and
+locate. Plus: OM **broadcast messages** shown on BDO screens, **float-shortage reporting**
+(amount/reason/recovery, management-only visibility), live **search from the first letter** with
+20/50/100 page sizes, in-place (faster) KPI marking, a **show-password** eye, and lockout now after
+**5 attempts** with "contact your admin" guidance. The parser also picks the **current month's**
+activeness column (e.g. "June Activeness" over "May") and reads Serving Status / Agent Visits
+header variants.
+
+### Changes
+- **Schema v3** (self-upgrading): `daily_reports`, `flags`, `messages`, `float_shortages`,
+  `users.working_days`, `working_days` setting, `reports` module permissions (om VE, md V, bdo V)
+- New APIs: `daily_report_save/daily_reports_get`, `working_days_save`, `message_send/messages_get`,
+  `shortage_save/shortages_get`, `flags_get`, `rank_get`, `agent_location_set`,
+  `agents_location_export`; `kpi_mark` gains location enforcement; `upload_weekly` gains partner
+  attribution, flag cross-check and `mode=priority`; `agents` gains `per` page size
+- Deploy: upload `api.php`, `app.js`, `styles.css`, `index.html`, `lib/db.php`, `lib/helpers.php`;
+  schema upgrades itself on first load
+
 ## v1.2.0 — 2026-07-14 · "Agent list for everyone" (commit `c1b41bc`)
 
 ### Release notes

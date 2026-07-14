@@ -3,7 +3,10 @@
 KPI, agent-management and commission-intelligence platform for a super-dealer network.
 **Plain PHP + MySQL** — built to run on ordinary shared hosting (cPanel) with nothing to install.
 
-> The earlier Node.js version is preserved on the [`node-legacy`](../../tree/node-legacy) branch.
+> ⚠️ **Deploying? Use the `main` branch — it is the PHP app.** Download ZIP with `main` selected
+> and upload the **contents of `public_html/`**. The `node-legacy` branch is the OLD Node.js
+> version kept for history only — do **not** deploy it. (GitHub's language bar says "JavaScript"
+> because `public_html/app.js` is the browser front-end; the server code is 100% PHP.)
 
 > 📚 **Full documentation suite** (PRD, BRD, system design, database, API/OpenAPI, security & RBAC,
 > NFR, test plan, deployment, user/admin manuals, risks & decisions, changelog): **[docs/](docs/)**
