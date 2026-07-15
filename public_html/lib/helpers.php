@@ -173,22 +173,23 @@ function num($v) {
 }
 
 /*
- * Activeness: performance files often carry one activeness column per month
- * (e.g. "May Activeness", "June Activeness"). Pick the CURRENT upload month's
- * column when present; otherwise the right-most activeness-like column.
+ * Month-suffixed columns: performance files carry one column per month
+ * (e.g. "Activeness_status_May" / "Activeness_status_July", "APK June" / "APK July").
+ * Pick the CURRENT upload month's column when present; otherwise the right-most
+ * non-empty candidate (the latest month in the file).
  */
-function pick_activeness($row, $month) {
+function pick_month_col($row, $month, $needle) {
   $monthNames = array('','january','february','march','april','may','june','july','august','september','october','november','december');
   $m = (int)substr((string)$month, 5, 2);
-  $wantFull = $monthNames[$m];
+  $wantFull = $m >= 1 && $m <= 12 ? $monthNames[$m] : '';
   $want3 = substr($wantFull, 0, 3);
   $candidates = array(); $preferred = '';
   foreach ($row as $k => $v) {
     $nk = norm_key($k);
-    if (strpos($nk, 'activ') === false) continue;
+    if (strpos($nk, $needle) === false) continue;
     if (trim((string)$v) === '') continue;
     $candidates[] = $v;
-    if (strpos($nk, $wantFull) !== false || strpos($nk, $want3) !== false) $preferred = $v;
+    if ($wantFull !== '' && (strpos($nk, $wantFull) !== false || strpos($nk, $want3) !== false)) $preferred = $v;
   }
   if ($preferred !== '') return $preferred;
   return count($candidates) ? $candidates[count($candidates) - 1] : '';
@@ -196,23 +197,72 @@ function pick_activeness($row, $month) {
 
 function parse_weekly_row($row, $month = '') {
   $idx = row_index($row);
-  $acc = trim((string)pick($idx, array('Agent Account','account','accountnumber','acc','agentacc')));
+  $acc = trim((string)pick($idx, array('AGENT ACC','Agent Account','account','accountnumber','acc','agentacc')));
   if ($acc === '') return null;
+  $served = served_status(pick($idx, array('Served Status','Serving Status','served','servedstatus','servingstatus','status')));
+  /* " Servicing " is the float column; it only counts when the agent is SERVED. */
+  $float = num(pick($idx, array('Servicing','Float Served','float','floatserved','serving')));
+  if ($served !== 'SERVED') $float = 0;
   return array(
     'acc' => $acc,
-    'name' => trim((string)pick($idx, array('Agent Name','name','agent'))),
+    'name' => trim((string)pick($idx, array('AgentName','Agent Name','name'))),
     'phone' => trim((string)pick($idx, array('Phone','phonenumber','mobile','simu'))),
-    'branch' => trim((string)pick($idx, array('Branch','tawi'))),
-    'float' => num(pick($idx, array('Float Served','float','floatserved'))),
-    'visit' => yesno(pick($idx, array('Agent Visit','Agent Visits','visit','odk','agentvisitodk'))),
-    'apk' => yesno(pick($idx, array('APK Update','apk','apkupdate'))),
-    'activeness' => trim((string)pick_activeness($row, $month)),
+    'branch' => trim((string)pick($idx, array('BranchName','Branch','tawi'))),
+    'float' => $float,
+    'visit' => yesno(pick($idx, array('Agent visit','Agent Visit','Agent Visits','visit','odk','agentvisitodk'))),
+    'apk_raw' => trim((string)pick_month_col($row, $month, 'apk')),
+    'activeness' => trim((string)pick_month_col($row, $month, 'activ')),
+    'activeness_prev' => trim((string)pick_month_col_prev($row, $month, 'activ')),
     'sa' => num(pick($idx, array('SA Commission','sacommission','commission'))),
-    'served' => served_status(pick($idx, array('Serving Status','Served Status','served','servedstatus','servingstatus','status'))),
+    'served' => $served,
+    'withdraw' => num(pick($idx, array('Withdraw Volume','withdrawvolume'))),
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
   );
+}
+
+/*
+ * APK columns hold a version number (e.g. 1.8, 2.0), not YES/NO. An agent
+ * counts as "APK updated" ONLY when he runs at least the REQUIRED version the
+ * OM has set (setting apk_required_version, e.g. 2.0 - older 1.8/1.6 do not
+ * count). Plain YES/NO text files still work.
+ */
+function apk_is_yes($raw, $requiredVersion) {
+  $s = strtolower(trim((string)$raw));
+  if ($s === '') return false;
+  if (in_array($s, array('yes','y','true','updated'), true)) return true;
+  if (in_array($s, array('no','n','false'), true)) return false;
+  $v = num($raw);
+  $req = (float)$requiredVersion;
+  return $req > 0 && $v > 0 && ($v + 0.0001) >= $req;
+}
+
+/* Normalize an activeness cell: ' Active ' -> ACTIVE, 'Inactive' -> INACTIVE. */
+function act_norm($s) {
+  $s = strtolower(trim((string)$s));
+  if ($s === '') return '';
+  if (strpos($s, 'inact') === 0 || strpos($s, 'dormant') === 0) return 'INACTIVE';
+  if (strpos($s, 'activ') === 0) return 'ACTIVE';
+  return '';
+}
+
+/* The PREVIOUS activeness column: right-most activeness-like column that is
+ * NOT the current month's (e.g. Activeness_status_May when uploading July). */
+function pick_month_col_prev($row, $month, $needle) {
+  $monthNames = array('','january','february','march','april','may','june','july','august','september','october','november','december');
+  $m = (int)substr((string)$month, 5, 2);
+  $wantFull = $m >= 1 && $m <= 12 ? $monthNames[$m] : '';
+  $want3 = substr($wantFull, 0, 3);
+  $prev = '';
+  foreach ($row as $k => $v) {
+    $nk = norm_key($k);
+    if (strpos($nk, $needle) === false) continue;
+    if (trim((string)$v) === '') continue;
+    if ($wantFull !== '' && (strpos($nk, $wantFull) !== false || strpos($nk, $want3) !== false)) continue; // current month
+    $prev = $v; // keep the right-most earlier column
+  }
+  return $prev;
 }
 
 function parse_commission_row($row) {
@@ -230,12 +280,35 @@ function parse_commission_row($row) {
 
 /* ---------- KPI actuals + weighted BDO scoring ---------- */
 
-/* Office-wide actuals for a month. Flag KPIs come from the shared agent_month_kpi
- * ledger (deduplicated across BDOs); float is the sum from service history. */
+/*
+ * OFFICE actuals for a month: taken straight from the latest uploaded
+ * performance Excel (snapshot saved at upload time) - NOT from BDO manual
+ * marks, which only count in each BDO's personal score. Activeness is the
+ * NET movement: (inactive -> active) MINUS (active -> inactive).
+ * Falls back to the ledger for months with no upload yet.
+ */
 function month_actuals($month) {
+  $snap = setting_get('month_stats_' . $month, '');
+  if ($snap !== '') {
+    $s = json_decode($snap, true);
+    if (is_array($s)) {
+      return array(
+        'served' => (int)($s['serving'] ?? 0),
+        'float' => (float)($s['float'] ?? 0),
+        'visit' => (int)($s['visits'] ?? 0),
+        'apk' => (int)($s['apk'] ?? 0),
+        'active' => (int)($s['net_active'] ?? 0),
+        'waked' => (int)($s['waked'] ?? 0),
+        'lost' => (int)($s['lost'] ?? 0),
+        'withdraw' => (float)($s['withdraw'] ?? 0),
+        'fromUpload' => true,
+      );
+    }
+  }
+  /* fallback: ledger + float sums (no performance file uploaded yet) */
   $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? GROUP BY kpi');
   $st->execute(array($month));
-  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0, 'fromUpload' => false);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ?');
   $f->execute(array($month));
@@ -243,6 +316,42 @@ function month_actuals($month) {
   $d->execute(array($month));
   $k['float'] = (float)$f->fetch()['f'] + (float)$d->fetch()['f'];
   return $k;
+}
+
+/* KPI catalogue for OFFICE targets/weights (6 KPIs incl. withdraw volume). */
+function office_kpi_defs() {
+  return array(
+    'serving' => 'served',
+    'float' => 'float',
+    'visits' => 'visit',
+    'apk' => 'apk',
+    'activeness' => 'active',
+    'withdraw' => 'withdraw',
+  );
+}
+
+/*
+ * Office attainment + REAL weighted achievement. When the OM has set weights
+ * (summing 100) the achievement is the weighted average; otherwise the plain
+ * average of KPIs that have targets.
+ */
+function office_attainment($month) {
+  $a = month_actuals($month);
+  $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
+  $tg->execute(array($month));
+  $t = $tg->fetch();
+  $att = array(); $wsum = 0; $wacc = 0; $sum = 0; $nn = 0;
+  foreach (office_kpi_defs() as $col => $ak) {
+    $target = $t ? (float)($t[$col . '_target'] ?? 0) : 0;
+    $w = $t ? (int)($t[$col . '_w'] ?? 0) : 0;
+    $actual = (float)($a[$ak] ?? 0);
+    $pct = $target > 0 ? min(100, (int)round($actual / $target * 100)) : null;
+    $att[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct);
+    if ($pct !== null) { $sum += $pct; $nn++; if ($w > 0) { $wacc += $pct * $w; $wsum += $w; } }
+  }
+  $achievement = $wsum > 0 ? (int)round($wacc / $wsum) : ($nn ? (int)round($sum / $nn) : null);
+  return array('attainment' => $att, 'achievement' => $achievement, 'weighted' => $wsum > 0,
+               'fromUpload' => !empty($a['fromUpload']), 'waked' => $a['waked'], 'lost' => $a['lost']);
 }
 
 /* One BDO's actuals for a month: ledger credits + float (uploads + his typed daily reports). */

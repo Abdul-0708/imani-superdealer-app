@@ -75,11 +75,15 @@
   ];
   var TARGET_DEFS = [
     { key: 'serving', label: 'Serving', icon: 'users', hint: 'unique agents served' },
-    { key: 'float', label: 'Float', icon: 'dollar', hint: 'total float served' },
-    { key: 'visits', label: 'Agent Visits', icon: 'target', hint: 'visits (ODK = YES)' },
-    { key: 'apk', label: 'Agent APK', icon: 'rotate', hint: 'APK updates (YES)' },
-    { key: 'activeness', label: 'Agent Activeness', icon: 'zap', hint: 'active agents' }
+    { key: 'float', label: 'Float', icon: 'dollar', hint: 'float from SERVED agents only' },
+    { key: 'visits', label: 'Agent Visits', icon: 'target', hint: 'visits (YES)' },
+    { key: 'apk', label: 'Agent APK', icon: 'rotate', hint: 'on required APK version' },
+    { key: 'activeness', label: 'Agent Activeness', icon: 'zap', hint: 'waked (inactive -> active)' }
   ];
+  /* Office KPIs = the five above + withdraw volume (office-wide, no BDO attached). */
+  var OFFICE_DEFS = TARGET_DEFS.concat([
+    { key: 'withdraw', label: 'Withdraw Volume', icon: 'chart', hint: 'cumulative from the uploaded file' }
+  ]);
 
   function skeletonHtml() {
     var c = ''; for (var i = 0; i < 4; i++) c += '<div class="skel skel-card"></div>';
@@ -189,31 +193,62 @@
     api('dashboard', { qs: m ? '&month=' + m : '' }).then(function (d) {
       state.month = d.month;
       var att = d.attainment;
-      var bars = TARGET_DEFS.map(function (t) {
+      var visible = (d.visibleKpis || '').split(',');
+      function shown(k) { return visible.indexOf(k) >= 0; }
+      var defs = OFFICE_DEFS.filter(function (t) { return shown(t.key) && att[t.key]; });
+
+      var bars = defs.map(function (t) {
         var a = att[t.key];
         var pct = a.pct == null ? 0 : a.pct;
         var meta = a.target > 0 ? fmt(a.actual) + ' / ' + fmt(a.target) : fmt(a.actual) + ' (no target)';
+        var wtag = a.weight > 0 ? ' <span class="note">(' + a.weight + '%)</span>' : '';
         return '<div class="tg-row"><span class="tg-ic">' + svg(t.icon) + '</span>' +
-          '<span class="tg-name">' + esc(t.label) + '</span>' +
+          '<span class="tg-name">' + esc(t.label) + wtag + '</span>' +
           '<div class="bar" style="flex:1"><i style="width:' + pct + '%"></i></div>' +
           '<span class="tg-meta">' + meta + '</span>' +
           '<span class="tg-pct">' + (a.pct == null ? '-' : a.pct + '%') + '</span></div>';
       }).join('');
+
+      var cards = card('users', 'Total Agents', fmt(d.totalAgents));
+      if (shown('serving')) cards += card('users', 'Served', fmt(att.serving.actual));
+      if (shown('float')) cards += card('dollar', 'Float (SERVED only)', fmt(att.float.actual));
+      if (shown('visits')) cards += card('target', 'Visits', fmt(att.visits.actual));
+      if (shown('apk')) cards += card('rotate', 'APK ' + esc(d.apkRequired) + '+', fmt(att.apk.actual));
+      if (shown('activeness')) cards += card('zap', 'Activeness (net)', fmt(att.activeness.actual), 'waked ' + fmt(d.waked) + ' - lost ' + fmt(d.lost));
+      if (shown('withdraw')) cards += card('chart', 'Withdraw Volume', fmt(att.withdraw.actual), 'office-wide');
+      cards += card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
+        d.achievement == null ? '-' : d.achievement + '%',
+        d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
+
+      /* OM: choose visible KPIs + required APK version */
+      var settings = can('dashboard', 'e')
+        ? '<div class="panel"><h2>' + svg('target') + 'Dashboard settings</h2>' +
+          '<div class="row" style="align-items:center">' +
+          OFFICE_DEFS.map(function (t) {
+            return '<label class="tgl' + (shown(t.key) ? ' on' : '') + '" style="cursor:pointer"><input type="checkbox" class="kpivis" value="' + t.key + '"' + (shown(t.key) ? ' checked' : '') + ' style="display:none">' + esc(t.label) + '</label>';
+          }).join('') +
+          '<div class="spacer"></div>' +
+          '<div class="field"><label>Required APK version</label><input id="apkReq" style="width:100px" value="' + esc(d.apkRequired) + '"></div>' +
+          '<button class="btn" data-action="dashSettingsSave">Save</button></div>' +
+          '<p class="note" style="margin-top:6px">Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads version ' + esc(d.apkRequired) + ' or newer.</p></div>'
+        : '';
+
       v.innerHTML =
         '<h1 class="page-title">Dashboard</h1><p class="page-sub">Performance for ' + esc(d.month) +
-        (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') + '</p>' +
+        (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
+        (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
         '<button class="btn" data-action="dashLoad">Load</button></div></div>' +
-        '<div class="grid cards" style="margin-bottom:16px">' +
-        card('users', 'Total Agents', fmt(d.totalAgents)) +
-        card('users', 'Served', fmt(att.serving.actual)) +
-        card('dollar', 'Float Served', fmt(att.float.actual)) +
-        card('target', 'Visits', fmt(att.visits.actual)) +
-        card('rotate', 'APK Updates', fmt(att.apk.actual)) +
-        card('percent', 'Achievement', d.achievement == null ? '-' : d.achievement + '%', d.achievement == null ? 'set targets first' : 'vs monthly targets') +
-        '</div>' +
-        '<div class="panel"><h2>' + svg('target') + 'Target Attainment</h2>' + bars + '</div>';
+        settings +
+        '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
+        '<div class="panel"><h2>' + svg('target') + 'Target Attainment' + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  function dashSettingsSave() {
+    var kpis = Array.prototype.map.call(document.querySelectorAll('.kpivis:checked'), function (c) { return c.value; });
+    api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim() } })
+      .then(function () { toast('Dashboard settings saved', 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
   }
   function card(icon, title, value, sub) {
     return '<div class="card"><div class="card-head"><span class="kpi-ic">' + svg(icon) + '</span><h3>' + esc(title) + '</h3></div>' +
@@ -269,9 +304,33 @@
       '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs (Served / Visit / APK / Active)</th>' +
       (restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
-      '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>';
+      '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>' +
+      '<div id="inactivePanel"></div>';
     agentsBodyLoad();
+    inactivePanelLoad();
     var s = elById('agentSearch'); if (s && state._agentSearch) s.focus();
+  }
+  /* Inactive agents - two categories, visible to every BDO and management. */
+  function inactivePanelLoad() {
+    var el = elById('inactivePanel'); if (!el) return;
+    api('inactive_agents').then(function (d) {
+      if (!d.counts.all) { el.innerHTML = ''; return; }
+      var mode = state._inactMode === 'all' ? 'all' : 'lost';
+      var list = mode === 'all' ? d.all : d.lost;
+      var rows = list.map(function (a) {
+        var lostTag = a.act_prev === 'ACTIVE' ? ' <span class="pill bad">was ACTIVE</span>' : '';
+        return '<tr><td>' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
+          '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td></tr>';
+      }).join('') || '<tr><td colspan="4" class="note">None - great.</td></tr>';
+      el.innerHTML =
+        '<div class="panel"><h2>' + svg('zap') + 'Inactive Agents &mdash; ' + esc(d.month) + '</h2>' +
+        '<p class="note">Category 2 first: they were ACTIVE last month and went silent - wake them before month end.</p>' +
+        '<div class="row" style="margin-bottom:10px">' +
+        '<button class="role-chip' + (mode === 'lost' ? ' active' : '') + '" data-action="inactMode" data-m="lost">Were active last month (' + d.counts.lost + ')</button>' +
+        '<button class="role-chip' + (mode === 'all' ? ' active' : '') + '" data-action="inactMode" data-m="all">All inactive this month (' + d.counts.all + ')</button></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+    }).catch(function () { el.innerHTML = ''; });
   }
   function locExport() {
     api('agents_location_export').then(function (d) {
@@ -591,35 +650,49 @@
       list.forEach(function (t) { byMonth[t.month] = t; });
       var m = m0;
       var t = byMonth[m] || {};
-      var fields = TARGET_DEFS.map(function (td) {
-        var val = t[td.key === 'float' ? 'float_target' : td.key + '_target'];
+      var fields = OFFICE_DEFS.map(function (td) {
+        var val = t[td.key + '_target'];
+        var wv = t[td.key + '_w'];
         return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
           '<span class="tg-name">' + esc(td.label) + '</span>' +
-          '<input id="tg_' + td.key + '" type="number" min="0" style="width:170px" value="' + (val != null ? esc(val) : '') + '" placeholder="0">' +
+          '<div class="field"><label>Target</label><input id="tg_' + td.key + '" type="number" min="0" style="width:150px" value="' + (val != null ? esc(val) : '') + '" placeholder="0"></div>' +
+          '<div class="field"><label>Weight %</label><input id="tgw_' + td.key + '" type="number" min="0" max="100" style="width:90px" class="tg-w" value="' + (wv != null && Number(wv) > 0 ? esc(wv) : '') + '" placeholder="0"></div>' +
           '<span class="note" style="flex:1">' + esc(td.hint) + '</span></div>';
       }).join('');
       var hist = list.map(function (r) {
-        return '<tr><td>' + esc(r.month) + '</td><td>' + fmt(r.serving_target) + '</td><td>' + fmt(r.float_target) + '</td><td>' + fmt(r.visits_target) + '</td><td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td></tr>';
+        return '<tr><td>' + esc(r.month) + '</td><td>' + fmt(r.serving_target) + '</td><td>' + fmt(r.float_target) + '</td><td>' + fmt(r.visits_target) + '</td><td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td><td>' + fmt(r.withdraw_target || 0) + '</td></tr>';
       }).join('') || '<tr><td colspan="6">' + emptyState('target', 'No targets yet', 'Type this month\'s targets above and save.') + '</td></tr>';
       v.innerHTML =
         '<h1 class="page-title">Monthly Targets</h1><p class="page-sub">Type the office targets for the month &mdash; they drive the dashboard and the commission achievement.</p>' +
-        '<div class="panel"><h2>' + svg('target') + 'Set Targets</h2>' +
+        '<div class="panel"><h2>' + svg('target') + 'Set Office Targets &amp; KPI Weights</h2>' +
+        '<p class="note">Weights decide the REAL achieved performance (e.g. Withdraw 30%, Visits 10%, APK 10%, Float 20%...). They must total <b>100</b> - or leave all empty for a plain average.</p>' +
         '<div class="row" style="margin-bottom:8px"><div class="field"><label>Month</label><input id="tgMonth" type="month" value="' + esc(m) + '"></div>' +
         '<button class="ghost" data-action="tgLoad">Load month</button><div class="spacer"></div>' +
+        '<span class="note">Weights total: <b id="tgSum">0</b>%</span>' +
         (can('targets', 'e') ? '<button class="btn" data-action="tgSave">Save targets</button>' : '<span class="note">View only.</span>') + '</div>' +
         fields + '</div>' +
         bdoTargetsPanel(bt) +
         bdoPerfPanel(perf) +
-        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
+      tgUpdateSum();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function tgSave() {
     var body = { month: elById('tgMonth').value };
-    TARGET_DEFS.forEach(function (td) { body[td.key] = elById('tg_' + td.key).value; });
+    OFFICE_DEFS.forEach(function (td) {
+      body[td.key] = elById('tg_' + td.key).value;
+      body[td.key + '_w'] = elById('tgw_' + td.key).value;
+    });
     api('targets_save', { body: body })
       .then(function () { toast('Targets saved for ' + body.month, 'ok'); state.month = body.month; renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function tgUpdateSum() {
+    var s = 0;
+    OFFICE_DEFS.forEach(function (td) { var el = elById('tgw_' + td.key); if (el) s += Number(el.value) || 0; });
+    var el = elById('tgSum');
+    if (el) { el.textContent = s; el.style.color = (s === 100 || s === 0) ? 'var(--ok)' : 'var(--bad)'; }
   }
 
   /* ---------------- commission & months ---------------- */
@@ -966,6 +1039,8 @@
     if (a === 'repLoad') { state._repMonth = elById('repMonth').value; renderTab(); return; }
     if (a === 'rankPeriod') { state._rankPeriod = node.getAttribute('data-p'); renderTab(); return; }
     if (a === 'rankLoad') { state._rankDate = elById('rankDate').value; renderTab(); return; }
+    if (a === 'dashSettingsSave') { dashSettingsSave(); return; }
+    if (a === 'inactMode') { state._inactMode = node.getAttribute('data-m'); inactivePanelLoad(); return; }
     if (a === 'btSave') { btSave(); return; }
     if (a === 'doUpload') { doUpload(); return; }
     if (a === 'loadDemo') { loadDemo(); return; }
@@ -1010,17 +1085,19 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
     if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
+    if (n && n.classList && n.classList.contains('kpivis')) { var lbl = n.closest('label'); if (lbl) lbl.classList.toggle('on', n.checked); return; }
   }
   var _searchTimer = null;
   function onInput(e) {
     if (e.target && e.target.classList && e.target.classList.contains('bt-w')) { btUpdateSum(); return; }
+    if (e.target && e.target.classList && e.target.classList.contains('tg-w')) { tgUpdateSum(); return; }
     if (e.target && e.target.id === 'agentSearch') {
-      /* live search from the first letter, debounced so typing stays fast */
+      /* live search from the first letter, tight debounce for speed */
       clearTimeout(_searchTimer);
       var val = e.target.value.trim();
       _searchTimer = setTimeout(function () {
         state._agentSearch = val; state.agentPage = 1; agentsBodyLoad();
-      }, 220);
+      }, 150);
     }
   }
   function onSubmit(e) {

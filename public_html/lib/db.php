@@ -159,7 +159,33 @@ function ensure_schema($pdo) {
   $pdo->exec(schema_v2_ddl());
   $pdo->exec(schema_v3_ddl());
   try { $pdo->exec('ALTER TABLE users ADD COLUMN working_days VARCHAR(16) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+  schema_v4_apply($pdo);
   seed($pdo);
+}
+
+/*
+ * v4: office KPI weights + withdraw-volume target, per-agent activeness
+ * transition snapshot (current vs previous month), search indexes, and the
+ * OM-configurable required APK version + dashboard KPI visibility.
+ */
+function schema_v4_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE targets ADD COLUMN withdraw_target BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN serving_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN float_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN visits_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN apk_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN activeness_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN withdraw_w INT NOT NULL DEFAULT 0',
+    'ALTER TABLE agents ADD COLUMN act_current VARCHAR(12) NOT NULL DEFAULT ""',
+    'ALTER TABLE agents ADD COLUMN act_prev VARCHAR(12) NOT NULL DEFAULT ""',
+    'ALTER TABLE agents ADD COLUMN act_month CHAR(7) NOT NULL DEFAULT ""',
+    'ALTER TABLE agents ADD INDEX idx_agents_name (name)',
+    'ALTER TABLE agents ADD INDEX idx_agents_phone (phone)',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("apk_required_version","2.0")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("dashboard_kpis","serving,float,visits,apk,activeness,withdraw")')->execute();
 }
 
 /*
@@ -279,6 +305,11 @@ function upgrade_schema($pdo) {
     $pins->execute(array('bdo', 'reports', 1, 0, 0));
     $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
     $pdo->prepare('UPDATE app_settings SET value = "3" WHERE name = "schema_version"')->execute();
+    $ver = 3;
+  }
+  if ($ver < 4) {
+    schema_v4_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "4" WHERE name = "schema_version"')->execute();
   }
 }
 
@@ -320,5 +351,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","3")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","4")')->execute();
 }

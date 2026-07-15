@@ -241,31 +241,53 @@ try {
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
 
       $tot = (int)db()->query('SELECT COUNT(*) c FROM agents')->fetch()['c'];
-      $a = month_actuals($month);
-
-      $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
-      $tg->execute(array($month));
-      $t = $tg->fetch();
-
-      $att = array(); $sum = 0; $nn = 0;
-      $pairs = array(
-        'serving' => array($a['served'], $t ? (int)$t['serving_target'] : 0),
-        'float' => array($a['float'], $t ? (int)$t['float_target'] : 0),
-        'visits' => array($a['visit'], $t ? (int)$t['visits_target'] : 0),
-        'apk' => array($a['apk'], $t ? (int)$t['apk_target'] : 0),
-        'activeness' => array($a['active'], $t ? (int)$t['activeness_target'] : 0),
-      );
-      foreach ($pairs as $k => $p) {
-        $pct = $p[1] > 0 ? min(100, round($p[0] / $p[1] * 100)) : null;
-        $att[$k] = array('actual' => $p[0], 'target' => $p[1], 'pct' => $pct);
-        if ($pct !== null) { $sum += $pct; $nn++; }
-      }
-      $achievement = $nn ? round($sum / $nn) : null;
+      $oa = office_attainment($month);
+      $visible = setting_get('dashboard_kpis', 'serving,float,visits,apk,activeness,withdraw');
 
       respond(array(
         'month' => $month, 'status' => month_status($month), 'openMonth' => open_month(),
-        'totalAgents' => $tot, 'attainment' => $att, 'achievement' => $achievement,
+        'totalAgents' => $tot, 'attainment' => $oa['attainment'], 'achievement' => $oa['achievement'],
+        'weighted' => $oa['weighted'], 'fromUpload' => $oa['fromUpload'],
+        'waked' => $oa['waked'], 'lost' => $oa['lost'],
+        'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
       ));
+    }
+
+    /* OM chooses which KPIs show on everyone's dashboard + the required APK version. */
+    case 'dashboard_settings_save': {
+      $u = require_auth(); require_perm($u, 'dashboard', 'e');
+      $kpis = bval('kpis', array());
+      $valid = array_keys(office_kpi_defs());
+      $chosen = array();
+      foreach ((array)$kpis as $k) if (in_array($k, $valid, true)) $chosen[] = $k;
+      if (!count($chosen)) fail('Choose at least one KPI to display');
+      setting_set('dashboard_kpis', implode(',', $chosen));
+      $apkV = trim((string)bval('apkVersion'));
+      if ($apkV !== '') {
+        if (!preg_match('/^\d+(\.\d+)?$/', $apkV)) fail('APK version must be a number like 2.0');
+        setting_set('apk_required_version', $apkV);
+      }
+      audit($u['id'], 'dashboard_settings', implode(',', $chosen) . ' apk>=' . $apkV);
+      respond(array('ok' => true));
+    }
+
+    /*
+     * Inactive agents panel (visible to every BDO and management):
+     *   all  = every agent reading INACTIVE in the current month's file
+     *   lost = the subset who were ACTIVE the previous month (rescue first!)
+     */
+    case 'inactive_agents': {
+      $u = require_auth();
+      if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      $month = open_month();
+      $st = db()->prepare('SELECT id, acc, name, phone, branch, physical_location, act_prev
+                           FROM agents WHERE act_month = ? AND act_current = "INACTIVE"
+                           ORDER BY (act_prev = "ACTIVE") DESC, name LIMIT 500');
+      $st->execute(array($month));
+      $all = $st->fetchAll();
+      $lost = array_values(array_filter($all, function ($a) { return $a['act_prev'] === 'ACTIVE'; }));
+      respond(array('month' => $month, 'all' => $all, 'lost' => $lost,
+                    'counts' => array('all' => count($all), 'lost' => count($lost))));
     }
 
     /* ================= AGENTS ================= */
@@ -287,8 +309,15 @@ try {
       $off = ($page - 1) * $limit;
       $where = ''; $vals = array();
       if ($search !== '') {
-        $where = 'WHERE name LIKE ? OR acc LIKE ? OR phone LIKE ? OR branch LIKE ?';
-        $s = '%' . $search . '%'; $vals = array($s,$s,$s,$s);
+        if (preg_match('/^\d+$/', $search)) {
+          /* digits = account/phone lookup; prefix match uses the indexes (fast) */
+          $where = 'WHERE acc LIKE ? OR phone LIKE ?';
+          $vals = array($search . '%', $search . '%');
+        } else {
+          /* text: names/branches anywhere + account prefix (accounts can be alphanumeric) */
+          $where = 'WHERE name LIKE ? OR branch LIKE ? OR acc LIKE ?';
+          $s = '%' . $search . '%'; $vals = array($s, $s, $search . '%');
+        }
       }
       $tot = db()->prepare("SELECT COUNT(*) c FROM agents $where");
       $tot->execute($vals);
@@ -477,12 +506,35 @@ try {
       $insKpi = db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)');
       $getKpiOwner = db()->prepare('SELECT bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "served"');
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
+      $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
       $flagged = 0;
 
+      /* PASS 1: parse everything (needed for office snapshot totals). */
+      $apkRequired = setting_get('apk_required_version', '2.0');
+      $parsed = array();
+      $stats = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0);
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
+        $r['act_cur'] = act_norm($r['activeness']);
+        $r['act_prev'] = act_norm($r['activeness_prev']);
+        $r['apk_yes'] = apk_is_yes($r['apk_raw'], $apkRequired);
+        /* activeness credit = truly WAKED: inactive last month, active now */
+        $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_prev'] === 'INACTIVE');
+        $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_prev'] === 'ACTIVE');
+        $parsed[] = $r;
+        if ($r['served'] === 'SERVED') { $stats['serving']++; $stats['float'] += $r['float']; }
+        if ($r['visit'] === 'YES') $stats['visits']++;
+        if ($r['apk_yes']) $stats['apk']++;
+        if ($r['waked']) $stats['waked']++;
+        if ($r['lost']) $stats['lost']++;
+        $stats['withdraw'] += $r['withdraw'];
+      }
+      if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
+      $stats['net_active'] = $stats['waked'] - $stats['lost'];
 
+      /* PASS 2: write agents, history, bases, ledger, flags. */
+      foreach ($parsed as $r) {
         // resolve BDO: row column -> global choice -> unassigned; auto-create unknown
         $key = 'unassigned';
         $label = $r['bdo'] !== '' ? $r['bdo'] : $globalBdo;
@@ -501,9 +553,8 @@ try {
             }
           }
         }
-        /* Positive results with no BDO named and no prior BDO credit = the
-         * partner served this agent -> credit "partners", not "unassigned". */
-        $positive = ($r['served'] === 'SERVED' || $r['visit'] === 'YES' || $r['apk'] === 'YES' || stripos($r['activeness'], 'active') === 0);
+        /* Positive results with no BDO named = the partner did it -> "partners". */
+        $positive = ($r['served'] === 'SERVED' || $r['visit'] === 'YES' || $r['apk_yes'] || $r['waked']);
         if ($key === 'unassigned' && $positive) $key = 'partners';
         $bdos[$key] = true;
 
@@ -516,20 +567,21 @@ try {
           $insAgent->execute(array($r['acc'],$r['name'],$r['phone'],$r['branch'],$r['location'],$r['partner']));
           $id = (int)db()->lastInsertId();
         }
+        /* activeness transition snapshot - drives the Inactive Agents panel */
+        if ($r['act_cur'] !== '' || $r['act_prev'] !== '') $updAct->execute(array($r['act_cur'], $r['act_prev'], $month, $id));
+
         $agents++;
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
-                               $r['visit'], $r['apk'], $r['float'], $r['activeness'], $r['sa'], $r['served']));
+                               $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served']));
         $insBase->execute(array($month, $key, $id, $kind));
-        /* Feed the shared KPI ledger (first credit wins; duplicates ignored).
-         * If a BDO already served the agent this month, his credit stands. */
+        /* Ledger credits (BDO personal scores; first credit wins). */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key));
-        if ($r['apk'] === 'YES') $insKpi->execute(array($month, $id, 'apk', $key));
-        if (stripos($r['activeness'], 'active') === 0) $insKpi->execute(array($month, $id, 'active', $key));
+        if ($r['apk_yes']) $insKpi->execute(array($month, $id, 'apk', $key));
+        if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key));
 
-        /* Cross-check: a BDO claimed "served" but the released performance file
-         * says NOT_SERVED -> raise a visible flag against that BDO. */
+        /* Cross-check: claimed served but the released file says NOT_SERVED. */
         if ($r['served'] === 'NOT_SERVED') {
           $getKpiOwner->execute(array($month, $id));
           $owner = $getKpiOwner->fetch();
@@ -540,10 +592,15 @@ try {
           }
         }
       }
+
+      /* OFFICE snapshot for the dashboard: main KPIs come from this file, not
+       * from BDO manual marks. Re-uploading replaces the month's snapshot. */
+      setting_set('month_stats_' . $month, json_encode($stats));
+
       audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged);
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
-                    'priorityMode' => $priorityMode));
+                    'priorityMode' => $priorityMode, 'stats' => $stats));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
@@ -558,13 +615,21 @@ try {
       $u = require_auth(); require_perm($u, 'targets', 'e');
       $month = (string)bval('month');
       if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
-      db()->prepare('INSERT INTO targets (month, serving_target, float_target, visits_target, apk_target, activeness_target)
-                     VALUES (?,?,?,?,?,?)
+      /* weights: either all zero (plain average) or they must total 100 */
+      $wsum = 0; $w = array();
+      foreach (array_keys(office_kpi_defs()) as $col) { $w[$col] = (int)num(bval($col . '_w')); $wsum += $w[$col]; }
+      if ($wsum !== 0 && $wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%) - or leave all at 0 for a plain average');
+      db()->prepare('INSERT INTO targets (month, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
+                       serving_w, float_w, visits_w, apk_w, activeness_w, withdraw_w)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
-                       visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target)')
+                       visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
+                       withdraw_target=VALUES(withdraw_target), serving_w=VALUES(serving_w), float_w=VALUES(float_w),
+                       visits_w=VALUES(visits_w), apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w), withdraw_w=VALUES(withdraw_w)')
           ->execute(array($month, (int)num(bval('serving')), (int)num(bval('float')), (int)num(bval('visits')),
-                          (int)num(bval('apk')), (int)num(bval('activeness'))));
-      audit($u['id'], 'targets_save', $month);
+                          (int)num(bval('apk')), (int)num(bval('activeness')), (int)num(bval('withdraw')),
+                          $w['serving'], $w['float'], $w['visits'], $w['apk'], $w['activeness'], $w['withdraw']));
+      audit($u['id'], 'targets_save', $month . ($wsum ? ' weighted' : ''));
       respond(array('ok' => true, 'month' => $month));
     }
 
@@ -840,20 +905,9 @@ try {
       $calc->execute(array($month));
       $saved = $calc->fetch() ?: null;
 
-      // suggested achievement from typed targets vs actuals (same math as dashboard)
-      $ach = null;
-      $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
-      $tg->execute(array($month));
-      if ($t = $tg->fetch()) {
-        $a = month_actuals($month);
-        $sum = 0; $nn = 0;
-        foreach (array(array($a['served'],$t['serving_target']), array($a['float'],$t['float_target']),
-                       array($a['visit'],$t['visits_target']), array($a['apk'],$t['apk_target']),
-                       array($a['active'],$t['activeness_target'])) as $p) {
-          if ((int)$p[1] > 0) { $sum += min(100, round($p[0] / $p[1] * 100)); $nn++; }
-        }
-        if ($nn) $ach = round($sum / $nn);
-      }
+      // suggested achievement = the office's REAL (weighted) attainment
+      $oa = office_attainment($month);
+      $ach = $oa['achievement'];
 
       respond(array('month' => $month, 'status' => month_status($month),
                     'uploadedRows' => (int)$c['c'], 'servedRows' => (int)$c['s'],
