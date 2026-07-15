@@ -225,3 +225,51 @@ tbody tr:hover{background:rgba(255,140,26,.07)}
 .empty{display:flex;flex-direction:column;align-items:center;gap:10px;padding:30px 16px;text-align:center;color:var(--muted)}
 .empty svg{width:38px;height:38px;opacity:.6;color:var(--fire2)}
 .empty b{color:var(--ink);font-size:15px}
+
+/* today chip in sidebar */
+.today-chip{display:flex;align-items:center;gap:8px;margin:0 4px 10px;padding:8px 12px;border-radius:11px;
+  background:var(--grad-soft);border:1px solid var(--line);color:var(--yellow);font-weight:700;font-size:13px}
+.today-chip svg{width:16px;height:16px;color:var(--fire2)}
+
+/* ================= LIGHT THEME (clear, readable) ================= */
+body.light{
+  --bg:#fbf5ee; --bg2:#ffffff; --panel:#ffffff; --panel2:#fff6ec; --line:#efdcc8;
+  --ink:#2a1608; --muted:#7c5a3a;
+  --fire:#e85d00; --fire2:#c2410c; --gold:#b45309; --yellow:#a15c07;
+  --grad:linear-gradient(135deg,#ff5400 0%,#ff8c1a 45%,#ffc93c 100%);
+  --grad-soft:linear-gradient(135deg,rgba(255,110,0,.12),rgba(255,180,40,.10));
+  --ok:#3f8f43; --bad:#c62f1d;
+  --e1:0 1px 2px rgba(120,70,20,.10);
+  --e2:0 6px 18px rgba(120,70,20,.14);
+  --glow:0 0 14px rgba(255,140,26,.18);
+  --glow-strong:0 0 20px rgba(255,140,26,.32);
+}
+body.light{
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(255,140,26,.10), transparent 60%),
+    radial-gradient(700px 420px at -10% 110%, rgba(255,201,60,.08), transparent 60%),
+    var(--bg);
+}
+body.light .sidebar{background:linear-gradient(180deg,#fff3e6,#ffffff)}
+body.light input,body.light select{background:#fffaf4;color:var(--ink)}
+body.light .bar{background:#f0e2d2}
+body.light .skel{background:linear-gradient(90deg,var(--panel2) 25%,#f3e2cf 37%,var(--panel2) 63%)}
+body.light .login{background:radial-gradient(1000px 520px at 50% -10%, rgba(255,140,26,.16), transparent 65%),var(--bg)}
+body.light .card,body.light .panel{background:linear-gradient(180deg,#ffffff,#fff8f0)}
+body.light th{background:#fff6ec}
+body.light .avatar,body.light .sb-mark,body.light .brandmark{color:#3a1400}
+body.light .nav-item{color:#5a4028}
+body.light .nav-item.active,body.light .nav-item.active *{color:#3a1400}
+body.light a{color:var(--gold)}
+/* pills: readable dark text on light tints */
+body.light .pill.fire{background:rgba(255,110,0,.14);color:#b5450b}
+body.light .pill.gold{background:rgba(255,193,7,.18);color:#8a5a00}
+body.light .pill.ok{background:rgba(63,143,67,.15);color:#2f6f32}
+body.light .pill.bad{background:rgba(198,47,29,.13);color:#a3271b}
+body.light .pill.dim{background:rgba(124,90,58,.12);color:#6b4b2e}
+body.light .kchip.done{background:rgba(63,143,67,.14);color:#2f6f32;border-color:rgba(63,143,67,.3)}
+body.light .kchip.todo{color:#b5450b}
+body.light .role-chip{color:#7c5a3a}
+body.light .tgl{color:#7c5a3a}
+body.light .mo{color:#7c5a3a}
+body.light tbody tr:hover{background:rgba(255,140,26,.06)}

@@ -37,6 +37,23 @@
   }
   function initials(n) { var w = ('' + n).match(/[A-Za-z]+/g) || []; return ((w[0] ? w[0][0] : '') + (w[1] ? w[1][0] : '')).toUpperCase() || 'U'; }
   function curMonth() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  function isoOf(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function isoToday() { return isoOf(new Date()); }
+  function isoDaysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); return isoOf(d); }
+  function prettyToday() {
+    var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    var d = new Date();
+    return days[d.getDay()] + ', ' + d.getDate() + ' ' + mon[d.getMonth()] + ' ' + d.getFullYear();
+  }
+  /* Theme: dark (default fire) or light. Persisted in localStorage. */
+  function applyTheme() { document.body.classList.toggle('light', localStorage.getItem('imani_theme') === 'light'); }
+  function toggleTheme() {
+    var light = !document.body.classList.contains('light');
+    document.body.classList.toggle('light', light);
+    localStorage.setItem('imani_theme', light ? 'light' : 'dark');
+    var b = elById('themeBtn'); if (b) b.innerHTML = light ? (svg('flame') + ' Dark') : (svg('eye') + ' Light');
+  }
 
   /* ---------------- icons (inline SVG, stroke) ---------------- */
   var ICON = {
@@ -99,6 +116,7 @@
 
   /* ---------------- boot / shell ---------------- */
   function boot() {
+    applyTheme();
     api('me').then(function (d) { state.user = d.user; state.perms = d.perms; state.tab = defaultTab(); render(); })
       .catch(function () { state.user = null; render(); });
   }
@@ -143,10 +161,13 @@
     elById('app').innerHTML =
       '<div class="shell"><aside class="sidebar">' +
       '<div class="sb-brand"><div class="sb-mark">' + svg('flame') + '</div><div class="sb-title">IMANI<br>SUPERDEALER<small>Business Management</small></div></div>' +
+      '<div class="today-chip">' + svg('cal') + '<span>' + esc(prettyToday()) + '</span></div>' +
       nav +
       '<div class="sb-foot"><div class="sb-user"><span class="avatar">' + esc(initials(state.user.name)) + '</span>' +
       '<div><b>' + esc(state.user.name) + '</b><small>' + esc(roleLabel(state.user.role)) + '</small></div></div>' +
-      '<div class="sb-actions"><button class="ghost mini" data-action="pwd">Password</button>' +
+      '<div class="sb-actions"><button class="ghost mini" id="themeBtn" data-action="toggleTheme">' +
+      (document.body.classList.contains('light') ? svg('flame') + ' Dark' : svg('eye') + ' Light') + '</button>' +
+      '<button class="ghost mini" data-action="pwd">Password</button>' +
       '<button class="ghost mini" data-action="logout">Sign out</button></div></div>' +
       '</aside><main class="main"><div id="view"></div></main></div>';
     renderTab();
@@ -414,7 +435,7 @@
       var dailyPanel = editable
         ? '<div class="panel"><h2>' + svg('cal') + 'My Daily Report</h2>' +
           '<p class="note">Report each working day BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents below.</p>' +
-          '<div class="row"><div class="field"><label>Date</label><input id="drDate" type="date" value="' + new Date().toISOString().slice(0, 10) + '" max="' + new Date().toISOString().slice(0, 10) + '"></div>' +
+          '<div class="row"><div class="field"><label>Report date (today or up to 2 days back)</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
           '<div class="field"><label>Total float served</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
           '<div class="field"><label>Agents visited</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
           '<div class="field"><label>Inactive waked</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
@@ -496,25 +517,41 @@
       '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
       '<button class="btn" data-action="setLocGo" data-id="' + id + '">Save location</button></div>');
   }
-  /* Fast path: swap the tapped chip in place (no full page reload). */
-  function chipDoneHtml(kpiKey) {
+  /* Fast path: swap the tapped chip in place. NEVER reloads the page or loses
+   * the user's position - the row stays where it is with a fresh green chip. */
+  function chipDoneHtml(kpiKey, owner) {
     var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
-    return '<span class="kchip done mine" title="Done by you">' + esc(c ? c.label : kpiKey) + ' &#10003; <small>' + esc(state.user.username) + '</small></span>';
+    var mine = owner === state.user.username;
+    return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(owner) + '">' +
+      esc(c ? c.label : kpiKey) + ' &#10003; <small>' + esc(owner) + '</small></span>';
+  }
+  function swapChip(node, kpi, owner) {
+    if (!node || !node.parentNode) return false;
+    var tmp = document.createElement('span');
+    tmp.innerHTML = chipDoneHtml(kpi, owner);
+    node.parentNode.replaceChild(tmp.firstChild, node);
+    return true;
   }
   function kpiMark(id, kpi, name, node, location) {
     api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '' } })
       .then(function () {
         toast(name + ': ' + kpi + ' marked - counted for you', 'ok');
-        if (node && node.parentNode) {
-          var span = document.createElement('span');
-          span.innerHTML = chipDoneHtml(kpi);
-          node.parentNode.replaceChild(span.firstChild, node);
-        } else { renderTab(); }
+        swapChip(node, kpi, state.user.username);
+        /* finished serving an agent found via search? clear the search so the
+         * next lookup starts fresh (the list reloads, position resets cleanly) */
+        if (kpi === 'served' && state.tab === 'agents' && state._agentSearch) {
+          state._agentSearch = ''; state.agentPage = 1;
+          var si = elById('agentSearch');
+          if (si) { si.value = ''; si.focus(); }
+          agentsBodyLoad();
+        }
       })
       .catch(function (e) {
         if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
         toast(e.message, 'err');
-        if (String(e.message).indexOf('Already done') >= 0) renderTab(); // refresh to show the owner
+        /* someone else already did it - show their name on the chip, in place */
+        var m = String(e.message).match(/Already done by (\S+)/);
+        if (m) swapChip(node, kpi, m[1]);
       });
   }
   /* Forced physical-location entry before an agent can be marked served. */
@@ -1017,6 +1054,7 @@
     if (!node) return;
     var a = node.getAttribute('data-action');
     if (a === 'tab') { state.tab = node.getAttribute('data-tab'); renderShell(); return; }
+    if (a === 'toggleTheme') { toggleTheme(); return; }
     if (a === 'logout') { doLogout(); return; }
     if (a === 'pwd') { pwdModal(); return; }
     if (a === 'pwdSave') { pwdSave(); return; }

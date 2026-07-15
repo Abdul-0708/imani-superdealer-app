@@ -709,6 +709,7 @@ try {
       $date = (string)bval('date');
       if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) fail('Choose the date of the day');
       if ($date > date('Y-m-d')) fail('Cannot report a future date');
+      if ($date < date('Y-m-d', strtotime('-2 days'))) fail('You can only report today or up to 2 days back');
       $month = substr($date, 0, 7);
       if (month_status($month) === 'CLOSED') fail('Month ' . $month . ' is closed');
       db()->prepare('INSERT INTO daily_reports (bdo, report_date, month, float_served, visited, waked, apk, note)
