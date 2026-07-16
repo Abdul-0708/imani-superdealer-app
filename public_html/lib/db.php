@@ -160,6 +160,7 @@ function ensure_schema($pdo) {
   $pdo->exec(schema_v3_ddl());
   try { $pdo->exec('ALTER TABLE users ADD COLUMN working_days VARCHAR(16) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   schema_v4_apply($pdo);
+  try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT "upload"'); } catch (Exception $e) { /* exists */ }
   seed($pdo);
 }
 
@@ -310,6 +311,13 @@ function upgrade_schema($pdo) {
   if ($ver < 4) {
     schema_v4_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "4" WHERE name = "schema_version"')->execute();
+    $ver = 4;
+  }
+  if ($ver < 5) {
+    /* who caused each KPI credit: 'upload' (from the file) or 'bdo' (live mark).
+     * Only 'bdo' marks can be reversed by the BDO; OM can reverse anything. */
+    try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT "upload"'); } catch (Exception $e) { /* exists */ }
+    $pdo->prepare('UPDATE app_settings SET value = "5" WHERE name = "schema_version"')->execute();
   }
 }
 
@@ -351,5 +359,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","4")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","5")')->execute();
 }

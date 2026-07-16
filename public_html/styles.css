@@ -273,3 +273,51 @@ body.light .role-chip{color:#7c5a3a}
 body.light .tgl{color:#7c5a3a}
 body.light .mo{color:#7c5a3a}
 body.light tbody tr:hover{background:rgba(255,140,26,.06)}
+
+/* ===== v1.5 elements: reverse chip, inactive chip, wider table ===== */
+.kchip-x{background:transparent;border:0;color:inherit;cursor:pointer;font-weight:900;font-size:15px;line-height:1;padding:0 3px;opacity:.65;margin-left:3px}
+.kchip-x:hover{opacity:1;color:var(--bad)}
+.kchip.bad-off{background:rgba(255,107,94,.12);color:var(--bad);border-color:rgba(255,107,94,.3)}
+body.light .kchip.bad-off{background:rgba(198,47,29,.12);color:#a3271b}
+.panel.wide{padding:14px}
+.tablewrap.tall{max-height:74vh}
+
+/* ===== MOBILE polish - stop items merging/overlapping ===== */
+@media (max-width:860px){
+  .main{padding:12px;max-width:100%}
+  .page-title{font-size:19px}
+  .row{gap:8px}
+  .row>.field{flex:1 1 100%;min-width:0}
+  .row>.field input,.row>.field select{width:100%;min-width:0}
+  input,select{min-width:0}
+  .row>button.btn,.row>button.ghost,.row>button.danger{flex:1 1 auto}
+  .cards{grid-template-columns:1fr 1fr}
+  .card{padding:12px}
+  .kpi{font-size:20px}
+  .panel{padding:14px}
+  table{font-size:12px}
+  th,td{padding:8px 7px}
+  .kchips{gap:5px}
+  .kchip{padding:5px 9px;font-size:11px}
+  .tg-row{flex-wrap:wrap}
+  .tg-name{width:auto}
+  .tg-meta{width:auto;text-align:left}
+  /* sidebar as a tidy top bar */
+  .sidebar{gap:6px;padding:8px 10px;align-items:center}
+  .sb-brand{flex:1 1 auto;padding:2px 6px}
+  .sb-mark{width:34px;height:34px}
+  .today-chip{order:9;flex:1 1 100%;margin:2px 0;justify-content:center}
+  .nav-item{flex:0 0 auto;padding:8px 11px}
+  .nav-item span{font-size:13px}
+  .sb-foot{order:8;flex:1 1 100%;margin:0;border:0;padding:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sb-user{padding:2px}
+  .sb-actions{flex:1 1 auto;padding:0;justify-content:flex-end}
+  .sb-actions button{flex:0 1 auto}
+  .modalbox{max-width:100%}
+  .tablewrap.tall{max-height:62vh}
+}
+@media (max-width:430px){
+  .cards{grid-template-columns:1fr}
+  .nav-item span{display:inline}
+  .page-sub{font-size:12px}
+}

@@ -5,6 +5,40 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.5.0 — 2026-07-16 · "Real status, reversals & mobile"
+
+### Release notes
+Agent chips now show the **real status straight from the uploaded file**: an agent Active in the
+current month shows a locked "Active ✓" and **cannot be waked again** (server 409 "Agent is already
+Active this month"); an Inactive agent shows a **Wake** button. Waking updates his real status and
+counts only in that BDO's personal score — the office dashboard keeps the NET activeness
+(waked − lost) from the Excel, now with a **robust month-column detector** (Activeness/APK columns
+ordered by the month named in the header, so May/July files parse correctly whatever the working
+month). **Reversals:** every live mark records its source; a BDO can reverse his own accidental
+click (× on the chip, visible to everyone), the **OM can reverse any live mark**, and file-sourced
+statuses are protected ("re-upload to change it"). The daily KPI report moved to its own **Daily
+Report tab** (form + this month's history with OK/LATE). **BDO Performance lists every BDO
+top-to-bottom** (no-target BDOs at the bottom). The agents panel fills the page (74vh) with a small
+"Locations" download button, and the **mobile layout was overhauled** — no more merged/overlapping
+items.
+
+### Changes
+- **Schema v5** (self-upgrading): `agent_month_kpi.source` ('upload'|'bdo')
+- API: `kpi_mark` active-guard + act_current update; new `kpi_unmark` (own bdo-marks; OM any);
+  `agents`/`base` return kpi as {by, src} + per-agent `actStatus`; `bdo_performance` lists all BDOs
+- Parser: `pick_kpi_cols()` month-ordered current/previous detection for Activeness + APK
+- Deploy: upload `api.php`, `app.js`, `styles.css`, `index.html`, `lib/db.php`, `lib/helpers.php`
+
+## v1.4.x — 2026-07-14/15 · "Precise KPI rules + polish" (commits `d5e2d6e`, `0786c82`)
+
+- Office KPIs come from the uploaded Excel snapshot (not BDO marks): weighted achievement with
+  OM-set KPI weights incl. **Withdraw Volume** (office-wide, unattached); **APK counts at required
+  version 2.0**; activeness = NET (waked − lost); Inactive Agents panel (all / previously-active);
+  dashboard KPI visibility picker; exact bank-file headers (AGENT ACC, AgentName, " Servicing ",
+  BranchName, Activeness_status_May/July, APK June/July, Withdraw Volume, Agent visit)
+- In-place chip marking (no page reset) + search clears after serving; **light theme** toggle;
+  today's date chip; daily report back-dating up to 2 days
+
 ## v1.3.0 — 2026-07-14 · "Field operations pack"
 
 ### Release notes

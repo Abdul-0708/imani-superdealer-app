@@ -326,15 +326,15 @@ try {
       $st->execute($vals);
       $rows = $st->fetchAll();
 
-      /* Current-month KPI status for the page's agents (who did what). */
+      /* Current-month KPI status for the page's agents (who did what + source). */
       $month = open_month();
       $kpiMap = array();
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
-        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = $r['bdo'];
+        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source']);
       }
 
       $items = array();
@@ -344,6 +344,7 @@ try {
           'id' => $id, 'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
           'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
+          'actStatus' => ($r['act_month'] === $month ? strtoupper($r['act_current']) : ''),
         );
         if ($full) $base['partner'] = (int)$r['partner'];
         $items[] = $base;
@@ -371,23 +372,23 @@ try {
       $agents = array();
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $q = db()->prepare("SELECT id, acc, name, phone, branch, physical_location FROM agents WHERE id IN ($in)");
+        $q = db()->prepare("SELECT id, acc, name, phone, branch, physical_location, act_current, act_month FROM agents WHERE id IN ($in)");
         $q->execute($ids);
         $agents = $q->fetchAll();
       }
       $ever = array();
       foreach (db()->query('SELECT DISTINCT agent_id FROM service_history WHERE served_status = "SERVED"')->fetchAll() as $r) $ever[$r['agent_id']] = true;
 
-      /* Shared KPI state for these agents this month: kpi => {bdo} - visible to
-       * every BDO so nobody repeats work already done by a colleague. */
+      /* Shared KPI state for these agents this month: kpi => {by, src} - visible
+       * to every BDO so nobody repeats work already done by a colleague. */
       $kpiMap = array(); $servedNow = 0;
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
         foreach ($kq->fetchAll() as $r) {
           if (!isset($kpiMap[$r['agent_id']])) $kpiMap[$r['agent_id']] = array();
-          $kpiMap[$r['agent_id']][$r['kpi']] = $r['bdo'];
+          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source']);
           if ($r['kpi'] === 'served' && $r['bdo'] === $bdo) $servedNow++;
         }
       }
@@ -396,6 +397,8 @@ try {
         $id = (int)$a['id'];
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
+        $a['actStatus'] = ($a['act_month'] === $month ? strtoupper($a['act_current']) : '');
+        unset($a['act_current'], $a['act_month']);
       }
       unset($a);
       $order = array('priority'=>0,'new'=>1,'never'=>2);
@@ -455,22 +458,65 @@ try {
         }
       }
 
+      /* Real-status guard: an agent already ACTIVE (from the file) cannot be
+       * "waked" again. (served/visit/apk are guarded by the ledger below.) */
+      if ($kpi === 'active' && $agent['act_month'] === $month && strtoupper($agent['act_current']) === 'ACTIVE') {
+        fail('Agent is already Active this month - nothing to wake', 409);
+      }
+
       /* already done by someone? */
       $chk = db()->prepare('SELECT bdo, at FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
       $chk->execute(array($month, $agentId, $kpi));
       if ($done = $chk->fetch()) {
         fail('Already done by ' . $done['bdo'] . ' on ' . substr($done['at'], 0, 16) . ' - no need to repeat', 409);
       }
-      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)')
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?,?,?, "bdo")')
           ->execute(array($month, $agentId, $kpi, $bdo));
       if ($kpi === 'served') {
         db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, served_status, source)
                        VALUES (?,?,?,?,?, "SERVED", "bdo")')
             ->execute(array($agentId, $bdo, $month, date('Y-m-d'), date('H:i')));
       }
+      /* Waking an agent updates his real status so the chip locks and he cannot
+       * be waked again (counts in this BDO's performance, not the office file). */
+      if ($kpi === 'active') {
+        db()->prepare('UPDATE agents SET act_current = "ACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
+      }
       db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
       audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
       respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo));
+    }
+
+    /*
+     * Reverse a KPI mark. A BDO may undo his OWN live mark (accidental click);
+     * the OM (agents.edit) may reverse ANY mark. Only 'bdo'-source marks are
+     * reversible - statuses that came from the uploaded file are changed by
+     * re-uploading. The reversal is visible to everyone.
+     */
+    case 'kpi_unmark': {
+      $u = require_auth();
+      $isOM = can($u, 'agents', 'e');
+      if (!$isOM && !can($u, 'mybase', 'e')) fail('No access', 403);
+      $agentId = (int)bval('agentId');
+      $kpi = (string)bval('kpi');
+      if (!in_array($kpi, array('served', 'visit', 'apk', 'active'), true)) fail('Unknown KPI');
+      $month = open_month();
+      $chk = db()->prepare('SELECT bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
+      $chk->execute(array($month, $agentId, $kpi));
+      $row = $chk->fetch();
+      if (!$row) fail('Nothing to reverse', 404);
+      if ($row['source'] !== 'bdo') fail('This status came from the uploaded file - re-upload to change it', 400);
+      if (!$isOM && $row['bdo'] !== $u['username']) fail('You can only reverse your own marks', 403);
+
+      db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')->execute(array($month, $agentId, $kpi));
+      if ($kpi === 'served') {
+        db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ? AND source = "bdo"')->execute(array($month, $agentId, $row['bdo']));
+      }
+      if ($kpi === 'active') {
+        db()->prepare('UPDATE agents SET act_current = "INACTIVE" WHERE id = ? AND act_month = ?')->execute(array($agentId, $month));
+      }
+      audit($u['id'], 'kpi_unmark', $u['username'] . ' reversed ' . $kpi . ' agent=' . $agentId . ' (was ' . $row['bdo'] . ')');
+      respond(array('ok' => true, 'kpi' => $kpi, 'reversedFrom' => $row['bdo']));
     }
 
     /* ================= WEEKLY UPLOAD (rows parsed in the browser) ================= */
@@ -503,7 +549,7 @@ try {
       $kind = $priorityMode ? 'priority' : 'uploaded';
       $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
-      $insKpi = db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo) VALUES (?,?,?,?)');
+      $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?,?,?, 'upload')");
       $getKpiOwner = db()->prepare('SELECT bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "served"');
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
@@ -682,17 +728,27 @@ try {
     case 'bdo_performance': {
       $u = require_auth(); require_perm($u, 'targets', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $st = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
-      $st->execute(array($month));
-      $names = array();
-      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $r) $names[$r['username']] = $r['name'];
+      /* every active BDO, whether or not the OM has set his targets yet */
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
+      $tq->execute(array($month));
+      $targets = array();
+      foreach ($tq->fetchAll() as $t) $targets[$t['bdo']] = $t;
+      $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
       $out = array();
-      foreach ($st->fetchAll() as $t) {
-        $s = bdo_score(bdo_actuals($month, $t['bdo']), $t);
-        $out[] = array('bdo' => $t['bdo'], 'name' => isset($names[$t['bdo']]) ? $names[$t['bdo']] : $t['bdo'],
-                       'score' => $s['score'], 'flag' => $s['flag'], 'kpis' => $s['kpis']);
+      foreach ($bdos as $b) {
+        if (isset($targets[$b['username']])) {
+          $s = bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
+          $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => $s['score'], 'flag' => $s['flag'], 'kpis' => $s['kpis'], 'hasTargets' => true);
+        } else {
+          $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => null, 'flag' => 'none', 'kpis' => new stdClass(), 'hasTargets' => false);
+        }
       }
-      usort($out, function ($a, $b) { return ($b['score'] ?? -1) - ($a['score'] ?? -1); });
+      usort($out, function ($a, $b) {
+        $as = $a['score'] === null ? -1 : $a['score'];
+        $bs = $b['score'] === null ? -1 : $b['score'];
+        if ($as !== $bs) return $bs - $as;
+        return strcmp($a['name'], $b['name']);
+      });
       respond(array('month' => $month, 'rows' => $out));
     }
 

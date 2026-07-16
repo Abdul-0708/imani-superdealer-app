@@ -210,9 +210,10 @@ function parse_weekly_row($row, $month = '') {
     'branch' => trim((string)pick($idx, array('BranchName','Branch','tawi'))),
     'float' => $float,
     'visit' => yesno(pick($idx, array('Agent visit','Agent Visit','Agent Visits','visit','odk','agentvisitodk'))),
-    'apk_raw' => trim((string)pick_month_col($row, $month, 'apk')),
-    'activeness' => trim((string)pick_month_col($row, $month, 'activ')),
-    'activeness_prev' => trim((string)pick_month_col_prev($row, $month, 'activ')),
+    'apk_raw' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'apk'); return $c['cur']; })(),
+    'apk_prev_raw' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'apk'); return $c['prev']; })(),
+    'activeness' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'activ'); return $c['cur']; })(),
+    'activeness_prev' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'activ'); return $c['prev']; })(),
     'sa' => num(pick($idx, array('SA Commission','sacommission','commission'))),
     'served' => $served,
     'withdraw' => num(pick($idx, array('Withdraw Volume','withdrawvolume'))),
@@ -245,6 +246,37 @@ function act_norm($s) {
   if (strpos($s, 'inact') === 0 || strpos($s, 'dormant') === 0) return 'INACTIVE';
   if (strpos($s, 'activ') === 0) return 'ACTIVE';
   return '';
+}
+
+/* Detect which calendar month (1-12) a header refers to, else 0. */
+function month_in_header($nk) {
+  $names = array('january','february','march','april','may','june','july','august','september','october','november','december');
+  for ($i = 0; $i < 12; $i++) { if (strpos($nk, $names[$i]) !== false) return $i + 1; }
+  for ($i = 0; $i < 12; $i++) { if (strpos($nk, substr($names[$i], 0, 3)) !== false) return $i + 1; }
+  return 0;
+}
+
+/*
+ * For KPIs that carry one month-suffixed column per period (Activeness_status_May
+ * / _July, APK June / July), return the CURRENT and PREVIOUS values robustly:
+ * order the matching columns by the month named in their header; current = the
+ * column matching the working month, else the latest; previous = the one before.
+ * This is correct even when the working month has no column in the file.
+ */
+function pick_kpi_cols($row, $month, $needle) {
+  $cols = array();
+  foreach ($row as $k => $v) {
+    $nk = norm_key($k);
+    if (strpos($nk, $needle) === false) continue;
+    $cols[] = array('m' => month_in_header($nk), 'v' => trim((string)$v));
+  }
+  if (!count($cols)) return array('cur' => '', 'prev' => '');
+  usort($cols, function ($a, $b) { return $a['m'] - $b['m']; });
+  $curNum = (int)substr((string)$month, 5, 2);
+  $curIdx = -1;
+  for ($i = 0; $i < count($cols); $i++) { if ($cols[$i]['m'] === $curNum) $curIdx = $i; }
+  if ($curIdx < 0) $curIdx = count($cols) - 1;
+  return array('cur' => $cols[$curIdx]['v'], 'prev' => $curIdx > 0 ? $cols[$curIdx - 1]['v'] : '');
 }
 
 /* The PREVIOUS activeness column: right-most activeness-like column that is

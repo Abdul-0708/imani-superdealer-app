@@ -83,6 +83,7 @@
   var MODULES = [
     { key: 'dashboard', label: 'Dashboard', icon: 'grid' },
     { key: 'mybase', label: 'My Agent Base', icon: 'phone' },
+    { key: 'daily', label: 'Daily Report', icon: 'cal' },
     { key: 'agents', label: 'Agents', icon: 'users' },
     { key: 'upload', label: 'Weekly Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
@@ -148,6 +149,7 @@
    * enforced by the server) so the uploaded list is visible to everyone. */
   function visibleModules() {
     return MODULES.filter(function (m) {
+      if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
     });
@@ -178,6 +180,7 @@
     if (state.tab === 'dashboard') viewDashboard(v);
     else if (state.tab === 'agents') viewAgents(v);
     else if (state.tab === 'mybase') viewMyBase(v);
+    else if (state.tab === 'daily') viewDaily(v);
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
@@ -279,7 +282,7 @@
 
   /* ---------------- agents (all roles; BDOs get restricted columns) ---------------- */
   function agentRowHtml(a, editable, restricted) {
-    var partnerServed = a.kpi && a.kpi.served === 'partners';
+    var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
     return '<tr data-agent="' + a.id + '"><td>' + esc(a.acc) + '</td><td>' + name + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
       '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
@@ -317,12 +320,12 @@
         ? 'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.'
         : 'Master list with live KPI status.') + '</p>' +
       '<div class="panel"><div class="row">' +
-      '<div class="field" style="flex:1;min-width:200px"><label>Search (live)</label><input id="agentSearch" placeholder="type one letter to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      '<div class="field" style="flex:1;min-width:160px"><label>Search (live)</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
       '<div class="field"><label>Show</label><select id="agentPer">' + perOpts + '</select></div>' +
       '<button class="ghost" data-action="agentClear">Clear</button>' +
-      (restricted ? '' : '<button class="btn" data-action="locExport">' + svg('pin') + ' Download agents with location</button>') +
-      '</div><div class="note" id="agentsInfo" style="margin-top:8px">Loading...</div></div>' +
-      '<div class="panel"><div class="tablewrap"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs (Served / Visit / APK / Active)</th>' +
+      (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
+      '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div></div>' +
+      '<div class="panel wide"><div class="tablewrap tall"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
       (restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
       '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>' +
@@ -396,16 +399,30 @@
   }
   /* KPI chips for one agent: done -> who did it (locked); open -> markable. */
   function kpiChips(a, editable) {
-    return KPI_CHIPS.map(function (c) {
-      var by = a.kpi && a.kpi[c.key];
-      if (by) {
-        var mine = state.user && by === state.user.username;
-        return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(by) + '">' + esc(c.label) + ' &#10003; <small>' + esc(by) + '</small></span>';
-      }
-      return editable
-        ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(c.label) + '</button>'
-        : '<span class="kchip off">' + esc(c.label) + '</span>';
-    }).join('');
+    var isOM = can('agents', 'e');
+    return KPI_CHIPS.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('');
+  }
+  function doneChip(a, c, mark, isOM) {
+    var lbl = c.key === 'active' ? 'Active' : c.label;
+    var mine = state.user && mark.by === state.user.username;
+    var reversible = mark.src === 'bdo' && (isOM || mine);
+    var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
+    return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
+      esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + x + '</span>';
+  }
+  function todoChip(a, c, label) {
+    return '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(label || c.label) + '</button>';
+  }
+  function kpiChip(a, c, editable, isOM) {
+    var mark = a.kpi && a.kpi[c.key];
+    if (c.key === 'active' && !mark) {
+      /* real status from the file even when no one "marked" it */
+      if (a.actStatus === 'ACTIVE') return '<span class="kchip done" title="Active (from uploaded file)">Active &#10003;</span>';
+      if (a.actStatus === 'INACTIVE') return editable ? todoChip(a, c, 'Wake') : '<span class="kchip bad-off">Inactive</span>';
+      return editable ? todoChip(a, c, 'Active') : '<span class="kchip off">Active</span>';
+    }
+    if (mark) return doneChip(a, c, mark, isOM);
+    return editable ? todoChip(a, c) : '<span class="kchip off">' + esc(c.label) + '</span>';
   }
   function viewMyBase(v) {
     Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' }), api('messages_get')]).then(function (rr) {
@@ -431,17 +448,10 @@
           }).join('') + '</div>'
         : '';
 
-      /* Daily typed report */
+      /* Daily report now lives in its own "Daily Report" tab */
       var dailyPanel = editable
-        ? '<div class="panel"><h2>' + svg('cal') + 'My Daily Report</h2>' +
-          '<p class="note">Report each working day BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents below.</p>' +
-          '<div class="row"><div class="field"><label>Report date (today or up to 2 days back)</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
-          '<div class="field"><label>Total float served</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
-          '<div class="field"><label>Agents visited</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
-          '<div class="field"><label>Inactive waked</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
-          '<div class="field"><label>APK updated</label><input id="drApk" type="number" min="0" placeholder="0"></div>' +
-          '<button class="btn" data-action="drSave">Save report</button>' +
-          '<button class="ghost" data-action="shortage">' + svg('alert') + ' Report float shortage</button></div></div>'
+        ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">Send today\'s KPI numbers from the <b>Daily Report</b> tab.</span>' +
+          '<button class="ghost mini" data-action="tab" data-tab="daily">' + svg('cal') + ' Open Daily Report</button></div></div>'
         : '';
 
       /* Priority agents still to serve this month */
@@ -491,6 +501,29 @@
         '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* ---------------- Daily Report (separate BDO tab) ---------------- */
+  function viewDaily(v) {
+    api('daily_reports_get').then(function (d) { /* server defaults to the OPEN month */
+      var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
+      var hist = mine.slice(0, 14).map(function (r) {
+        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td><td>' + fmt(r.visited) + '</td><td>' + fmt(r.waked) + '</td><td>' + fmt(r.apk) + '</td>' +
+          '<td>' + (r.late ? '<span class="pill gold">LATE</span>' : '<span class="pill ok">OK</span>') + '</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="note">No reports yet this month.</td></tr>';
+      v.innerHTML =
+        '<h1 class="page-title">Daily Report</h1>' +
+        '<p class="page-sub">Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.</p>' +
+        '<div class="panel"><h2>' + svg('cal') + 'Send report</h2>' +
+        '<div class="row"><div class="field"><label>Report date (today or up to 2 days back)</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>Total float served</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>Agents visited</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>Inactive waked</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>APK updated</label><input id="drApk" type="number" min="0" placeholder="0"></div></div>' +
+        '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">Save report</button>' +
+        '<button class="ghost" data-action="shortage">' + svg('alert') + ' Report float shortage</button></div></div>' +
+        '<div class="panel"><h2>' + svg('chart') + 'My reports this month</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>Date</th><th>Float</th><th>Visited</th><th>Waked</th><th>APK</th><th>Status</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
   function drSave() {
     api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value, visited: elById('drVisited').value, waked: elById('drWaked').value, apk: elById('drApk').value } })
       .then(function (d) { toast('Daily report saved for ' + d.date, 'ok'); renderTab(); })
@@ -519,18 +552,26 @@
   }
   /* Fast path: swap the tapped chip in place. NEVER reloads the page or loses
    * the user's position - the row stays where it is with a fresh green chip. */
-  function chipDoneHtml(kpiKey, owner) {
+  function chipDoneHtml(kpiKey, owner, agentId) {
     var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
-    var mine = owner === state.user.username;
-    return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(owner) + '">' +
-      esc(c ? c.label : kpiKey) + ' &#10003; <small>' + esc(owner) + '</small></span>';
+    var lbl = kpiKey === 'active' ? 'Active' : (c ? c.label : kpiKey);
+    /* a just-made mark is the current user's own bdo mark -> reversible */
+    var x = ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>';
+    return '<span class="kchip done mine" title="Done by you">' +
+      esc(lbl) + ' &#10003; <small>' + esc(owner) + '</small>' + x + '</span>';
   }
   function swapChip(node, kpi, owner) {
     if (!node || !node.parentNode) return false;
+    var id = node.getAttribute('data-id');
     var tmp = document.createElement('span');
-    tmp.innerHTML = chipDoneHtml(kpi, owner);
+    tmp.innerHTML = chipDoneHtml(kpi, owner, id);
     node.parentNode.replaceChild(tmp.firstChild, node);
     return true;
+  }
+  function kpiUnmark(id, kpi) {
+    api('kpi_unmark', { body: { agentId: Number(id), kpi: kpi } })
+      .then(function () { toast('Mark reversed', 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
   }
   function kpiMark(id, kpi, name, node, location) {
     api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '' } })
@@ -655,16 +696,16 @@
       rows + '</div>';
   }
   function bdoPerfPanel(perf) {
-    var rows = (perf.rows || []).map(function (r) {
+    var rows = (perf.rows || []).map(function (r, i) {
       var mini = TARGET_DEFS.map(function (t) {
         var k = r.kpis[t.key];
         var cls = !k || k.pct == null ? 'dim' : (k.pct < 50 ? 'bad' : (k.pct >= 80 ? 'ok' : 'gold'));
         return '<span class="pill ' + cls + '" title="' + esc(t.label) + ': ' + (k ? fmt(k.actual) + '/' + fmt(k.target) : '-') + '">' + esc(t.label.split(' ')[0]) + ' ' + (k && k.pct != null ? k.pct + '%' : '-') + '</span>';
       }).join(' ');
-      return '<tr><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td><td><div class="kchips">' + mini + '</div></td></tr>';
-    }).join('') || '<tr><td colspan="3" class="note">No BDO targets set for this month yet.</td></tr>';
-    return '<div class="panel"><h2>' + svg('percent') + 'BDO Performance &mdash; ' + esc(perf.month) + '</h2>' +
-      '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Weighted Score</th><th>Per-KPI</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+      return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td><td><div class="kchips">' + mini + '</div></td></tr>';
+    }).join('') || '<tr><td colspan="4" class="note">No BDOs yet.</td></tr>';
+    return '<div class="panel"><h2>' + svg('percent') + 'BDO Performance &mdash; ' + esc(perf.month) + ' (all BDOs, top to bottom)</h2>' +
+      '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Weighted Score</th><th>Per-KPI</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
   function btSave() {
     var body = { month: elById('tgMonth') ? elById('tgMonth').value : (state.month || state.openMonth), bdo: elById('btBdo').value };
@@ -1064,6 +1105,7 @@
     if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); agentsBodyLoad(); return; }
     if (a === 'nextPage') { state.agentPage = (state.agentPage || 1) + 1; agentsBodyLoad(); return; }
     if (a === 'kpiMark') { kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), node); return; }
+    if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi')); return; }
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
     if (a === 'setLoc') { setLocModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
     if (a === 'setLocGo') { api('agent_location_set', { body: { agentId: Number(node.getAttribute('data-id')), location: elById('locInput').value } }).then(function () { closeModal(); toast('Location saved', 'ok'); renderTab(); }).catch(function (e2) { toast(e2.message, 'err'); }); return; }
