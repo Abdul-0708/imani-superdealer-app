@@ -344,3 +344,32 @@ body.light .kchip.bad-off{background:rgba(198,47,29,.12);color:#a3271b}
 button.tiny{padding:4px 8px!important;font-size:11px!important;border-radius:8px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
 button.tiny svg{width:12px;height:12px}
 @media (max-width:860px){ button.tiny{padding:4px 7px!important;font-size:10px!important} }
+
+/* tap-to-call phone links */
+a.tel{color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)}
+a.tel:hover{color:var(--fire2);border-bottom-color:var(--fire2)}
+
+/* ============ agent CARDS on phones ============
+ * The same table markup renders as a normal table on desktop and as
+ * one card per agent on small screens: name up top, small labelled
+ * meta line, KPI chips on their own row at the bottom. */
+@media (max-width:640px){
+  .tablewrap.cardwrap,.tablewrap.tall.cardwrap{max-height:none;overflow:visible;border:0;border-radius:0}
+  table.cardable,.cardable tbody{display:block;width:100%}
+  .cardable thead{display:none}
+  .cardable tbody tr{
+    display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 10px;
+  }
+  .cardable tbody tr:hover{background:linear-gradient(180deg,var(--panel),var(--panel2))}
+  .cardable td{display:block;border:0;padding:0}
+  .cardable td[colspan]{flex:1 1 100%;padding:6px}
+  .cardable .c-name{order:1;flex:1 1 auto;font-size:14px;font-weight:700;line-height:1.35}
+  .cardable .c-name .note{font-weight:600;font-size:11px;margin-top:1px}
+  .cardable .c-level{order:2;flex:0 0 auto}
+  .cardable .c-level .dot{display:none}
+  .cardable .c-meta{order:3;font-size:12px;color:var(--muted)}
+  .cardable .c-meta::before{content:attr(data-l);display:inline-block;margin-right:5px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.6}
+  .cardable .c-kpis{order:9;flex:1 1 100%;margin-top:8px;padding-top:9px;border-top:1px dashed var(--line)}
+}

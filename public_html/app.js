@@ -357,12 +357,15 @@
   function errBox(e) { return '<div class="panel"><div class="err">' + esc(e.message || String(e)) + '</div></div>'; }
 
   /* ---------------- agents (all roles; BDOs get restricted columns) ---------------- */
+  /* phone renders as a tap-to-call link - field BDOs dial the agent in one tap */
+  function telHtml(p) { return p ? '<a class="tel" href="tel:' + esc(p) + '">' + esc(p) + '</a>' : '-'; }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
-    return '<tr data-agent="' + a.id + '"><td>' + esc(a.acc) + '</td><td>' + name + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
-      '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-      '<td><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
+    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td><td class="c-name">' + name + '</td>' +
+      '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+      '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+      '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
       '</tr>';
   }
   function agentsBodyLoad() {
@@ -401,7 +404,7 @@
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
       '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div></div>' +
-      '<div class="panel wide"><div class="tablewrap tall"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
+      '<div class="panel wide"><div class="tablewrap tall cardwrap"><table class="cardable"><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
       '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
       '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>' +
@@ -419,9 +422,9 @@
       var list = mode === 'all' ? d.all : d.lost;
       var rows = list.map(function (a) {
         var lostTag = a.act_prev === 'ACTIVE' ? ' <span class="pill bad">was ACTIVE</span>' : '';
-        return '<tr><td>' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
-          '<td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
-          '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td></tr>';
+        return '<tr><td class="c-name">' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+          '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td></tr>';
       }).join('') || '<tr><td colspan="4" class="note">None - great.</td></tr>';
       el.innerHTML =
         '<div class="panel"><h2>' + svg('zap') + 'Inactive Agents &mdash; ' + esc(d.month) + '</h2>' +
@@ -429,7 +432,7 @@
         '<div class="row" style="margin-bottom:10px">' +
         '<button class="role-chip' + (mode === 'lost' ? ' active' : '') + '" data-action="inactMode" data-m="lost">Were active last month (' + d.counts.lost + ')</button>' +
         '<button class="role-chip' + (mode === 'all' ? ' active' : '') + '" data-action="inactMode" data-m="all">All inactive this month (' + d.counts.all + ')</button></div>' +
-        '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function () { el.innerHTML = ''; });
   }
   function locExport() {
@@ -513,10 +516,10 @@
         var chips = kpiChips(a, editable);
         var lv = a.level === 'priority' ? 'Priority' : a.level === 'new' ? 'New' : 'Never';
         var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
-        return '<tr><td><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
-          '<td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-          '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-          '<td>' + esc(a.branch || '-') + '</td><td><div class="kchips">' + chips + '</div></td></tr>';
+        return '<tr><td class="c-level"><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
+          '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td><td class="c-kpis"><div class="kchips">' + chips + '</div></td></tr>';
       }).join('') || '<tr><td colspan="5">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
 
       /* OM broadcast messages */
@@ -539,12 +542,12 @@
       var prioPanel = prioLeft.length
         ? '<div class="panel"><h2>' + svg('flame') + t('Priority to serve') + ' (' + prioLeft.length + ')</h2>' +
           '<p class="note">Your carried base - you already know where they are. Serve them first.</p>' +
-          '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Location</th><th>Branch</th><th>Action</th></tr></thead><tbody>' +
+          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Location</th><th>Branch</th><th>Action</th></tr></thead><tbody>' +
           prioLeft.map(function (a) {
-            return '<tr><td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-              '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-              '<td>' + esc(a.branch || '-') + '</td>' +
-              '<td>' + (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="served" data-name="' + esc(a.name) + '">Serve</button>' : '-') + '</td></tr>';
+            return '<tr><td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+              '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+              '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+              '<td class="c-kpis">' + (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="served" data-name="' + esc(a.name) + '">Serve</button>' : '-') + '</td></tr>';
           }).join('') + '</tbody></table></div></div>'
         : '';
 
@@ -552,12 +555,12 @@
       var specialPanel = (d.special && d.special.length)
         ? '<div class="panel"><h2>' + svg('alert') + 'Special agents - served by PARTNERS (' + d.special.length + ')</h2>' +
           '<p class="note">The partner served these agents. Visit them, build the relationship and capture the physical location.</p>' +
-          '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
+          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
           d.special.map(function (a) {
-            return '<tr><td>' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td><td>' + esc(a.phone || '-') + '</td>' +
-              '<td>' + esc(a.branch || '-') + '</td>' +
-              '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-              '<td>' + (editable && !a.physical_location ? '<button class="kchip todo" data-action="setLoc" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('pin') + ' Set location</button>' : '-') + '</td></tr>';
+            return '<tr><td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td><td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
+              '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+              '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+              '<td class="c-kpis">' + (editable && !a.physical_location ? '<button class="kchip todo" data-action="setLoc" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('pin') + ' Set location</button>' : '-') + '</td></tr>';
           }).join('') + '</tbody></table></div></div>'
         : '';
 
@@ -577,8 +580,8 @@
         card('users', t('Total Base'), fmt(d.counts.total)) +
         card('check', t('My Served'), fmt(d.counts.served)) +
         '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
-        '<div class="panel"><h2>' + svg('phone') + 'Agents &mdash; mark KPIs</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        '<div class="panel"><h2>' + svg('phone') + t('Agents - mark KPIs') + '</h2>' +
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* ---------------- Daily Report (separate BDO tab) ---------------- */

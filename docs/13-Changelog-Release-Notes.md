@@ -5,6 +5,26 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.7.1 — 2026-07-17 · "Agent cards on phones"
+
+### Release notes
+On phones (≤640px) every agent table becomes **one card per agent**: bold name up top, a small
+labelled meta line (acc · phone · branch · location), and the KPI chips on their own row under a
+dashed divider — no more squinting at a dense table. The same markup still renders as a normal
+table on desktop (pure CSS switch, zero behaviour change). **Phone numbers are now tap-to-call
+links** everywhere (`tel:`), so a field BDO dials an agent in one tap. Applied to: Agents list,
+My Base "mark KPIs", Priority-to-serve, Special (partner-served) and Inactive Agents tables.
+Verified in light + dark themes at 375px — no horizontal scroll.
+
+### Changes
+- `app.js`: semantic cell classes (`c-name` / `c-meta` + `data-l` / `c-kpis` / `c-level`),
+  `telHtml()` tap-to-call helper, `cardable`/`cardwrap` classes on the five agent tables
+- `styles.css`: `@media (max-width:640px)` card transformation (flex rows, hidden thead,
+  `::before` labels), `a.tel` styling. Assets `?v=9`
+- Deploy: upload `app.js`, `styles.css`, `index.html`
+
+---
+
 ## v1.7.0 — 2026-07-17 · "Agent-list-only KPIs, tap-and-confirm, modern buttons"
 
 ### Release notes
