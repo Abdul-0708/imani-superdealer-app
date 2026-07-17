@@ -65,6 +65,7 @@
       'Kuhudumia, visits na activeness: tumia orodha ya mawakala, si fomu hii.',
     'Open agent list': 'Fungua orodha ya mawakala',
     'Confirm?': 'Thibitisha?',
+    'No connection - check your internet and try again': 'Hakuna mtandao - angalia intaneti yako kisha ujaribu tena',
     'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.':
       'Hali ya KPI papo hapo - KPI iliyokwisha fanywa inaonyesha aliyeifanya, hivyo hakuna anayerudia. Fanyia kazi zile ambazo hazijakamilika.',
     'Master list with live KPI status.': 'Orodha kuu na hali ya KPI papo hapo.',
@@ -95,9 +96,13 @@
   function api(action, opts) {
     opts = opts || {};
     var url = 'api.php?action=' + action + (opts.qs || '');
-    var init = { method: opts.body ? 'POST' : 'GET', credentials: 'same-origin', headers: {} };
+    /* X-Requested-With is the CSRF token-in-header: the server rejects any
+     * POST without it, and no cross-site page can attach it. */
+    var init = { method: opts.body ? 'POST' : 'GET', credentials: 'same-origin', headers: { 'X-Requested-With': 'imani' } };
     if (opts.body) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
-    return fetch(url, init).then(function (r) {
+    return fetch(url, init).catch(function () {
+      throw new Error(t('No connection - check your internet and try again'));
+    }).then(function (r) {
       return r.json().catch(function () { return { error: 'Bad server response' }; }).then(function (d) {
         if (r.status === 401) { state.user = null; render(); throw new Error(d.error || 'Please sign in'); }
         if (!r.ok) { var err = new Error(d.error || ('Error ' + r.status)); err.data = d; throw err; }
@@ -485,7 +490,7 @@
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : c.label);
     var mine = state.user && mark.by === state.user.username;
     var reversible = mark.src === 'bdo' && (isOM || mine);
-    var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
+    var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
       esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + x + '</span>';
   }
@@ -651,7 +656,7 @@
     var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
     var lbl = kpiKey === 'active' ? 'Active' : (kpiKey === 'visit' ? 'Visit YES' : (c ? c.label : kpiKey));
     /* a just-made mark is the current user's own bdo mark -> reversible */
-    var x = ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>';
+    var x = ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>';
     return '<span class="kchip done mine" title="Done by you">' +
       esc(lbl) + ' &#10003; <small>' + esc(owner) + '</small>' + x + '</span>';
   }
@@ -1303,4 +1308,10 @@
   document.addEventListener('submit', onSubmit);
   document.addEventListener('keydown', onKeydown);
   boot();
+
+  /* PWA: installable on phones; the worker is network-first so users always
+   * get the newest version while online - cache is only an offline fallback. */
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () { /* http or old browser - fine */ });
+  }
 })();

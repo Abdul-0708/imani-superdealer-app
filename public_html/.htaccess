@@ -8,9 +8,22 @@
 # No directory listings
 Options -Indexes
 
-# Sensible security headers
+# Force HTTPS (guarded for proxies that terminate SSL upstream)
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# Security headers
 <IfModule mod_headers.c>
   Header set X-Content-Type-Options "nosniff"
-  Header set X-Frame-Options "SAMEORIGIN"
+  Header set X-Frame-Options "DENY"
   Header set Referrer-Policy "same-origin"
+  Header set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+  # 180-day HSTS, sent only over TLS
+  Header always set Strict-Transport-Security "max-age=15552000" env=HTTPS
+  # Only our own code + the SheetJS CDN may run; nothing may frame us
+  Header set Content-Security-Policy "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'"
 </IfModule>

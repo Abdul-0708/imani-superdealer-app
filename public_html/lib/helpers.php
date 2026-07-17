@@ -55,7 +55,13 @@ function current_user() {
   if ($u === false) {
     start_session();
     $u = null;
-    if (!empty($_SESSION['uid'])) {
+    /* absolute session lifetime: 12h after sign-in the session dies, even if
+     * the phone stayed unlocked all day. Stolen/forgotten sessions expire. */
+    if (!empty($_SESSION['uid']) && !empty($_SESSION['auth_at']) &&
+        time() - (int)$_SESSION['auth_at'] > 43200) {
+      $_SESSION = array();
+      session_destroy();
+    } elseif (!empty($_SESSION['uid'])) {
       $st = db()->prepare('SELECT * FROM users WHERE id = ? AND active = 1');
       $st->execute(array($_SESSION['uid']));
       $u = $st->fetch() ?: null;

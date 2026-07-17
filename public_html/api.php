@@ -3,6 +3,14 @@
 require __DIR__ . '/lib/db.php';
 require __DIR__ . '/lib/helpers.php';
 
+/* CSRF defence-in-depth: cookies are already SameSite=Lax; on top of that every
+ * POST must carry a custom header that no cross-site form or "simple" request
+ * can attach. The front-end api() helper always sends it. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
+    (!isset($_SERVER['HTTP_X_REQUESTED_WITH']) || $_SERVER['HTTP_X_REQUESTED_WITH'] !== 'imani')) {
+  fail('Bad request origin', 403);
+}
+
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 
 try {
@@ -32,6 +40,7 @@ try {
       db()->prepare('UPDATE users SET failed = 0, locked_until = 0 WHERE id = ?')->execute(array($u['id']));
       session_regenerate_id(true);
       $_SESSION['uid'] = (int)$u['id'];
+      $_SESSION['auth_at'] = time(); /* absolute 12h session lifetime */
       audit($u['id'], 'login', $u['username']);
       respond(array(
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
@@ -123,7 +132,7 @@ try {
       $role = trim((string)bval('role'));
       $password = (string)bval('password');
       if ($username === '' || $name === '') fail('Username and full name are required');
-      if (strlen($password) < 6) fail('Password must be at least 6 characters');
+      if (strlen($password) < 8) fail('Password must be at least 8 characters');
       $roleOk = db()->prepare('SELECT 1 FROM roles WHERE name = ?');
       $roleOk->execute(array($role));
       if (!$roleOk->fetch()) fail('Unknown role: ' . $role);
@@ -156,7 +165,7 @@ try {
       }
       if (isset($b['active'])) { $sets[] = 'active = ?'; $vals[] = $b['active'] ? 1 : 0; }
       if (!empty($b['password'])) {
-        if (strlen((string)$b['password']) < 6) fail('Password must be at least 6 characters');
+        if (strlen((string)$b['password']) < 8) fail('Password must be at least 8 characters');
         $sets[] = 'password_hash = ?'; $vals[] = password_hash((string)$b['password'], PASSWORD_BCRYPT);
         $sets[] = 'failed = 0'; $sets[] = 'locked_until = 0';
       }

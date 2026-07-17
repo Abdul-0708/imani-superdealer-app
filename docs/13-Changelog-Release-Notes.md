@@ -5,6 +5,37 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.8.0 — 2026-07-17 · "Security hardening + PWA"
+
+### Release notes
+Security pass to production grade. **CSRF**: every POST now requires a custom `X-Requested-With:
+imani` header on top of the existing SameSite=Lax cookies — no cross-site page can forge a request
+(verified: header-less POST → 403, with header → 200; CI asserts both). **Sessions** die 12 h after
+sign-in (absolute lifetime), on top of regenerate-on-login and the 5-strike lockout already there.
+**Transport**: `.htaccess` now forces HTTPS (proxy-safe), sends 180-day HSTS, a strict
+**Content-Security-Policy** (only own code + the SheetJS CDN may run; nothing may frame the app),
+X-Frame-Options DENY and a Permissions-Policy that switches off camera/mic/geolocation. Member
+**passwords now need 8+ characters** everywhere (was 6 for admin-set ones).
+
+The app is now an installable **PWA**: manifest + icon + a network-first service worker — BDOs add
+it to the home screen and it opens full-screen like a native app; while online they always get the
+newest version (nothing is pinned), offline the shell still opens and data calls fail with an
+honest, translated "No connection" message. Tabs show **skeleton loaders** the instant they open.
+Accessibility: global reduced-motion support, aria-labels on the reverse (×) buttons.
+
+### Changes
+- `api.php`: POST CSRF-header gate; `auth_at` stamp; password min 8 (admin_user_add/update)
+- `lib/helpers.php`: 12 h absolute session lifetime in `current_user()`
+- `.htaccess`: HTTPS redirect, HSTS, CSP, XFO DENY, Permissions-Policy
+- `app.js`: api() always sends the CSRF header; friendly offline error (EN/SW); SW registration;
+  aria-labels. `styles.css`: `.skel` shimmer, prefers-reduced-motion kill-switch
+- NEW `sw.js` (network-first, never caches api.php), `manifest.webmanifest`, `icon.svg`
+- CI: asserts the 403-without-header case, sends the header on login. Assets `?v=10`
+- Deploy: upload `api.php`, `app.js`, `styles.css`, `index.html`, `.htaccess`, `lib/helpers.php`,
+  `sw.js`, `manifest.webmanifest`, `icon.svg`
+
+---
+
 ## v1.7.1 — 2026-07-17 · "Agent cards on phones"
 
 ### Release notes

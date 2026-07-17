@@ -52,8 +52,12 @@ jobs:
           sleep 2
           # health (also creates schema + seeds)
           curl -sf "http://127.0.0.1:8080/api.php?action=health" | grep '"ok":true'
-          # login as seeded superadmin
-          curl -sf -c /tmp/cj -H "Content-Type: application/json" \
+          # POST without the CSRF header must be rejected
+          curl -s -H "Content-Type: application/json" \
+            -d '{"username":"superadmin","password":"imani123"}' \
+            "http://127.0.0.1:8080/api.php?action=login" | grep 'Bad request origin'
+          # login as seeded superadmin (with the CSRF header)
+          curl -sf -c /tmp/cj -H "Content-Type: application/json" -H "X-Requested-With: imani" \
             -d '{"username":"superadmin","password":"imani123"}' \
             "http://127.0.0.1:8080/api.php?action=login" | grep '"superadmin"'
           # authenticated call
