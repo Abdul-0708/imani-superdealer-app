@@ -66,6 +66,11 @@
     'Open agent list': 'Fungua orodha ya mawakala',
     'Confirm?': 'Thibitisha?',
     'No connection - check your internet and try again': 'Hakuna mtandao - angalia intaneti yako kisha ujaribu tena',
+    'Two-step verification': 'Uthibitisho wa hatua mbili',
+    'Open your authenticator app and type the 6-digit code for IMANI.': 'Fungua app yako ya authenticator kisha andika namba 6 za IMANI.',
+    '6-digit code': 'Namba 6 za uthibitisho',
+    'Verify': 'Thibitisha',
+    'Back to sign in': 'Rudi kuingia',
     'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.':
       'Hali ya KPI papo hapo - KPI iliyokwisha fanywa inaonyesha aliyeifanya, hivyo hakuna anayerudia. Fanyia kazi zile ambazo hazijakamilika.',
     'Master list with live KPI status.': 'Orodha kuu na hali ya KPI papo hapo.',
@@ -225,6 +230,44 @@
       '</form></div></div>';
     var f = elById('lUser'); if (f) f.focus();
   }
+  /* Second sign-in step when the account has 2FA: the 6-digit authenticator code. */
+  function render2fa() {
+    elById('app').innerHTML =
+      '<div class="login"><div class="box">' +
+      '<div class="brandmark">' + svg('lock') + '</div>' +
+      '<h1>' + t('Two-step verification') + '</h1>' +
+      '<p class="hint">' + t('Open your authenticator app and type the 6-digit code for IMANI.') + '</p>' +
+      '<form id="twofaForm">' +
+      '<div class="field"><label>' + t('6-digit code') + '</label>' +
+      '<input id="lCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;letter-spacing:6px;font-size:20px;font-weight:800"></div>' +
+      '<button class="btn" type="submit">' + t('Verify') + '</button>' +
+      '<div style="text-align:center;margin-top:10px"><button type="button" class="ghost tiny" data-action="backToLogin">' + t('Back to sign in') + '</button></div>' +
+      '<div class="err" id="lErr"></div>' +
+      '</form></div></div>';
+    var f = elById('lCode'); if (f) f.focus();
+  }
+  function do2fa() {
+    api('login_2fa', { body: { code: elById('lCode').value.trim() } })
+      .then(function (d) { state.user = d.user; state.perms = d.perms; state.tab = defaultTab(); render(); })
+      .catch(function (e) { var el = elById('lErr'); if (el) el.textContent = e.message; });
+  }
+  /* 2FA enrolment: QR (or manual key) + a code to prove the scan worked. */
+  function totpSetupModal(d) {
+    openModal('<h2>' + svg('lock') + ' Enable 2FA</h2>' +
+      '<p class="note">1. Install <b>Google Authenticator</b> (or Authy / Microsoft Authenticator).<br>' +
+      '2. Scan this QR code - or type the manual key.<br>' +
+      '3. Enter the 6-digit code the app shows to confirm.</p>' +
+      '<div id="qrBox" style="background:#fff;padding:10px;border-radius:12px;width:180px;margin:12px auto"></div>' +
+      '<p class="note" style="word-break:break-all;text-align:center">Manual key: <b>' + esc(d.secret) + '</b></p>' +
+      '<div class="field"><label>6-digit code from the app</label>' +
+      '<input id="tfCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">Cancel</button>' +
+      '<button class="btn" data-action="totpEnable">Turn on 2FA</button></div>');
+    if (window.QRCode) { try { new QRCode(elById('qrBox'), { text: d.uri, width: 160, height: 160 }); } catch (e) { elById('qrBox').style.display = 'none'; } }
+    else elById('qrBox').style.display = 'none';
+    var f = elById('tfCode'); if (f) f.focus();
+  }
   /* Which tabs the user sees. BDOs get the Agents tab too (restricted columns,
    * enforced by the server) so the uploaded list is visible to everyone. */
   function visibleModules() {
@@ -272,7 +315,10 @@
   /* ---------------- auth actions ---------------- */
   function doLogin() {
     api('login', { body: { username: elById('lUser').value.trim(), password: elById('lPass').value } })
-      .then(function (d) { state.user = d.user; state.perms = d.perms; state.tab = defaultTab(); render(); })
+      .then(function (d) {
+        if (d.need2fa) { render2fa(); return; }
+        state.user = d.user; state.perms = d.perms; state.tab = defaultTab(); render();
+      })
       .catch(function (e) { elById('lErr').textContent = e.message; });
   }
   function doLogout() {
@@ -1075,8 +1121,8 @@
 
   /* ---------------- admin: users + permissions ---------------- */
   function viewAdmin(v) {
-    Promise.all([api('admin_meta'), api('admin_perms'), api('admin_users'), api('admin_audit')]).then(function (r) {
-      var meta = r[0], matrix = r[1], users = r[2], audit = r[3];
+    Promise.all([api('admin_meta'), api('admin_perms'), api('admin_users'), api('admin_audit'), api('me')]).then(function (r) {
+      var meta = r[0], matrix = r[1], users = r[2], audit = r[3], me = r[4];
       state._roles = meta.roles.map(function (x) { return x.name; });
       state._permMatrix = matrix;
       if (!matrix[state._permRole]) state._permRole = state._roles.filter(function (x) { return x !== 'superadmin'; })[0] || 'om';
@@ -1100,15 +1146,27 @@
         return '<tr><td>' + esc((a.at || '').slice(0, 16)) + '</td><td>' + esc(a.who || 'system') + '</td><td>' + esc(a.action) + '</td><td>' + esc(a.detail || '') + '</td></tr>';
       }).join('') || '<tr><td colspan="4" class="note">No activity yet.</td></tr>';
 
+      /* superadmin secures his own account with an authenticator app */
+      var twofaPanel = state.user.role === 'superadmin'
+        ? '<div class="panel"><h2>' + svg('lock') + 'Two-step verification (2FA)</h2>' +
+          (me.user.totp_on
+            ? '<p class="note">2FA is <span class="pill ok">ON</span> for <b>' + esc(state.user.username) + '</b> - signing in needs your password <b>plus</b> the 6-digit code from your authenticator app.</p>' +
+              '<div class="row"><div class="field"><label>Current 6-digit code</label><input id="tfOff" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>' +
+              '<button class="danger" data-action="totpDisable">Turn off 2FA</button></div>'
+            : '<p class="note">2FA is <span class="pill bad">OFF</span>. Protect this account: after enabling, signing in needs your password <b>plus</b> a 6-digit code from <b>Google Authenticator</b> (or any authenticator app). If you ever lose the phone, another super admin - or phpMyAdmin (clear <code>users.totp_secret</code>) - can rescue you.</p>' +
+              '<button class="btn" data-action="totpSetup">' + svg('lock') + ' Enable 2FA</button>') +
+          '</div>'
+        : '';
       v.innerHTML =
         '<h1 class="page-title">Admin</h1><p class="page-sub">Members, roles, access control and activity.</p>' +
+        twofaPanel +
         '<div class="panel"><h2>' + svg('users') + 'Members</h2>' +
         '<div class="row" style="margin-bottom:14px">' +
         '<div class="field"><label>Username</label><input id="nuUser" placeholder="e.g. amina"></div>' +
         '<div class="field"><label>Full name</label><input id="nuName" placeholder="Amina Said"></div>' +
         '<div class="field"><label>Role</label><select id="nuRole">' + roleOpts + '</select></div>' +
         '<div class="field"><label>Station</label><input id="nuStation" placeholder="Arusha"></div>' +
-        '<div class="field"><label>Password</label><input id="nuPass" placeholder="min 6 chars"></div>' +
+        '<div class="field"><label>Password</label><input id="nuPass" placeholder="min 8 chars"></div>' +
         '<button class="btn" data-action="uAdd">Add member</button></div>' +
         '<div class="tablewrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Station</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + userRows + '</tbody></table></div></div>' +
         '<div class="panel"><h2>' + svg('lock') + 'Access Control</h2>' +
@@ -1198,6 +1256,20 @@
     if (a === 'toggleTheme') { toggleTheme(); return; }
     if (a === 'toggleLang') { toggleLang(); return; }
     if (a === 'logout') { doLogout(); return; }
+    if (a === 'backToLogin') { renderLogin(); return; }
+    if (a === 'totpSetup') { api('totp_setup').then(totpSetupModal).catch(function (e2) { toast(e2.message, 'err'); }); return; }
+    if (a === 'totpEnable') {
+      api('totp_enable', { body: { code: elById('tfCode').value.trim() } })
+        .then(function () { closeModal(); toast('2FA is ON - next sign-in will ask for your code', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'totpDisable') {
+      api('totp_disable', { body: { code: elById('tfOff').value.trim() } })
+        .then(function () { toast('2FA turned off', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'pwd') { pwdModal(); return; }
     if (a === 'pwdSave') { pwdSave(); return; }
     if (a === 'closeModal') { closeModal(); return; }
@@ -1299,6 +1371,7 @@
   }
   function onSubmit(e) {
     if (e.target && e.target.id === 'loginForm') { e.preventDefault(); doLogin(); }
+    if (e.target && e.target.id === 'twofaForm') { e.preventDefault(); do2fa(); }
   }
   function onKeydown(e) { if (e.key === 'Escape') closeModal(); }
 

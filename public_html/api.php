@@ -39,9 +39,46 @@ try {
       }
       db()->prepare('UPDATE users SET failed = 0, locked_until = 0 WHERE id = ?')->execute(array($u['id']));
       session_regenerate_id(true);
+      /* 2FA: password OK but a TOTP secret is set -> park as PENDING, no access
+       * until login_2fa verifies the 6-digit code. */
+      if (isset($u['totp_secret']) && $u['totp_secret'] !== '') {
+        $_SESSION['pending_uid'] = (int)$u['id'];
+        $_SESSION['pending_at'] = time();
+        $_SESSION['pending_tries'] = 0;
+        respond(array('need2fa' => true));
+      }
       $_SESSION['uid'] = (int)$u['id'];
       $_SESSION['auth_at'] = time(); /* absolute 12h session lifetime */
       audit($u['id'], 'login', $u['username']);
+      respond(array(
+        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
+        'perms' => perms_for_role($u['role']),
+      ));
+    }
+
+    /* Second login step when 2FA is on: 6-digit authenticator code. */
+    case 'login_2fa': {
+      start_session();
+      if (empty($_SESSION['pending_uid']) || time() - (int)$_SESSION['pending_at'] > 300) {
+        fail('Sign in again', 401);
+      }
+      if ((int)$_SESSION['pending_tries'] >= 6) {
+        unset($_SESSION['pending_uid'], $_SESSION['pending_at'], $_SESSION['pending_tries']);
+        fail('Too many wrong codes - sign in again', 429);
+      }
+      $st = db()->prepare('SELECT * FROM users WHERE id = ? AND active = 1');
+      $st->execute(array($_SESSION['pending_uid']));
+      $u = $st->fetch();
+      if (!$u) fail('Sign in again', 401);
+      if (!totp_verify($u['totp_secret'], bval('code'))) {
+        $_SESSION['pending_tries'] = (int)$_SESSION['pending_tries'] + 1;
+        fail('Wrong code - open your authenticator app and try again', 401);
+      }
+      unset($_SESSION['pending_uid'], $_SESSION['pending_at'], $_SESSION['pending_tries']);
+      session_regenerate_id(true);
+      $_SESSION['uid'] = (int)$u['id'];
+      $_SESSION['auth_at'] = time();
+      audit($u['id'], 'login_2fa', $u['username']);
       respond(array(
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
         'perms' => perms_for_role($u['role']),
@@ -58,9 +95,42 @@ try {
     case 'me': {
       $u = require_auth();
       respond(array(
-        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
+        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'],
+                        'totp_on' => (isset($u['totp_secret']) && $u['totp_secret'] !== '')),
         'perms' => perms_for_role($u['role']),
       ));
+    }
+
+    /* ---- TOTP 2FA management (superadmin secures his own account) ---- */
+
+    case 'totp_setup': {
+      $u = require_auth();
+      if ($u['role'] !== 'superadmin') fail('2FA is for super admin accounts', 403);
+      $secret = totp_secret_new();
+      $_SESSION['totp_new'] = $secret; /* not saved until a code proves the scan worked */
+      $uri = 'otpauth://totp/IMANI:' . rawurlencode($u['username']) .
+             '?secret=' . $secret . '&issuer=IMANI%20SUPERDEALER&digits=6&period=30';
+      respond(array('secret' => $secret, 'uri' => $uri));
+    }
+
+    case 'totp_enable': {
+      $u = require_auth();
+      if ($u['role'] !== 'superadmin') fail('2FA is for super admin accounts', 403);
+      if (empty($_SESSION['totp_new'])) fail('Start setup again');
+      if (!totp_verify($_SESSION['totp_new'], bval('code'))) fail('Wrong code - scan the QR and type the current 6 digits');
+      db()->prepare('UPDATE users SET totp_secret = ? WHERE id = ?')->execute(array($_SESSION['totp_new'], $u['id']));
+      unset($_SESSION['totp_new']);
+      audit($u['id'], 'totp_enable', $u['username']);
+      respond(array('ok' => true));
+    }
+
+    case 'totp_disable': {
+      $u = require_auth();
+      if ($u['role'] !== 'superadmin') fail('2FA is for super admin accounts', 403);
+      if (!totp_verify($u['totp_secret'], bval('code'))) fail('Wrong code - 2FA stays on');
+      db()->prepare('UPDATE users SET totp_secret = "" WHERE id = ?')->execute(array($u['id']));
+      audit($u['id'], 'totp_disable', $u['username']);
+      respond(array('ok' => true));
     }
 
     case 'change_password': {

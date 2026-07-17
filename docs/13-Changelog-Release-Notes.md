@@ -5,6 +5,31 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.9.0 — 2026-07-17 · "2FA for super admin" — schema v6
+
+### Release notes
+**Two-step verification (TOTP)** for super admin accounts, zero dependencies (pure-PHP RFC 6238 —
+verified byte-exact against the RFC test vector, so Google Authenticator / Authy / Microsoft
+Authenticator all work). Flow: Admin tab → **"Two-step verification (2FA)" panel → Enable** → scan
+the QR (or type the manual key) → confirm with the current 6-digit code (the secret is only saved
+after a correct code proves the scan worked). From then on sign-in = password → 6-digit code
+screen. Protections: password alone grants **nothing** (pending state, verified 401), wrong codes
+rejected, **6 wrong codes** kills the attempt, pending expires after 5 min, ±30 s clock-drift
+tolerance, session only issued after the code. Disabling requires the current code. **Rescue** if
+the phone is lost: phpMyAdmin → `users` table → clear `totp_secret` for the account → 2FA off.
+
+### Changes
+- **Schema v6** (self-upgrading): `users.totp_secret`
+- `lib/helpers.php`: `totp_secret_new/b32_decode/totp_code/totp_verify` (RFC 6238, hash_equals)
+- `api.php`: login parks 2FA users as pending (`need2fa`); new `login_2fa` (5-min window, 6-try
+  cap), `totp_setup` / `totp_enable` / `totp_disable`; `me` returns `totp_on`
+- `app.js`: 2FA code screen (one-time-code autocomplete), Admin security panel, QR enrol modal
+  (qrcodejs from cdnjs — already CSP-allowed; manual key fallback); EN/SW strings. Assets `?v=11`,
+  SW cache `imani-v11`
+- Deploy: upload `api.php`, `app.js`, `index.html`, `sw.js`, `lib/helpers.php`, `lib/db.php`
+
+---
+
 ## v1.8.0 — 2026-07-17 · "Security hardening + PWA"
 
 ### Release notes

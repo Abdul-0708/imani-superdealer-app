@@ -57,6 +57,7 @@ function ensure_schema($pdo) {
     active TINYINT(1) NOT NULL DEFAULT 1,
     failed INT NOT NULL DEFAULT 0,
     locked_until INT NOT NULL DEFAULT 0,
+    totp_secret VARCHAR(64) NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -318,6 +319,12 @@ function upgrade_schema($pdo) {
      * Only 'bdo' marks can be reversed by the BDO; OM can reverse anything. */
     try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT "upload"'); } catch (Exception $e) { /* exists */ }
     $pdo->prepare('UPDATE app_settings SET value = "5" WHERE name = "schema_version"')->execute();
+    $ver = 5;
+  }
+  if ($ver < 6) {
+    /* TOTP 2FA (authenticator app) - empty secret = 2FA off */
+    try { $pdo->exec('ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+    $pdo->prepare('UPDATE app_settings SET value = "6" WHERE name = "schema_version"')->execute();
   }
 }
 
@@ -359,5 +366,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","5")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","6")')->execute();
 }

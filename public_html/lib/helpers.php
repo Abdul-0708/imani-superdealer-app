@@ -457,3 +457,38 @@ function release_for($achievement) {
   if ($a >= 50) return 0.2;
   return 0.0;
 }
+
+/* ---------- TOTP 2FA (RFC 6238, authenticator apps) - no dependencies ---------- */
+
+function totp_secret_new() {
+  $map = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  $s = '';
+  for ($i = 0; $i < 32; $i++) $s .= $map[random_int(0, 31)];
+  return $s;
+}
+function b32_decode($s) {
+  $map = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  $s = strtoupper(preg_replace('/[^A-Za-z2-7]/', '', (string)$s));
+  $bits = ''; $out = '';
+  for ($i = 0; $i < strlen($s); $i++) {
+    $v = strpos($map, $s[$i]);
+    if ($v === false) continue;
+    $bits .= str_pad(decbin($v), 5, '0', STR_PAD_LEFT);
+  }
+  for ($i = 0; $i + 8 <= strlen($bits); $i += 8) $out .= chr(bindec(substr($bits, $i, 8)));
+  return $out;
+}
+function totp_code($secret, $slice = 0) {
+  $t = pack('N', 0) . pack('N', (int)floor(time() / 30) + $slice);
+  $h = hash_hmac('sha1', $t, b32_decode($secret), true);
+  $o = ord($h[19]) & 0xf;
+  $c = ((ord($h[$o]) & 0x7f) << 24 | ord($h[$o + 1]) << 16 | ord($h[$o + 2]) << 8 | ord($h[$o + 3])) % 1000000;
+  return str_pad((string)$c, 6, '0', STR_PAD_LEFT);
+}
+/* accepts the previous/current/next 30s window (clock drift on phones) */
+function totp_verify($secret, $code) {
+  $code = preg_replace('/\D/', '', (string)$code);
+  if (strlen($code) !== 6 || $secret === '') return false;
+  for ($s = -1; $s <= 1; $s++) if (hash_equals(totp_code($secret, $s), $code)) return true;
+  return false;
+}
