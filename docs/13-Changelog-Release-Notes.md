@@ -5,6 +5,49 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.7.0 — 2026-07-17 · "Agent-list-only KPIs, tap-and-confirm, modern buttons"
+
+### Release notes
+**Serving, visits and activeness now count ONLY from per-agent taps on the agent list** — typing
+totals in the daily report no longer moves them (verified: typed visited/waked 99 changed nothing;
+one agent tap moved visits 1→2). The daily report form keeps just **FLOAT + APK** (the two typed
+KPIs), with an "Open agent list" shortcut for the rest. This way management always knows **which
+agent was handled by which BDO**, and the next upload can flag mismatches. Chips read their state
+plainly: **"Visit NO" → tap → "Confirm?" → tap → "Visit YES ✓ you"**; an inactive agent shows
+**Wake** the same way. The two-tap confirm arms for 4 s then quietly reverts, so accidental clicks
+die on their own. **All buttons were modernized** to one compact scale (primary 32px, outline 31px,
+sidebar 22px) with press feedback, focus rings and faster taps (`touch-action: manipulation`);
+tables use tabular numerals so columns stop wiggling.
+
+### Changes
+- `lib/helpers.php` `bdo_actuals()`: daily reports feed only float + APK; visit/active = ledger only
+- `api.php` `daily_report_save`: still accepts old fields (stored 0) — backward compatible, no schema change
+- `app.js`: Visit NO/YES chip states, two-tap confirm (`data-armed` + 4s auto-revert, translated
+  "Thibitisha?"), daily form/history reduced to Float + APK, swapChip label parity
+- `styles.css`: unified compact button system, `.kchip.arm` pulse (respects reduced-motion),
+  focus-visible rings, tabular-nums. Assets `?v=8`
+- Deploy: upload `app.js`, `styles.css`, `index.html`, `api.php`, `lib/helpers.php`
+
+---
+
+## v1.6.0 — 2026-07-17 · "Daily report in the trend, Swahili/English, UI polish"
+
+### Release notes
+A BDO's typed daily report moved his weighted score live (18% → 52% on submit) — **superseded in
+v1.7.0**, where typed numbers count only for float + APK. **Swahili/English system languages**:
+SW/EN toggle in the sidebar and login (persisted per device); interface wording translated
+(Mawakala, Base ya Wakala Wangu, Ripoti ya Siku, Nenosiri, Toka…) while technical terms stay as
+they are (KPI, acc, name, phone, branch, Served/Visit/APK/Active, float). **Partner column removed**
+from the agents list. Sidebar action buttons reduced to a compact "tiny" row.
+
+### Changes
+- `app.js`: `LANG`/`SW` dictionary/`t()` + `toggleLang` (localStorage `imani_lang`); Daily Report
+  tab gained the Performance-trend panel + cumulative totals; Partner column removed
+- `styles.css`: `.tiny` button class. Assets `?v=7`
+- Deploy: upload `app.js`, `styles.css`, `index.html`, `lib/helpers.php`
+
+---
+
 ## v1.5.0 — 2026-07-16 · "Real status, reversals & mobile"
 
 ### Release notes

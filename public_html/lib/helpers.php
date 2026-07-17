@@ -393,16 +393,14 @@ function bdo_actuals($month, $bdo) {
   $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
 
-  /* His typed DAILY REPORTS also count in HIS performance (the office dashboard
-   * stays on the uploaded Excel). Per KPI we take the larger of what he marked
-   * on agents and what he reported daily, so nothing double-counts. */
-  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(visited),0) v,
-                        COALESCE(SUM(waked),0) w, COALESCE(SUM(apk),0) a
+  /* Typed DAILY REPORTS feed ONLY float + APK. Serving, visits and activeness
+   * count EXCLUSIVELY from per-agent taps on the agent list (kpi_mark ledger),
+   * so we always know WHICH agent got it and by WHOM - and the next upload can
+   * flag mismatches. */
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(apk),0) a
                       FROM daily_reports WHERE month = ? AND bdo = ?');
   $d->execute(array($month, $bdo));
   $dr = $d->fetch();
-  $k['visit'] = max($k['visit'], (int)$dr['v']);
-  $k['active'] = max($k['active'], (int)$dr['w']);
   $k['apk'] = max($k['apk'], (int)$dr['a']);
 
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');

@@ -59,8 +59,12 @@
     'Total': 'Jumla',
     'tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.':
       'gusa KPI kuikamilisha. KPI iliyokwisha fanywa na mwenzako inaonyesha jina lake na haiwezi kurudiwa.',
-    'Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.':
-      'Tuma jumla za KPI za siku KABLA ya saa sita usiku - ripoti za kuchelewa zinawekwa alama mwisho wa mwezi. Float inaingia moja kwa moja kwenye utendaji wako; visits, walioamshwa na APK lazima pia ziwekwe kwa kila wakala.',
+    'Type only FLOAT and APK here. Serving, visits and activeness are done on the agent list - find the agent, tap his chip and confirm, so we know which agent was handled by which BDO.':
+      'Andika FLOAT na APK tu hapa. Kuhudumia, visits na activeness hufanywa kwenye orodha ya mawakala - mtafute wakala, gusa chip yake na uthibitishe, ili tujue wakala gani alishughulikiwa na BDO yupi.',
+    'Serving, visits and activeness: use the agent list, not this form.':
+      'Kuhudumia, visits na activeness: tumia orodha ya mawakala, si fomu hii.',
+    'Open agent list': 'Fungua orodha ya mawakala',
+    'Confirm?': 'Thibitisha?',
     'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.':
       'Hali ya KPI papo hapo - KPI iliyokwisha fanywa inaonyesha aliyeifanya, hivyo hakuna anayerudia. Fanyia kazi zile ambazo hazijakamilika.',
     'Master list with live KPI status.': 'Orodha kuu na hali ya KPI papo hapo.',
@@ -475,7 +479,7 @@
     return KPI_CHIPS.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('');
   }
   function doneChip(a, c, mark, isOM) {
-    var lbl = c.key === 'active' ? 'Active' : c.label;
+    var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : c.label);
     var mine = state.user && mark.by === state.user.username;
     var reversible = mark.src === 'bdo' && (isOM || mine);
     var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
@@ -492,6 +496,10 @@
       if (a.actStatus === 'ACTIVE') return '<span class="kchip done" title="Active (from uploaded file)">Active &#10003;</span>';
       if (a.actStatus === 'INACTIVE') return editable ? todoChip(a, c, 'Wake') : '<span class="kchip bad-off">Inactive</span>';
       return editable ? todoChip(a, c, 'Active') : '<span class="kchip off">Active</span>';
+    }
+    if (c.key === 'visit' && !mark) {
+      /* reads as NO until the BDO taps + confirms it to YES */
+      return editable ? todoChip(a, c, 'Visit NO') : '<span class="kchip off">Visit NO</span>';
     }
     if (mark) return doneChip(a, c, mark, isOM);
     return editable ? todoChip(a, c) : '<span class="kchip off">' + esc(c.label) + '</span>';
@@ -579,14 +587,14 @@
     Promise.all([api('daily_reports_get'), api('base')]).then(function (rr) {
       var d = rr[0], base = rr[1];
       var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
-      var tot = { f: 0, v: 0, w: 0, a: 0 };
-      mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.v += Number(r.visited) || 0; tot.w += Number(r.waked) || 0; tot.a += Number(r.apk) || 0; });
+      var tot = { f: 0, a: 0 };
+      mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
       var hist = mine.slice(0, 14).map(function (r) {
-        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td><td>' + fmt(r.visited) + '</td><td>' + fmt(r.waked) + '</td><td>' + fmt(r.apk) + '</td>' +
+        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td><td>' + fmt(r.apk) + '</td>' +
           '<td>' + (r.late ? '<span class="pill gold">LATE</span>' : '<span class="pill ok">OK</span>') + '</td></tr>';
-      }).join('') || '<tr><td colspan="6" class="note">-</td></tr>';
+      }).join('') || '<tr><td colspan="4" class="note">-</td></tr>';
       var totalRow = mine.length
-        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td>' + fmt(tot.v) + '</td><td>' + fmt(tot.w) + '</td><td>' + fmt(tot.a) + '</td><td></td></tr>'
+        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td>' + fmt(tot.a) + '</td><td></td></tr>'
         : '';
       var perfPanel = base.performance
         ? '<div class="panel"><h2>' + svg('percent') + t('Performance trend') + ' ' + flagPill(base.performance.flag, base.performance.score) + '</h2>' +
@@ -595,22 +603,21 @@
         : '<div class="panel"><div class="note">' + esc(t('Your OM has not set your targets for')) + ' ' + esc(base.month || '') + ' ' + esc(t('yet - your weighted score will appear here.')) + '</div></div>';
       v.innerHTML =
         '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
-        '<p class="page-sub">' + t('Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.') + '</p>' +
+        '<p class="page-sub">' + t('Type only FLOAT and APK here. Serving, visits and activeness are done on the agent list - find the agent, tap his chip and confirm, so we know which agent was handled by which BDO.') + '</p>' +
         '<div class="panel"><h2>' + svg('cal') + t('Send report') + '</h2>' +
         '<div class="row"><div class="field"><label>' + t('Report date (today or up to 2 days back)') + '</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
         '<div class="field"><label>' + t('Total float served') + '</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>' + t('Agents visited') + '</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>' + t('Inactive waked') + '</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
         '<div class="field"><label>' + t('APK updated') + '</label><input id="drApk" type="number" min="0" placeholder="0"></div></div>' +
+        '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits and activeness: use the agent list, not this form.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
         '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
         '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
         perfPanel +
         '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>Visited</th><th>Waked</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
+        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function drSave() {
-    api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value, visited: elById('drVisited').value, waked: elById('drWaked').value, apk: elById('drApk').value } })
+    api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value, apk: elById('drApk').value } })
       .then(function (d) { toast('Daily report saved for ' + d.date, 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
@@ -639,7 +646,7 @@
    * the user's position - the row stays where it is with a fresh green chip. */
   function chipDoneHtml(kpiKey, owner, agentId) {
     var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
-    var lbl = kpiKey === 'active' ? 'Active' : (c ? c.label : kpiKey);
+    var lbl = kpiKey === 'active' ? 'Active' : (kpiKey === 'visit' ? 'Visit YES' : (c ? c.label : kpiKey));
     /* a just-made mark is the current user's own bdo mark -> reversible */
     var x = ' <button class="kchip-x" title="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>';
     return '<span class="kchip done mine" title="Done by you">' +
@@ -1190,7 +1197,23 @@
     if (a === 'agentClear') { state._agentSearch = ''; state.agentPage = 1; var si = elById('agentSearch'); if (si) si.value = ''; agentsBodyLoad(); return; }
     if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); agentsBodyLoad(); return; }
     if (a === 'nextPage') { state.agentPage = (state.agentPage || 1) + 1; agentsBodyLoad(); return; }
-    if (a === 'kpiMark') { kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), node); return; }
+    if (a === 'kpiMark') {
+      /* tap-and-CONFIRM: first tap arms the chip, second tap (within 4s) marks */
+      if (node.getAttribute('data-armed')) {
+        node.removeAttribute('data-armed'); node.classList.remove('arm');
+        kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), node);
+      } else {
+        node.setAttribute('data-armed', '1'); node.setAttribute('data-label', node.innerHTML);
+        node.classList.add('arm'); node.innerHTML = t('Confirm?');
+        setTimeout(function () {
+          if (node.getAttribute('data-armed')) {
+            node.removeAttribute('data-armed'); node.classList.remove('arm');
+            node.innerHTML = node.getAttribute('data-label');
+          }
+        }, 4000);
+      }
+      return;
+    }
     if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi')); return; }
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
     if (a === 'setLoc') { setLocModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }

@@ -755,10 +755,10 @@ try {
     /* ================= DAILY BDO REPORTS ================= */
 
     /*
-     * BDO types his day's totals: float served, agents visited, inactive agents
-     * waked, APK updated. Float feeds his performance directly; visits/activeness/
-     * APK are declarations - the per-agent KPI marks remain the proof (and what
-     * scores him), so totals never double-count.
+     * BDO types ONLY float + APK totals here. Serving, visits and activeness are
+     * marked per-agent on the agent list (kpi_mark) - the ledger is the proof of
+     * WHICH agent was handled by WHOM, and the next upload can flag mismatches.
+     * (visited/waked columns stay for old rows; new saves store 0.)
      */
     case 'daily_report_save': {
       $u = require_auth(); require_perm($u, 'mybase', 'e');
