@@ -4,6 +4,76 @@
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
+  /* ---------------- language (EN / Swahili) ----------------
+   * Technical terms stay as they are (KPI, acc, name, phone, branch, Served,
+   * Visit, APK, Active, float...). Only interface wording is translated. */
+  var LANG = localStorage.getItem('imani_lang') === 'sw' ? 'sw' : 'en';
+  var SW = {
+    'Dashboard': 'Dashibodi',
+    'My Agent Base': 'Base ya Wakala Wangu',
+    'Daily Report': 'Ripoti ya Siku',
+    'Agents': 'Mawakala',
+    'All Agents': 'Mawakala Wote',
+    'Weekly Upload': 'Upakiaji wa Wiki',
+    'Monthly Targets': 'Malengo ya Mwezi',
+    'Commission & Months': 'Kamisheni na Miezi',
+    'Reports & Ranks': 'Ripoti na Viwango',
+    'Admin': 'Usimamizi',
+    'Sign out': 'Toka',
+    'Password': 'Nenosiri',
+    'Light': 'Mwanga',
+    'Dark': 'Giza',
+    'Sign in': 'Ingia',
+    'Username': 'Jina la mtumiaji',
+    'Search (live)': 'Tafuta (papo hapo)',
+    'Show': 'Onyesha',
+    'Clear': 'Futa',
+    'Load': 'Pakia',
+    'Month': 'Mwezi',
+    'Send report': 'Tuma ripoti',
+    'Save report': 'Hifadhi ripoti',
+    'My reports this month': 'Ripoti zangu mwezi huu',
+    'My Performance': 'Utendaji Wangu',
+    'Performance trend': 'Mwenendo wa utendaji',
+    'Messages from management': 'Ujumbe kutoka kwa Uongozi',
+    'Report date (today or up to 2 days back)': 'Tarehe ya ripoti (leo au hadi siku 2 nyuma)',
+    'Total float served': 'Jumla ya float iliyohudumiwa',
+    'Agents visited': 'Mawakala waliotembelewa',
+    'Inactive waked': 'Walioamshwa (inactive)',
+    'APK updated': 'APK zilizosasishwa',
+    'Report float shortage': 'Ripoti upungufu wa float',
+    'Priority': 'Kipaumbele',
+    'New': 'Mpya',
+    'Total Base': 'Jumla ya Base',
+    'My Served': 'Nilizohudumia',
+    'Priority to serve': 'Kipaumbele cha kuhudumia',
+    'Agents - mark KPIs': 'Mawakala - weka KPI',
+    'Level': 'Ngazi',
+    'Status': 'Hali',
+    'Date': 'Tarehe',
+    'Target Attainment': 'Ufikiaji wa Malengo',
+    'Achievement': 'Ufanisi',
+    'Open Daily Report': 'Fungua Ripoti ya Siku',
+    'Send today\'s KPI numbers from the': 'Tuma idadi za KPI za leo kupitia',
+    'served last month': 'waliohudumiwa mwezi uliopita',
+    'Total': 'Jumla',
+    'tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.':
+      'gusa KPI kuikamilisha. KPI iliyokwisha fanywa na mwenzako inaonyesha jina lake na haiwezi kurudiwa.',
+    'Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.':
+      'Tuma jumla za KPI za siku KABLA ya saa sita usiku - ripoti za kuchelewa zinawekwa alama mwisho wa mwezi. Float inaingia moja kwa moja kwenye utendaji wako; visits, walioamshwa na APK lazima pia ziwekwe kwa kila wakala.',
+    'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.':
+      'Hali ya KPI papo hapo - KPI iliyokwisha fanywa inaonyesha aliyeifanya, hivyo hakuna anayerudia. Fanyia kazi zile ambazo hazijakamilika.',
+    'Master list with live KPI status.': 'Orodha kuu na hali ya KPI papo hapo.',
+    'Your OM has not set your targets for': 'OM wako bado hajaweka malengo yako ya',
+    'yet - your weighted score will appear here.': 'bado - alama yako ya uzito itaonekana hapa.'
+  };
+  function t(s) { return LANG === 'sw' && SW[s] ? SW[s] : s; }
+  function toggleLang() {
+    LANG = LANG === 'sw' ? 'en' : 'sw';
+    localStorage.setItem('imani_lang', LANG);
+    render();
+  }
+
   /* ---------------- helpers ---------------- */
   function elById(id) { return document.getElementById(id); }
   function esc(s) {
@@ -52,7 +122,7 @@
     var light = !document.body.classList.contains('light');
     document.body.classList.toggle('light', light);
     localStorage.setItem('imani_theme', light ? 'light' : 'dark');
-    var b = elById('themeBtn'); if (b) b.innerHTML = light ? (svg('flame') + ' Dark') : (svg('eye') + ' Light');
+    var b = elById('themeBtn'); if (b) b.innerHTML = light ? (svg('flame') + ' ' + t('Dark')) : (svg('eye') + ' ' + t('Light'));
   }
 
   /* ---------------- icons (inline SVG, stroke) ---------------- */
@@ -137,10 +207,11 @@
       '<h1>IMANI SUPERDEALER</h1>' +
       '<p class="hint">Business Management Platform</p>' +
       '<form id="loginForm">' +
-      '<div class="field"><label>Username</label><input id="lUser" autocomplete="username"></div>' +
-      '<div class="field"><label>Password</label><div class="pwwrap"><input id="lPass" type="password" autocomplete="current-password">' +
+      '<div class="field"><label>' + t('Username') + '</label><input id="lUser" autocomplete="username"></div>' +
+      '<div class="field"><label>' + t('Password') + '</label><div class="pwwrap"><input id="lPass" type="password" autocomplete="current-password">' +
       '<button type="button" class="pweye" data-action="togglePw" data-for="lPass" aria-label="Show password">' + svg('eye') + '</button></div></div>' +
-      '<button class="btn" type="submit">Sign in</button>' +
+      '<button class="btn" type="submit">' + t('Sign in') + '</button>' +
+      '<div style="text-align:center;margin-top:10px"><button type="button" class="ghost tiny" data-action="toggleLang">' + (LANG === 'sw' ? 'English' : 'Swahili') + '</button></div>' +
       '<div class="err" id="lErr"></div>' +
       '</form></div></div>';
     var f = elById('lUser'); if (f) f.focus();
@@ -158,7 +229,7 @@
     var tabs = visibleModules();
     if (!tabs.some(function (m) { return m.key === state.tab; })) state.tab = tabs.length ? tabs[0].key : 'dashboard';
     var nav = tabs.map(function (m) {
-      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' + svg(m.icon) + '<span>' + esc(m.label) + '</span></button>';
+      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' + svg(m.icon) + '<span>' + esc(t(m.label)) + '</span></button>';
     }).join('');
     elById('app').innerHTML =
       '<div class="shell"><aside class="sidebar">' +
@@ -167,10 +238,11 @@
       nav +
       '<div class="sb-foot"><div class="sb-user"><span class="avatar">' + esc(initials(state.user.name)) + '</span>' +
       '<div><b>' + esc(state.user.name) + '</b><small>' + esc(roleLabel(state.user.role)) + '</small></div></div>' +
-      '<div class="sb-actions"><button class="ghost mini" id="themeBtn" data-action="toggleTheme">' +
-      (document.body.classList.contains('light') ? svg('flame') + ' Dark' : svg('eye') + ' Light') + '</button>' +
-      '<button class="ghost mini" data-action="pwd">Password</button>' +
-      '<button class="ghost mini" data-action="logout">Sign out</button></div></div>' +
+      '<div class="sb-actions"><button class="ghost tiny" id="themeBtn" data-action="toggleTheme" title="Theme">' +
+      (document.body.classList.contains('light') ? svg('flame') + ' ' + t('Dark') : svg('eye') + ' ' + t('Light')) + '</button>' +
+      '<button class="ghost tiny" data-action="toggleLang" title="Language">' + (LANG === 'sw' ? 'EN' : 'SW') + '</button>' +
+      '<button class="ghost tiny" data-action="pwd">' + t('Password') + '</button>' +
+      '<button class="ghost tiny" data-action="logout">' + t('Sign out') + '</button></div></div>' +
       '</aside><main class="main"><div id="view"></div></main></div>';
     renderTab();
   }
@@ -258,14 +330,14 @@
         : '';
 
       v.innerHTML =
-        '<h1 class="page-title">Dashboard</h1><p class="page-sub">Performance for ' + esc(d.month) +
+        '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
         '<button class="btn" data-action="dashLoad">Load</button></div></div>' +
         settings +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
-        '<div class="panel"><h2>' + svg('target') + 'Target Attainment' + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
+        '<div class="panel"><h2>' + svg('target') + t('Target Attainment') + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function dashSettingsSave() {
@@ -287,7 +359,7 @@
     return '<tr data-agent="' + a.id + '"><td>' + esc(a.acc) + '</td><td>' + name + '</td><td>' + esc(a.phone || '-') + '</td><td>' + esc(a.branch || '-') + '</td>' +
       '<td>' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
       '<td><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
-      (restricted ? '' : '<td>' + (Number(a.partner) ? 'Yes' : '-') + '</td>') + '</tr>';
+      '</tr>';
   }
   function agentsBodyLoad() {
     var body = elById('agentsBody'); if (!body) return;
@@ -298,7 +370,7 @@
       if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
       state._agentsMeta = d;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
-      var cols = 6 + (d.restricted ? 0 : 1);
+      var cols = 6;
       var rows = (d.items || []).map(function (a) { return agentRowHtml(a, editable, d.restricted); }).join('')
         || '<tr><td colspan="' + cols + '">' + emptyState('users', 'No agents found', state._agentSearch ? 'Try a different search.' : 'The OM uploads the agent performance file.') + '</td></tr>';
       body.innerHTML = rows;
@@ -315,18 +387,18 @@
       return '<option value="' + n + '"' + (n === (state.agentPer || 50) ? ' selected' : '') + '>' + n + ' / page</option>';
     }).join('');
     v.innerHTML =
-      '<h1 class="page-title">' + (restricted ? 'All Agents' : 'Agents') + '</h1>' +
+      '<h1 class="page-title">' + (restricted ? t('All Agents') : t('Agents')) + '</h1>' +
       '<p class="page-sub">' + (restricted
-        ? 'Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.'
-        : 'Master list with live KPI status.') + '</p>' +
+        ? t('Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.')
+        : t('Master list with live KPI status.')) + '</p>' +
       '<div class="panel"><div class="row">' +
-      '<div class="field" style="flex:1;min-width:160px"><label>Search (live)</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
-      '<div class="field"><label>Show</label><select id="agentPer">' + perOpts + '</select></div>' +
-      '<button class="ghost" data-action="agentClear">Clear</button>' +
+      '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search (live)') + '</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      '<div class="field"><label>' + t('Show') + '</label><select id="agentPer">' + perOpts + '</select></div>' +
+      '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
       '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div></div>' +
       '<div class="panel wide"><div class="tablewrap tall"><table><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
-      (restricted ? '' : '<th>Partner</th>') + '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
+      '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
       '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>' +
       '<div id="inactivePanel"></div>';
@@ -451,13 +523,13 @@
       /* Daily report now lives in its own "Daily Report" tab */
       var dailyPanel = editable
         ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">Send today\'s KPI numbers from the <b>Daily Report</b> tab.</span>' +
-          '<button class="ghost mini" data-action="tab" data-tab="daily">' + svg('cal') + ' Open Daily Report</button></div></div>'
+          '<button class="ghost mini" data-action="tab" data-tab="daily">' + svg('cal') + ' ' + t('Open Daily Report') + '</button></div></div>'
         : '';
 
       /* Priority agents still to serve this month */
       var prioLeft = (d.agents || []).filter(function (a) { return a.level === 'priority' && !(a.kpi && a.kpi.served); });
       var prioPanel = prioLeft.length
-        ? '<div class="panel"><h2>' + svg('flame') + 'Priority to serve (' + prioLeft.length + ')</h2>' +
+        ? '<div class="panel"><h2>' + svg('flame') + t('Priority to serve') + ' (' + prioLeft.length + ')</h2>' +
           '<p class="note">Your carried base - you already know where they are. Serve them first.</p>' +
           '<div class="tablewrap"><table><thead><tr><th>Agent</th><th>Location</th><th>Branch</th><th>Action</th></tr></thead><tbody>' +
           prioLeft.map(function (a) {
@@ -487,15 +559,15 @@
         : '<div class="panel"><div class="note">Your OM has not set your targets for ' + esc(d.month) + ' yet - your weighted score will appear here.</div></div>';
 
       v.innerHTML =
-        '<h1 class="page-title">My Agent Base</h1><p class="page-sub">' + esc(d.month) +
+        '<h1 class="page-title">' + t('My Agent Base') + '</h1><p class="page-sub">' + esc(d.month) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
-        ' &middot; tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.</p>' +
+        ' &middot; ' + t('tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.') + '</p>' +
         msgPanel +
         '<div class="grid cards" style="margin-bottom:16px">' +
-        card('flame', 'Priority', fmt(d.counts.priority), 'served last month') +
-        card('users', 'New', fmt(d.counts.newAgents)) +
-        card('users', 'Total Base', fmt(d.counts.total)) +
-        card('check', 'My Served', fmt(d.counts.served)) +
+        card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
+        card('users', t('New'), fmt(d.counts.newAgents)) +
+        card('users', t('Total Base'), fmt(d.counts.total)) +
+        card('check', t('My Served'), fmt(d.counts.served)) +
         '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
         '<div class="panel"><h2>' + svg('phone') + 'Agents &mdash; mark KPIs</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
@@ -503,25 +575,38 @@
   }
   /* ---------------- Daily Report (separate BDO tab) ---------------- */
   function viewDaily(v) {
-    api('daily_reports_get').then(function (d) { /* server defaults to the OPEN month */
+    /* base gives his weighted performance so each saved report moves the trend */
+    Promise.all([api('daily_reports_get'), api('base')]).then(function (rr) {
+      var d = rr[0], base = rr[1];
       var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
+      var tot = { f: 0, v: 0, w: 0, a: 0 };
+      mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.v += Number(r.visited) || 0; tot.w += Number(r.waked) || 0; tot.a += Number(r.apk) || 0; });
       var hist = mine.slice(0, 14).map(function (r) {
         return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td><td>' + fmt(r.visited) + '</td><td>' + fmt(r.waked) + '</td><td>' + fmt(r.apk) + '</td>' +
           '<td>' + (r.late ? '<span class="pill gold">LATE</span>' : '<span class="pill ok">OK</span>') + '</td></tr>';
-      }).join('') || '<tr><td colspan="6" class="note">No reports yet this month.</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="note">-</td></tr>';
+      var totalRow = mine.length
+        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td>' + fmt(tot.v) + '</td><td>' + fmt(tot.w) + '</td><td>' + fmt(tot.a) + '</td><td></td></tr>'
+        : '';
+      var perfPanel = base.performance
+        ? '<div class="panel"><h2>' + svg('percent') + t('Performance trend') + ' ' + flagPill(base.performance.flag, base.performance.score) + '</h2>' +
+          '<p class="note">' + esc(t('My reports this month')) + ' + KPI = ' + esc(t('My Performance')) + '</p>' +
+          perfBars(base.performance.kpis) + '</div>'
+        : '<div class="panel"><div class="note">' + esc(t('Your OM has not set your targets for')) + ' ' + esc(base.month || '') + ' ' + esc(t('yet - your weighted score will appear here.')) + '</div></div>';
       v.innerHTML =
-        '<h1 class="page-title">Daily Report</h1>' +
-        '<p class="page-sub">Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.</p>' +
-        '<div class="panel"><h2>' + svg('cal') + 'Send report</h2>' +
-        '<div class="row"><div class="field"><label>Report date (today or up to 2 days back)</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
-        '<div class="field"><label>Total float served</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>Agents visited</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>Inactive waked</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>APK updated</label><input id="drApk" type="number" min="0" placeholder="0"></div></div>' +
-        '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">Save report</button>' +
-        '<button class="ghost" data-action="shortage">' + svg('alert') + ' Report float shortage</button></div></div>' +
-        '<div class="panel"><h2>' + svg('chart') + 'My reports this month</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>Date</th><th>Float</th><th>Visited</th><th>Waked</th><th>APK</th><th>Status</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+        '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+        '<p class="page-sub">' + t('Send your day\'s KPI totals BEFORE midnight - late reports are flagged at month end. Float counts straight into your performance; visits, waked agents and APK must ALSO be marked on the agents themselves.') + '</p>' +
+        '<div class="panel"><h2>' + svg('cal') + t('Send report') + '</h2>' +
+        '<div class="row"><div class="field"><label>' + t('Report date (today or up to 2 days back)') + '</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('Total float served') + '</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>' + t('Agents visited') + '</label><input id="drVisited" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>' + t('Inactive waked') + '</label><input id="drWaked" type="number" min="0" placeholder="0"></div>' +
+        '<div class="field"><label>' + t('APK updated') + '</label><input id="drApk" type="number" min="0" placeholder="0"></div></div>' +
+        '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
+        '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
+        perfPanel +
+        '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>Visited</th><th>Waked</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function drSave() {
@@ -1096,6 +1181,7 @@
     var a = node.getAttribute('data-action');
     if (a === 'tab') { state.tab = node.getAttribute('data-tab'); renderShell(); return; }
     if (a === 'toggleTheme') { toggleTheme(); return; }
+    if (a === 'toggleLang') { toggleLang(); return; }
     if (a === 'logout') { doLogout(); return; }
     if (a === 'pwd') { pwdModal(); return; }
     if (a === 'pwdSave') { pwdSave(); return; }

@@ -392,11 +392,22 @@ function bdo_actuals($month, $bdo) {
   $st->execute(array($month, $bdo));
   $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+
+  /* His typed DAILY REPORTS also count in HIS performance (the office dashboard
+   * stays on the uploaded Excel). Per KPI we take the larger of what he marked
+   * on agents and what he reported daily, so nothing double-counts. */
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(visited),0) v,
+                        COALESCE(SUM(waked),0) w, COALESCE(SUM(apk),0) a
+                      FROM daily_reports WHERE month = ? AND bdo = ?');
+  $d->execute(array($month, $bdo));
+  $dr = $d->fetch();
+  $k['visit'] = max($k['visit'], (int)$dr['v']);
+  $k['active'] = max($k['active'], (int)$dr['w']);
+  $k['apk'] = max($k['apk'], (int)$dr['a']);
+
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
   $f->execute(array($month, $bdo));
-  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? AND bdo = ?');
-  $d->execute(array($month, $bdo));
-  $k['float'] = (float)$f->fetch()['f'] + (float)$d->fetch()['f'];
+  $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
   return $k;
 }
 

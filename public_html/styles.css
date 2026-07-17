@@ -321,3 +321,9 @@ body.light .kchip.bad-off{background:rgba(198,47,29,.12);color:#a3271b}
   .nav-item span{display:inline}
   .page-sub{font-size:12px}
 }
+
+/* compact sidebar action buttons (Theme / Language / Password / Sign out) */
+.sb-actions{flex-wrap:wrap}
+button.tiny{padding:4px 8px!important;font-size:11px!important;border-radius:8px;font-weight:600;display:inline-flex;align-items:center;gap:4px}
+button.tiny svg{width:12px;height:12px}
+@media (max-width:860px){ button.tiny{padding:4px 7px!important;font-size:10px!important} }
