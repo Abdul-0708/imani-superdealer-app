@@ -24,7 +24,9 @@ body{
   font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;
 }
 a{color:var(--gold)}
-svg{flex:none}
+/* SAFETY NET: every inline icon defaults to 18px; specific rules (nav, brand,
+ * empty-state...) override. An unsized svg can never fill the page again. */
+svg{flex:none;width:18px;height:18px;vertical-align:-3px}
 .kpi,td,th{font-variant-numeric:tabular-nums}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--fire2);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
