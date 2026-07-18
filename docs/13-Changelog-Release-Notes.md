@@ -5,6 +5,16 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.12.1 — 2026-07-18 · "Specialist field work auto-counts as his report"
+
+Any real field action the activeness specialist takes (wake, won't-return, pipeline form/stage,
+recruit) stamps that day's daily report as SENT automatically (same-day, never LATE, note
+"auto: activeness field work"). Days with no field work still read as missed. Verified: one
+won't-return mark → OM range report shows him reported 1 / missed 0. No-op for other BDOs.
+Server-only (`api.php`, `lib/helpers.php`).
+
+---
+
 ## v1.12.0 — 2026-07-18 · "Personal BDO dashboards + specialist workflow complete"
 
 ### Release notes
