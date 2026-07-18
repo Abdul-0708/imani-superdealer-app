@@ -621,6 +621,7 @@ try {
         db()->prepare('UPDATE agents SET act_current = "ACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
       }
       db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
+      specialist_touch_report($u);
       audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
       respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo));
     }
@@ -677,6 +678,7 @@ try {
       /* the recruit counts as HIS activeness credit (reversible like any live mark) */
       db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?, "active", ?, "bdo")')
           ->execute(array($month, $agentId, $u['username']));
+      specialist_touch_report($u);
       audit($u['id'], 'agent_recruit', $u['username'] . ' recruited ' . $acc . ' (' . $name . ') ' . $month);
       respond(array('ok' => true, 'agentId' => $agentId));
     }
@@ -698,6 +700,7 @@ try {
       if ($name === '' || $branch === '' || $champ === '') fail('Fill agent name, branch and the bank champion holding the form');
       db()->prepare('INSERT INTO recruits (bdo, name, branch, champion, phone) VALUES (?,?,?,?,?)')
           ->execute(array($u['username'], $name, $branch, $champ, $phone));
+      specialist_touch_report($u);
       audit($u['id'], 'recruit_form', $name . ' @ ' . $branch . ' (champion ' . $champ . ')');
       respond(array('ok' => true, 'id' => (int)db()->lastInsertId()));
     }
@@ -740,6 +743,7 @@ try {
         db()->prepare('UPDATE recruits SET stage = 5, done_at = NOW(), acc = ?, location = ?, agent_id = ? WHERE id = ?')
             ->execute(array($acc, $loc, $agentId, $id));
       }
+      specialist_touch_report($u);
       audit($u['id'], 'recruit_stage', 'id=' . $id . ' -> stage ' . ($stage + 1));
       respond(array('ok' => true, 'stage' => $stage + 1));
     }
@@ -811,11 +815,13 @@ try {
       if ($row = $ex->fetch()) {
         if ($row['bdo'] !== $u['username'] && !can($u, 'agents', 'e')) fail('Marked by ' . $row['bdo'] . ' - only he or the OM can remove it', 403);
         db()->prepare('DELETE FROM wont_return WHERE agent_id = ?')->execute(array($agentId));
+        specialist_touch_report($u);
         audit($u['id'], 'wont_return_unmark', $agent['name']);
         respond(array('ok' => true, 'marked' => false));
       }
       $note = mb_substr(trim((string)bval('note')), 0, 255);
       db()->prepare('INSERT INTO wont_return (agent_id, bdo, note) VALUES (?,?,?)')->execute(array($agentId, $u['username'], $note));
+      specialist_touch_report($u);
       audit($u['id'], 'wont_return_mark', $agent['name'] . ($note !== '' ? ' - ' . $note : ''));
       respond(array('ok' => true, 'marked' => true));
     }

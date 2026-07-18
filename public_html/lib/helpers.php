@@ -531,3 +531,13 @@ function user_specialty($username) {
   $r = $st->fetch();
   return $r ? (string)$r['specialty'] : '';
 }
+
+/* The activeness specialist never types a daily report - any REAL field action
+ * he takes today (wake, won't-return, form, recruit) counts as his report sent
+ * for the day. Sent same-day, so it can never be LATE. */
+function specialist_touch_report($user) {
+  if (!isset($user['specialty']) || $user['specialty'] !== 'activeness') return;
+  db()->prepare('INSERT IGNORE INTO daily_reports (bdo, report_date, month, float_served, visited, waked, apk, note)
+                 VALUES (?,?,?,0,0,0,0, "auto: activeness field work")')
+      ->execute(array($user['username'], date('Y-m-d'), date('Y-m')));
+}
