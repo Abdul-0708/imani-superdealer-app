@@ -1,0 +1,2 @@
+# Proof photos are served ONLY through api.php (auth-checked) - never directly
+Require all denied

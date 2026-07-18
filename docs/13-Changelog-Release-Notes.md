@@ -5,6 +5,40 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.10.0 — 2026-07-18 · "Wake proof, field recruitment, range reports" — schema v7
+
+### Release notes
+**Waking needs proof.** Turning an INACTIVE agent Active now forces the BDO to photograph the
+agent's **transaction receipts**: the Wake tap opens a camera prompt, the photo is downscaled on
+the phone (max 1280 px JPEG — fast even on slow networks), checked server-side (real image, ≤4 MB)
+and stored under a random name that only the API can serve (auth-checked; direct URL access is
+denied). Everyone sees a small **eye icon** on the waked chip — management opens the receipt in one
+tap. No photo → no wake → no credit.
+
+**Recruiting counts as Activeness.** The BDO taps **"+ Recruit new agent"** on My Base and fills
+acc name, acc number, branch, phone and physical location (all required; duplicate acc numbers are
+caught — 409 points him to the agent list). The agent joins his base as **NEW + ACTIVE** and the
+activeness credit lands in HIS performance instantly (verified 3→4 on recruit), reversible like any
+live mark.
+
+**OM downloads any date range.** New "Download BDO Report (Excel)" panel on Targets: pick From/To
+dates and tick the KPIs you want (Served, Float, Visits, APK, Activeness) — one row per BDO.
+Served/Visits/Activeness count dated agent marks; Float/APK come from dated daily reports (APK uses
+the same max-of-marks-or-typed rule as the monthly score). BDOs cannot pull it (403).
+
+### Changes
+- **Schema v7** (self-upgrading): `agent_month_kpi.proof`
+- `lib/helpers.php`: `save_proof_image()` (data-URL decode, magic-byte + size check, random name)
+- `api.php`: kpi_mark proof gate on INACTIVE wakes; `wake_proof` (auth-checked image serve);
+  `agent_recruit`; `bdo_range_report`; kpi maps expose `proof`; recruits classify as NEW
+- `app.js`: proofModal (camera capture + canvas downscale), viewProof modal, recruitModal,
+  rangeReportPanel + Excel writer, eye icon on proven chips, EN/SW strings
+- NEW `uploads/.htaccess` (deny all - photos only via API). Assets `?v=12`, SW cache `imani-v12`
+- Deploy: upload `api.php`, `app.js`, `styles.css`, `index.html`, `sw.js`, `lib/helpers.php`,
+  `lib/db.php`, and the `uploads/` folder (with its `.htaccess`)
+
+---
+
 ## v1.9.0 — 2026-07-17 · "2FA for super admin" — schema v6
 
 ### Release notes

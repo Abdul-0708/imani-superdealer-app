@@ -66,6 +66,21 @@
     'Open agent list': 'Fungua orodha ya mawakala',
     'Confirm?': 'Thibitisha?',
     'No connection - check your internet and try again': 'Hakuna mtandao - angalia intaneti yako kisha ujaribu tena',
+    'Wake': 'Amsha',
+    'Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.':
+      'Piga picha ya RISITI ZA MIAMALA ya wakala kama uthibitisho kwamba anafanya miamala tena. Uongozi unaweza kuifungua kwenye chip yake.',
+    'Receipt photo': 'Picha ya risiti',
+    'Save proof & wake': 'Hifadhi uthibitisho & amsha',
+    'Take the receipt photo first': 'Piga picha ya risiti kwanza',
+    'Receipt proof': 'Uthibitisho wa risiti',
+    'Close': 'Funga',
+    'Cancel': 'Ghairi',
+    'That file is not a photo': 'Faili hilo si picha',
+    'Recruit new agent': 'Sajili wakala mpya',
+    'Fill the new agent\'s details - he joins your base as NEW + ACTIVE and counts in your Activeness.':
+      'Jaza taarifa za wakala mpya - anaingia kwenye base yako kama MPYA + ACTIVE na anahesabika kwenye Activeness yako.',
+    'Save new agent': 'Hifadhi wakala mpya',
+    'Agent added - counted in your Activeness': 'Wakala ameongezwa - amehesabika kwenye Activeness yako',
     'Two-step verification': 'Uthibitisho wa hatua mbili',
     'Open your authenticator app and type the 6-digit code for IMANI.': 'Fungua app yako ya authenticator kisha andika namba 6 za IMANI.',
     '6-digit code': 'Namba 6 za uthibitisho',
@@ -145,6 +160,7 @@
     users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>',
     phone: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
     upload: '<path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+    download: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
     dollar: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M14.5 9.3a2.6 2.6 0 0 0-2.5-1.5c-1.5 0-2.6.8-2.6 2s1.1 1.8 2.6 2 2.5.6 2.5 2-1.1 2-2.5 2a2.6 2.6 0 0 1-2.6-1.5"/>',
     lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
@@ -537,8 +553,11 @@
     var mine = state.user && mark.by === state.user.username;
     var reversible = mark.src === 'bdo' && (isOM || mine);
     var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
+    /* wake came with a receipt photo - anyone can open the proof */
+    var pr = (c.key === 'active' && mark.proof)
+      ? ' <button class="kchip-x" title="View receipt photo" aria-label="View receipt photo" data-action="viewProof" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('eye') + '</button>' : '';
     return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
-      esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + x + '</span>';
+      esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + pr + x + '</span>';
   }
   function todoChip(a, c, label) {
     return '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(label || c.label) + '</button>';
@@ -631,10 +650,37 @@
         card('users', t('Total Base'), fmt(d.counts.total)) +
         card('check', t('My Served'), fmt(d.counts.served)) +
         '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
-        '<div class="panel"><h2>' + svg('phone') + t('Agents - mark KPIs') + '</h2>' +
+        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('phone') + t('Agents - mark KPIs') + '</h2><div class="spacer"></div>' +
+        (editable ? '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>' : '') + '</div>' +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* New agent recruited in the field - counts as the BDO's activeness credit. */
+  function recruitModal() {
+    openModal('<h2>' + svg('users') + ' ' + t('Recruit new agent') + '</h2>' +
+      '<p class="note">' + t('Fill the new agent\'s details - he joins your base as NEW + ACTIVE and counts in your Activeness.') + '</p>' +
+      '<div class="field"><label>Acc name</label><input id="rcName" placeholder="agent full name"></div>' +
+      '<div class="field"><label>Acc number</label><input id="rcAcc" placeholder="e.g. 01J7731842000"></div>' +
+      '<div class="field"><label>Branch</label><input id="rcBranch" placeholder="e.g. HYDOM"></div>' +
+      '<div class="field"><label>Phone</label><input id="rcPhone" inputmode="tel" placeholder="e.g. 2557XXXXXXXX"></div>' +
+      '<div class="field"><label>Physical location</label><input id="rcLoc" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="recruitSave">' + t('Save new agent') + '</button></div>');
+    var f = elById('rcName'); if (f) f.focus();
+  }
+  function recruitSave() {
+    api('agent_recruit', { body: {
+      name: elById('rcName').value.trim(), acc: elById('rcAcc').value.trim(),
+      branch: elById('rcBranch').value.trim(), phone: elById('rcPhone').value.trim(),
+      location: elById('rcLoc').value.trim()
+    } }).then(function () {
+      closeModal();
+      toast(t('Agent added - counted in your Activeness'), 'ok');
+      renderTab();
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+
   /* ---------------- Daily Report (separate BDO tab) ---------------- */
   function viewDaily(v) {
     /* base gives his weighted performance so each saved report moves the trend */
@@ -719,8 +765,8 @@
       .then(function () { toast('Mark reversed', 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
-  function kpiMark(id, kpi, name, node, location) {
-    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '' } })
+  function kpiMark(id, kpi, name, node, location, proof) {
+    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '' } })
       .then(function () {
         toast(name + ': ' + kpi + ' marked - counted for you', 'ok');
         swapChip(node, kpi, state.user.username);
@@ -735,6 +781,7 @@
       })
       .catch(function (e) {
         if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
+        if (e.data && e.data.needProof) { proofModal(id, name, node); return; }
         toast(e.message, 'err');
         /* someone else already did it - show their name on the chip, in place */
         var m = String(e.message).match(/Already done by (\S+)/);
@@ -750,6 +797,40 @@
       '<button class="ghost" data-action="closeModal">Cancel</button>' +
       '<button class="btn" data-action="locConfirm" data-id="' + id + '" data-kpi="' + kpi + '" data-name="' + esc(name) + '">Save location &amp; mark served</button></div>');
     state._locNode = node;
+  }
+  /* Waking an INACTIVE agent needs a receipt photo. The photo is downscaled on
+   * the phone (max 1280px JPEG) so it uploads fast even on slow networks. */
+  function proofModal(id, name, node) {
+    openModal('<h2>' + svg('zap') + ' ' + t('Wake') + ' ' + esc(name) + '</h2>' +
+      '<p class="note">' + t('Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.') + '</p>' +
+      '<div class="field"><label>' + t('Receipt photo') + '</label>' +
+      '<input id="proofFile" type="file" accept="image/*" capture="environment"></div>' +
+      '<div id="proofPrev" style="margin-top:8px;text-align:center"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="proofConfirm" data-id="' + id + '" data-name="' + esc(name) + '" disabled>' + t('Save proof & wake') + '</button></div>');
+    state._locNode = node;
+    state._proofData = '';
+    var inp = elById('proofFile');
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      var img = new Image();
+      img.onload = function () {
+        var max = 1280, w = img.width, h = img.height;
+        if (w > max || h > max) { var s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+        var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        state._proofData = cv.toDataURL('image/jpeg', 0.72);
+        URL.revokeObjectURL(img.src);
+        var pv = elById('proofPrev');
+        if (pv) pv.innerHTML = '<img src="' + state._proofData + '" alt="receipt preview" style="max-width:100%;max-height:180px;border-radius:10px">';
+        var btn = document.querySelector('[data-action=proofConfirm]');
+        if (btn) btn.disabled = false;
+      };
+      img.onerror = function () { toast(t('That file is not a photo'), 'err'); };
+      img.src = URL.createObjectURL(f);
+    });
   }
 
   /* ---------------- weekly upload ---------------- */
@@ -841,6 +922,41 @@
       (can('targets', 'e') ? '<button class="btn" data-action="btSave">Save BDO targets</button>' : '') + '</div>' +
       rows + '</div>';
   }
+  /* OM: download BDO performance for any date range with hand-picked KPIs. */
+  function rangeReportPanel() {
+    var kpiBoxes = [
+      ['served', 'Served'], ['float', 'Float'], ['visits', 'Visits'], ['apk', 'APK'], ['activeness', 'Activeness']
+    ].map(function (k) {
+      return '<label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="rrKpi" value="' + k[0] + '" checked style="accent-color:var(--fire2);margin-right:5px">' + k[1] + '</label>';
+    }).join(' ');
+    return '<div class="panel"><h2>' + svg('chart') + 'Download BDO Report (Excel)</h2>' +
+      '<p class="note">Pick a date range and the KPIs you want - one row per BDO. Served/Visits/Activeness count his dated agent marks; Float and APK come from dated daily reports (APK uses the same max-of-marks-or-typed rule as the monthly score).</p>' +
+      '<div class="row">' +
+      '<div class="field"><label>From</label><input id="rrFrom" type="date" value="' + isoDaysAgo(30) + '" max="' + isoToday() + '"></div>' +
+      '<div class="field"><label>To</label><input id="rrTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+      '</div><div class="row" style="margin-top:8px">' + kpiBoxes + '</div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn" data-action="rrDownload">' + svg('download') + ' Download Excel</button></div></div>';
+  }
+  function rrDownload() {
+    var kpis = Array.prototype.slice.call(document.querySelectorAll('.rrKpi:checked')).map(function (c) { return c.value; });
+    if (!kpis.length) { toast('Tick at least one KPI', 'warn'); return; }
+    var from = elById('rrFrom').value, to = elById('rrTo').value;
+    if (!from || !to) { toast('Pick both dates', 'warn'); return; }
+    api('bdo_range_report', { qs: '&from=' + from + '&to=' + to + '&kpis=' + kpis.join(',') }).then(function (d) {
+      if (!d.rows.length) { toast('No BDOs found', 'warn'); return; }
+      var head = { bdo: 'BDO', name: 'Name', served: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness' };
+      var rows = d.rows.map(function (r) {
+        var o = {};
+        Object.keys(r).forEach(function (k) { o[head[k] || k] = r[k]; });
+        return o;
+      });
+      var ws = XLSX.utils.json_to_sheet(rows);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'BDO ' + d.from + ' to ' + d.to);
+      XLSX.writeFile(wb, 'bdo_report_' + d.from + '_' + d.to + '.xlsx');
+      toast(d.rows.length + ' BDOs exported', 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
   function bdoPerfPanel(perf) {
     var rows = (perf.rows || []).map(function (r, i) {
       var mini = TARGET_DEFS.map(function (t) {
@@ -897,6 +1013,7 @@
         fields + '</div>' +
         bdoTargetsPanel(bt) +
         bdoPerfPanel(perf) +
+        rangeReportPanel() +
         '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
@@ -1296,6 +1413,16 @@
     }
     if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi')); return; }
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
+    if (a === 'proofConfirm') { if (!state._proofData) { toast(t('Take the receipt photo first'), 'warn'); return; } var n3 = state._locNode, pd = state._proofData; state._proofData = ''; closeModal(); kpiMark(node.getAttribute('data-id'), 'active', node.getAttribute('data-name'), n3, '', pd); return; }
+    if (a === 'viewProof') {
+      openModal('<h2>' + svg('eye') + ' ' + t('Receipt proof') + ' &mdash; ' + esc(node.getAttribute('data-name') || '') + '</h2>' +
+        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px">' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
+      return;
+    }
+    if (a === 'recruit') { recruitModal(); return; }
+    if (a === 'recruitSave') { recruitSave(); return; }
+    if (a === 'rrDownload') { rrDownload(); return; }
     if (a === 'setLoc') { setLocModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
     if (a === 'setLocGo') { api('agent_location_set', { body: { agentId: Number(node.getAttribute('data-id')), location: elById('locInput').value } }).then(function () { closeModal(); toast('Location saved', 'ok'); renderTab(); }).catch(function (e2) { toast(e2.message, 'err'); }); return; }
     if (a === 'togglePw') { var pi = elById(node.getAttribute('data-for')); if (pi) pi.type = pi.type === 'password' ? 'text' : 'password'; return; }

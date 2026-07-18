@@ -492,3 +492,26 @@ function totp_verify($secret, $code) {
   for ($s = -1; $s <= 1; $s++) if (hash_equals(totp_code($secret, $s), $code)) return true;
   return false;
 }
+
+/* ---------- wake-proof photos (receipt pictures) ---------- */
+
+/* Decodes a data-URL image (jpeg/png/webp), verifies magic bytes, caps size,
+ * saves under uploads/proofs with a random name. Returns the filename. */
+function save_proof_image($dataUrl) {
+  if (!preg_match('#^data:image/(jpeg|png|webp);base64,#', (string)$dataUrl, $m)) {
+    fail('Take a photo of the agent\'s transaction receipts to wake him', 400, array('needProof' => true));
+  }
+  $raw = base64_decode(substr($dataUrl, strpos($dataUrl, ',') + 1), true);
+  if ($raw === false || strlen($raw) < 100) fail('Photo unreadable - try again', 400, array('needProof' => true));
+  if (strlen($raw) > 4 * 1024 * 1024) fail('Photo too large - try again', 400, array('needProof' => true));
+  $magicOk = (substr($raw, 0, 3) === "\xFF\xD8\xFF") ||                  /* jpeg */
+             (substr($raw, 0, 8) === "\x89PNG\r\n\x1a\n") ||             /* png  */
+             (substr($raw, 0, 4) === 'RIFF' && substr($raw, 8, 4) === 'WEBP');
+  if (!$magicOk) fail('That file is not a photo', 400, array('needProof' => true));
+  $ext = $m[1] === 'jpeg' ? 'jpg' : $m[1];
+  $dir = dirname(__DIR__) . '/uploads/proofs';
+  if (!is_dir($dir)) @mkdir($dir, 0755, true);
+  $name = bin2hex(random_bytes(16)) . '.' . $ext;
+  if (file_put_contents($dir . '/' . $name, $raw) === false) fail('Could not store the photo - contact admin', 500);
+  return $name;
+}

@@ -411,9 +411,9 @@ try {
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
-        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source']);
+        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => $r['proof'] !== '');
       }
 
       $items = array();
@@ -457,17 +457,21 @@ try {
       }
       $ever = array();
       foreach (db()->query('SELECT DISTINCT agent_id FROM service_history WHERE served_status = "SERVED"')->fetchAll() as $r) $ever[$r['agent_id']] = true;
+      /* field-recruited agents (base kind='new') read as NEW, not never-served */
+      $rq = db()->prepare('SELECT agent_id FROM base WHERE month = ? AND kind = "new"');
+      $rq->execute(array($month));
+      foreach ($rq->fetchAll() as $r) $ever[$r['agent_id']] = true;
 
       /* Shared KPI state for these agents this month: kpi => {by, src} - visible
        * to every BDO so nobody repeats work already done by a colleague. */
       $kpiMap = array(); $servedNow = 0;
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
         foreach ($kq->fetchAll() as $r) {
           if (!isset($kpiMap[$r['agent_id']])) $kpiMap[$r['agent_id']] = array();
-          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source']);
+          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => $r['proof'] !== '');
           if ($r['kpi'] === 'served' && $r['bdo'] === $bdo) $servedNow++;
         }
       }
@@ -543,14 +547,21 @@ try {
         fail('Agent is already Active this month - nothing to wake', 409);
       }
 
+      /* WAKING an INACTIVE agent needs proof: a photo of the agent's transaction
+       * receipts. The photo is stored and the OM can open it from the chip. */
+      $proofFile = '';
+      if ($kpi === 'active' && strtoupper((string)$agent['act_current']) === 'INACTIVE') {
+        $proofFile = save_proof_image((string)bval('proof')); /* fails 400 needProof if missing/bad */
+      }
+
       /* already done by someone? */
       $chk = db()->prepare('SELECT bdo, at FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
       $chk->execute(array($month, $agentId, $kpi));
       if ($done = $chk->fetch()) {
         fail('Already done by ' . $done['bdo'] . ' on ' . substr($done['at'], 0, 16) . ' - no need to repeat', 409);
       }
-      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?,?,?, "bdo")')
-          ->execute(array($month, $agentId, $kpi, $bdo));
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof) VALUES (?,?,?,?, "bdo", ?)')
+          ->execute(array($month, $agentId, $kpi, $bdo, $proofFile));
       if ($kpi === 'served') {
         db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, served_status, source)
                        VALUES (?,?,?,?,?, "SERVED", "bdo")')
@@ -564,6 +575,119 @@ try {
       db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
       audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
       respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo));
+    }
+
+    /* Serve a wake-proof photo (auth-checked; files are blocked from direct URL access). */
+    case 'wake_proof': {
+      $u = require_auth();
+      if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      $agentId = (int)($_GET['agent'] ?? 0);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT proof FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "active"');
+      $st->execute(array($month, $agentId));
+      $r = $st->fetch();
+      /* filename came from bin2hex() - sanitize anyway so no path can sneak in */
+      $file = $r ? preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']) : '';
+      $path = __DIR__ . '/uploads/proofs/' . $file;
+      if ($file === '' || !is_file($path)) fail('No proof photo for this agent', 404);
+      $ext = pathinfo($file, PATHINFO_EXTENSION);
+      header('Content-Type: ' . ($ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg')));
+      header('X-Content-Type-Options: nosniff');
+      header('Cache-Control: private, max-age=3600');
+      readfile($path);
+      exit;
+    }
+
+    /*
+     * BDO recruits a BRAND-NEW agent in the field: acc name, acc number, branch,
+     * phone and physical location - all required. The agent joins his base as
+     * NEW + ACTIVE, and the activeness credit counts in HIS performance
+     * (recruiting = activeness work, same as waking).
+     */
+    case 'agent_recruit': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $month = open_month();
+      if (month_status($month) !== 'OPEN') fail('Month is not open');
+      $name = trim((string)bval('name'));
+      $acc = trim((string)bval('acc'));
+      $phone = trim((string)bval('phone'));
+      $branch = trim((string)bval('branch'));
+      $loc = trim((string)bval('location'));
+      if ($name === '' || $acc === '' || $phone === '' || $branch === '' || $loc === '') {
+        fail('Fill everything: acc name, acc number, branch, phone and physical location');
+      }
+      if (strlen($acc) > 64 || !preg_match('/^[A-Za-z0-9\-\/]+$/', $acc)) fail('Acc number: letters and digits only');
+      $chk = db()->prepare('SELECT id FROM agents WHERE acc = ?');
+      $chk->execute(array($acc));
+      if ($chk->fetch()) fail('An agent with acc ' . $acc . ' already exists - find him on the agent list', 409);
+      db()->prepare('INSERT INTO agents (acc, name, phone, branch, station, physical_location, act_current, act_month)
+                     VALUES (?,?,?,?,?,?, "ACTIVE", ?)')
+          ->execute(array($acc, $name, $phone, $branch, (string)$u['station'], $loc, $month));
+      $agentId = (int)db()->lastInsertId();
+      db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "new")')
+          ->execute(array($month, $u['username'], $agentId));
+      /* the recruit counts as HIS activeness credit (reversible like any live mark) */
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?, "active", ?, "bdo")')
+          ->execute(array($month, $agentId, $u['username']));
+      audit($u['id'], 'agent_recruit', $u['username'] . ' recruited ' . $acc . ' (' . $name . ') ' . $month);
+      respond(array('ok' => true, 'agentId' => $agentId));
+    }
+
+    /*
+     * OM downloads BDO performance for ANY date range with the KPIs he picks.
+     * Dated sources: KPI marks (ledger `at`) + typed daily reports (float/APK).
+     * APK applies the same max(marks, typed) rule as the monthly score.
+     */
+    case 'bdo_range_report': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $from = (string)($_GET['from'] ?? '');
+      $to = (string)($_GET['to'] ?? '');
+      if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $to) || $from > $to) {
+        fail('Pick a valid date range');
+      }
+      $want = array();
+      foreach (explode(',', (string)($_GET['kpis'] ?? '')) as $k) {
+        $k = trim($k);
+        if (in_array($k, array('served', 'float', 'visits', 'apk', 'activeness'), true)) $want[$k] = true;
+      }
+      if (!$want) fail('Pick at least one KPI');
+      $rows = array();
+      $bq = db()->query('SELECT username, name FROM users WHERE active = 1 AND role NOT IN ("superadmin","md","om") ORDER BY username');
+      foreach ($bq->fetchAll() as $b) $rows[$b['username']] = array('bdo' => $b['username'], 'name' => $b['name'],
+        'served' => 0, 'float' => 0, 'visits' => 0, 'apkMarks' => 0, 'apkTyped' => 0, 'activeness' => 0);
+      $lq = db()->prepare('SELECT bdo, kpi, COUNT(*) n FROM agent_month_kpi
+                           WHERE DATE(at) BETWEEN ? AND ? GROUP BY bdo, kpi');
+      $lq->execute(array($from, $to));
+      $map = array('served' => 'served', 'visit' => 'visits', 'apk' => 'apkMarks', 'active' => 'activeness');
+      foreach ($lq->fetchAll() as $r) {
+        if (isset($rows[$r['bdo']], $map[$r['kpi']])) $rows[$r['bdo']][$map[$r['kpi']]] = (int)$r['n'];
+      }
+      $dq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f, COALESCE(SUM(apk),0) a
+                           FROM daily_reports WHERE report_date BETWEEN ? AND ? GROUP BY bdo');
+      $dq->execute(array($from, $to));
+      foreach ($dq->fetchAll() as $r) {
+        if (!isset($rows[$r['bdo']])) continue;
+        $rows[$r['bdo']]['float'] = (float)$r['f'];
+        $rows[$r['bdo']]['apkTyped'] = (int)$r['a'];
+      }
+      $sq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f FROM service_history
+                           WHERE date <> "" AND date BETWEEN ? AND ? GROUP BY bdo');
+      $sq->execute(array($from, $to));
+      foreach ($sq->fetchAll() as $r) {
+        if (isset($rows[$r['bdo']])) $rows[$r['bdo']]['float'] += (float)$r['f'];
+      }
+      $out = array();
+      foreach ($rows as $r) {
+        $line = array('bdo' => $r['bdo'], 'name' => $r['name']);
+        if (isset($want['served'])) $line['served'] = $r['served'];
+        if (isset($want['float'])) $line['float'] = $r['float'];
+        if (isset($want['visits'])) $line['visits'] = $r['visits'];
+        if (isset($want['apk'])) $line['apk'] = max($r['apkMarks'], $r['apkTyped']);
+        if (isset($want['activeness'])) $line['activeness'] = $r['activeness'];
+        $out[] = $line;
+      }
+      audit($u['id'], 'range_report', $from . '..' . $to . ' ' . implode(',', array_keys($want)));
+      respond(array('from' => $from, 'to' => $to, 'kpis' => array_keys($want), 'rows' => $out));
     }
 
     /*
