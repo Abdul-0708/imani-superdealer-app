@@ -1,0 +1,15 @@
+---
+# cPanel Git deployment: copies the app (repo's public_html/) into the live
+# site root. Runs when you click "Deploy HEAD Commit" in cPanel > Git Version
+# Control > Manage > Pull or Deploy.
+#
+# - $HOME/public_html = the live site's document root (works for any username)
+# - lib/config.local.php is NOT in the repo, so it is never touched/overwritten
+# - the top-level .htaccess needs its own copy line (the * glob skips dotfiles)
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/public_html
+    - /bin/mkdir -p $DEPLOYPATH/uploads/proofs
+    - /bin/cp -R public_html/* $DEPLOYPATH/
+    - /bin/cp public_html/.htaccess $DEPLOYPATH/.htaccess
+    - /bin/chmod 755 $DEPLOYPATH/uploads $DEPLOYPATH/uploads/proofs

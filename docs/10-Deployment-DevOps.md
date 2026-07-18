@@ -88,3 +88,35 @@ cd imani-superdealer-app
 php -S 127.0.0.1:3000 -t public_html   # PHP 8.x with pdo_mysql
 # open http://127.0.0.1:3000 — schema auto-creates; superadmin/imani123
 ```
+
+---
+
+## Deploying with cPanel Git Version Control (recommended since v1.10)
+
+The repo root has a **`.cpanel.yml`** that copies `public_html/` (the app) into the live
+site root `$HOME/public_html` when you click **Deploy HEAD Commit**. `lib/config.local.php`
+is not in the repo and is never touched.
+
+**One-time setup**
+1. cPanel -> **SSH Access -> Manage SSH Keys -> Generate a New Key** (no passphrase) ->
+   back in Manage SSH Keys click **Manage -> Authorize**, then **View/Download** the PUBLIC key.
+2. GitHub repo -> **Settings -> Deploy keys -> Add deploy key** -> paste the public key
+   (read-only is enough).
+3. cPanel -> **Git Version Control -> Create**: clone URL
+   `git@github.com:Abdul-0708/imani-superdealer-app.git`, repository path e.g.
+   `repositories/imani` (NOT public_html), branch `main`.
+
+**Every release**
+1. Git Version Control -> **Manage** (on the repo) -> **Pull or Deploy** tab
+2. **Update from Remote**  (fetches the new commits)
+3. **Deploy HEAD Commit**  (runs .cpanel.yml -> copies files into public_html)
+4. Open the site; the database self-upgrades on first request.
+
+**Common failures**
+- *Pull works but the site never changes*: you skipped **Deploy HEAD Commit** - Pull only
+  updates the clone in `repositories/imani`.
+- *"Deploy failed: .cpanel.yml missing"*: repo older than v1.10 - pull first, then deploy.
+- *Clone/pull "Access denied / could not read from remote"*: the deploy key is missing on
+  GitHub or the clone URL is https - use the SSH URL above.
+- *"Path already exists and is not empty"* on Create: pick a fresh repository path such as
+  `repositories/imani2`.
