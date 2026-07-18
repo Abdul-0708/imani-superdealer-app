@@ -51,7 +51,7 @@ try {
       $_SESSION['auth_at'] = time(); /* absolute 12h session lifetime */
       audit($u['id'], 'login', $u['username']);
       respond(array(
-        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
+        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
       ));
     }
@@ -80,7 +80,7 @@ try {
       $_SESSION['auth_at'] = time();
       audit($u['id'], 'login_2fa', $u['username']);
       respond(array(
-        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name']),
+        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
       ));
     }
@@ -95,7 +95,7 @@ try {
     case 'me': {
       $u = require_auth();
       respond(array(
-        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'],
+        'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'',
                         'totp_on' => (isset($u['totp_secret']) && $u['totp_secret'] !== '')),
         'perms' => perms_for_role($u['role']),
       ));
@@ -191,7 +191,7 @@ try {
 
     case 'admin_users': {
       $u = require_auth(); require_perm($u, 'admin', 'v');
-      $rows = db()->query('SELECT id, username, role, name, station, active FROM users ORDER BY id')->fetchAll();
+      $rows = db()->query('SELECT id, username, role, name, station, active, specialty FROM users ORDER BY id')->fetchAll();
       respond($rows);
     }
 
@@ -234,6 +234,10 @@ try {
         $sets[] = 'role = ?'; $vals[] = $b['role'];
       }
       if (isset($b['active'])) { $sets[] = 'active = ?'; $vals[] = $b['active'] ? 1 : 0; }
+      if (isset($b['specialty'])) {
+        if (!in_array($b['specialty'], array('', 'activeness'), true)) fail('Unknown specialty');
+        $sets[] = 'specialty = ?'; $vals[] = $b['specialty'];
+      }
       if (!empty($b['password'])) {
         if (strlen((string)$b['password']) < 8) fail('Password must be at least 8 characters');
         $sets[] = 'password_hash = ?'; $vals[] = password_hash((string)$b['password'], PASSWORD_BCRYPT);
@@ -407,13 +411,19 @@ try {
 
       /* Current-month KPI status for the page's agents (who did what + source). */
       $month = open_month();
-      $kpiMap = array();
+      $kpiMap = array(); $lastTx = array(); $wr = array();
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof, proof_note FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
-        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => $r['proof'] !== '');
+        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => ($r['proof'] !== '' || $r['proof_note'] !== ''), 'note' => $r['proof_note']);
+        $tq2 = db()->prepare("SELECT agent_id, MAX(NULLIF(date,'')) d FROM service_history WHERE agent_id IN ($in) GROUP BY agent_id");
+        $tq2->execute($ids);
+        foreach ($tq2->fetchAll() as $r) $lastTx[$r['agent_id']] = (string)$r['d'];
+        $wq = db()->prepare("SELECT agent_id, bdo FROM wont_return WHERE agent_id IN ($in)");
+        $wq->execute($ids);
+        foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
       }
 
       $items = array();
@@ -424,6 +434,9 @@ try {
           'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
           'actStatus' => ($r['act_month'] === $month ? strtoupper($r['act_current']) : ''),
+          'actPrev' => strtoupper((string)$r['act_prev']),
+          'lastTx' => isset($lastTx[$id]) ? $lastTx[$id] : '',
+          'wontReturn' => isset($wr[$id]),
         );
         if ($full) $base['partner'] = (int)$r['partner'];
         $items[] = $base;
@@ -467,13 +480,25 @@ try {
       $kpiMap = array(); $servedNow = 0;
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof, proof_note FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
         foreach ($kq->fetchAll() as $r) {
           if (!isset($kpiMap[$r['agent_id']])) $kpiMap[$r['agent_id']] = array();
-          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => $r['proof'] !== '');
+          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => ($r['proof'] !== '' || $r['proof_note'] !== ''), 'note' => $r['proof_note']);
           if ($r['kpi'] === 'served' && $r['bdo'] === $bdo) $servedNow++;
         }
+      }
+
+      /* activeness-specialist extras: last transaction date + won't-return marks */
+      $lastTx = array(); $wr = array();
+      if ($ids) {
+        $in2 = implode(',', array_fill(0, count($ids), '?'));
+        $tq2 = db()->prepare("SELECT agent_id, MAX(NULLIF(date,'')) d FROM service_history WHERE agent_id IN ($in2) GROUP BY agent_id");
+        $tq2->execute($ids);
+        foreach ($tq2->fetchAll() as $r) $lastTx[$r['agent_id']] = (string)$r['d'];
+        $wq = db()->prepare("SELECT agent_id, bdo FROM wont_return WHERE agent_id IN ($in2)");
+        $wq->execute($ids);
+        foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
       }
 
       foreach ($agents as &$a) {
@@ -481,7 +506,10 @@ try {
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
         $a['actStatus'] = ($a['act_month'] === $month ? strtoupper($a['act_current']) : '');
-        unset($a['act_current'], $a['act_month']);
+        $a['actPrev'] = strtoupper((string)$a['act_prev']);
+        $a['lastTx'] = isset($lastTx[$id]) ? $lastTx[$id] : '';
+        $a['wontReturn'] = isset($wr[$id]);
+        unset($a['act_current'], $a['act_month'], $a['act_prev']);
       }
       unset($a);
       $order = array('priority'=>0,'new'=>1,'never'=>2);
@@ -548,10 +576,16 @@ try {
       }
 
       /* WAKING an INACTIVE agent needs proof: a photo of the agent's transaction
-       * receipts. The photo is stored and the OM can open it from the chip. */
-      $proofFile = '';
+       * receipts, OR a typed commitment that the BDO is sure the agent
+       * transacted. Either is stored and management can open it from the chip. */
+      $proofFile = ''; $proofNote = '';
       if ($kpi === 'active' && strtoupper((string)$agent['act_current']) === 'INACTIVE') {
-        $proofFile = save_proof_image((string)bval('proof')); /* fails 400 needProof if missing/bad */
+        $img = (string)bval('proof');
+        $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
+        if ($img !== '') $proofFile = save_proof_image($img);
+        elseif (mb_strlen($proofNote) < 10) {
+          fail('Attach a receipt photo OR write how you are sure the agent transacted (at least 10 characters)', 400, array('needProof' => true));
+        }
       }
 
       /* already done by someone? */
@@ -560,8 +594,8 @@ try {
       if ($done = $chk->fetch()) {
         fail('Already done by ' . $done['bdo'] . ' on ' . substr($done['at'], 0, 16) . ' - no need to repeat', 409);
       }
-      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof) VALUES (?,?,?,?, "bdo", ?)')
-          ->execute(array($month, $agentId, $kpi, $bdo, $proofFile));
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof, proof_note) VALUES (?,?,?,?, "bdo", ?, ?)')
+          ->execute(array($month, $agentId, $kpi, $bdo, $proofFile, $proofNote));
       if ($kpi === 'served') {
         db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, served_status, source)
                        VALUES (?,?,?,?,?, "SERVED", "bdo")')
@@ -631,6 +665,118 @@ try {
           ->execute(array($month, $agentId, $u['username']));
       audit($u['id'], 'agent_recruit', $u['username'] . ' recruited ' . $acc . ' (' . $name . ') ' . $month);
       respond(array('ok' => true, 'agentId' => $agentId));
+    }
+
+    /* ============ RECRUITMENT PIPELINE (activeness specialist) ============
+     * Stages: 1 form submitted at a branch, held by the BANK CHAMPION
+     *         2 passed the bank audit
+     *         3 approved
+     *         4 paid + POS assigned
+     *         5 acc + physical location filled -> REAL agent created,
+     *           activeness credit lands on the recruiting BDO.
+     */
+    case 'recruit_pipe_add': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $name = trim((string)bval('name'));
+      $branch = trim((string)bval('branch'));
+      $champ = trim((string)bval('champion'));
+      $phone = trim((string)bval('phone'));
+      if ($name === '' || $branch === '' || $champ === '') fail('Fill agent name, branch and the bank champion holding the form');
+      db()->prepare('INSERT INTO recruits (bdo, name, branch, champion, phone) VALUES (?,?,?,?,?)')
+          ->execute(array($u['username'], $name, $branch, $champ, $phone));
+      audit($u['id'], 'recruit_form', $name . ' @ ' . $branch . ' (champion ' . $champ . ')');
+      respond(array('ok' => true, 'id' => (int)db()->lastInsertId()));
+    }
+
+    case 'recruit_pipe_advance': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $id = (int)bval('id');
+      $st = db()->prepare('SELECT * FROM recruits WHERE id = ?');
+      $st->execute(array($id));
+      $rec = $st->fetch();
+      if (!$rec) fail('Recruit not found', 404);
+      $isOM = can($u, 'agents', 'e');
+      if (!$isOM && $rec['bdo'] !== $u['username']) fail('Not your recruit', 403);
+      $stage = (int)$rec['stage'];
+      if ($stage >= 5) fail('This recruit is already a full agent');
+      if ($stage === 1) {
+        db()->prepare('UPDATE recruits SET stage = 2, audit_at = NOW() WHERE id = ?')->execute(array($id));
+      } elseif ($stage === 2) {
+        db()->prepare('UPDATE recruits SET stage = 3, approved_at = NOW() WHERE id = ?')->execute(array($id));
+      } elseif ($stage === 3) {
+        db()->prepare('UPDATE recruits SET stage = 4, paid_at = NOW() WHERE id = ?')->execute(array($id));
+      } else {
+        /* final: acc + location -> becomes a REAL agent, credited to the BDO */
+        $acc = trim((string)bval('acc'));
+        $loc = trim((string)bval('location'));
+        if ($acc === '' || $loc === '') fail('Fill the agent acc number and physical location to finish');
+        if (strlen($acc) > 64 || !preg_match('/^[A-Za-z0-9\-\/]+$/', $acc)) fail('Acc number: letters and digits only');
+        $ck = db()->prepare('SELECT id FROM agents WHERE acc = ?');
+        $ck->execute(array($acc));
+        if ($ck->fetch()) fail('An agent with acc ' . $acc . ' already exists', 409);
+        $month = open_month();
+        db()->prepare('INSERT INTO agents (acc, name, phone, branch, station, physical_location, act_current, act_month)
+                       VALUES (?,?,?,?,?,?, "ACTIVE", ?)')
+            ->execute(array($acc, $rec['name'], $rec['phone'], $rec['branch'], (string)$u['station'], $loc, $month));
+        $agentId = (int)db()->lastInsertId();
+        db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "new")')
+            ->execute(array($month, $rec['bdo'], $agentId));
+        db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?, "active", ?, "bdo")')
+            ->execute(array($month, $agentId, $rec['bdo']));
+        db()->prepare('UPDATE recruits SET stage = 5, done_at = NOW(), acc = ?, location = ?, agent_id = ? WHERE id = ?')
+            ->execute(array($acc, $loc, $agentId, $id));
+      }
+      audit($u['id'], 'recruit_stage', 'id=' . $id . ' -> stage ' . ($stage + 1));
+      respond(array('ok' => true, 'stage' => $stage + 1));
+    }
+
+    /* BDO sees his own pipeline; OM/MD (targets.v) see everyone's. */
+    case 'recruit_pipe_list': {
+      $u = require_auth();
+      $all = can($u, 'targets', 'v');
+      if (!$all && !can($u, 'mybase', 'v')) fail('No access', 403);
+      if ($all) {
+        $rows = db()->query('SELECT * FROM recruits ORDER BY id DESC LIMIT 300')->fetchAll();
+      } else {
+        $st = db()->prepare('SELECT * FROM recruits WHERE bdo = ? ORDER BY id DESC LIMIT 100');
+        $st->execute(array($u['username']));
+        $rows = $st->fetchAll();
+      }
+      respond(array('rows' => $rows));
+    }
+
+    /* ============ WON'T-RETURN list (deletion candidates) ============
+     * The specialist contacted the agent and the agent CONFIRMED he will not
+     * return to work. Marked agents feed the OM's deletion-discussion report.
+     */
+    case 'wont_return_toggle': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $agentId = (int)bval('agentId');
+      $ag = db()->prepare('SELECT id, name FROM agents WHERE id = ?');
+      $ag->execute(array($agentId));
+      if (!($agent = $ag->fetch())) fail('Agent not found', 404);
+      $ex = db()->prepare('SELECT bdo FROM wont_return WHERE agent_id = ?');
+      $ex->execute(array($agentId));
+      if ($row = $ex->fetch()) {
+        if ($row['bdo'] !== $u['username'] && !can($u, 'agents', 'e')) fail('Marked by ' . $row['bdo'] . ' - only he or the OM can remove it', 403);
+        db()->prepare('DELETE FROM wont_return WHERE agent_id = ?')->execute(array($agentId));
+        audit($u['id'], 'wont_return_unmark', $agent['name']);
+        respond(array('ok' => true, 'marked' => false));
+      }
+      $note = mb_substr(trim((string)bval('note')), 0, 255);
+      db()->prepare('INSERT INTO wont_return (agent_id, bdo, note) VALUES (?,?,?)')->execute(array($agentId, $u['username'], $note));
+      audit($u['id'], 'wont_return_mark', $agent['name'] . ($note !== '' ? ' - ' . $note : ''));
+      respond(array('ok' => true, 'marked' => true));
+    }
+
+    case 'wont_return_list': {
+      $u = require_auth();
+      if (!can($u, 'targets', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      $rows = db()->query('SELECT w.agent_id, w.bdo, w.note, w.at, a.acc, a.name, a.phone, a.branch,
+                                  a.physical_location, a.act_current, a.act_prev
+                           FROM wont_return w JOIN agents a ON a.id = w.agent_id
+                           ORDER BY w.id DESC LIMIT 500')->fetchAll();
+      respond(array('rows' => $rows));
     }
 
     /*
@@ -1075,14 +1221,66 @@ try {
       $u = require_auth(); require_perm($u, 'reports', 'e');
       $body = trim((string)bval('body'));
       if ($body === '' || mb_strlen($body) > 500) fail('Message must be 1-500 characters');
-      db()->prepare('INSERT INTO messages (from_user, body) VALUES (?,?)')->execute(array($u['username'], $body));
-      audit($u['id'], 'message_send', mb_substr($body, 0, 80));
+      /* empty to = everyone; a username = only that member sees it */
+      $to = strtolower(trim((string)bval('to')));
+      if ($to !== '') {
+        $ck = db()->prepare('SELECT 1 FROM users WHERE username = ? AND active = 1');
+        $ck->execute(array($to));
+        if (!$ck->fetch()) fail('Unknown member: ' . $to);
+      }
+      db()->prepare('INSERT INTO messages (from_user, to_user, body) VALUES (?,?,?)')->execute(array($u['username'], $to, $body));
+      audit($u['id'], 'message_send', ($to !== '' ? 'to ' . $to . ': ' : '') . mb_substr($body, 0, 80));
       respond(array('ok' => true));
+    }
+
+    /* Sender manages his own messages: list with ids, edit, delete. */
+    case 'messages_sent': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $st = db()->prepare('SELECT id, to_user, body, at FROM messages WHERE from_user = ? ORDER BY id DESC LIMIT 20');
+      $st->execute(array($u['username']));
+      respond($st->fetchAll());
+    }
+
+    case 'message_update': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $id = (int)bval('id');
+      $body = trim((string)bval('body'));
+      if ($body === '' || mb_strlen($body) > 500) fail('Message must be 1-500 characters');
+      $st = db()->prepare('SELECT from_user FROM messages WHERE id = ?');
+      $st->execute(array($id));
+      $m = $st->fetch();
+      if (!$m) fail('Message not found', 404);
+      if ($m['from_user'] !== $u['username'] && $u['role'] !== 'superadmin') fail('You can only edit your own messages', 403);
+      db()->prepare('UPDATE messages SET body = ? WHERE id = ?')->execute(array($body, $id));
+      audit($u['id'], 'message_edit', 'id=' . $id);
+      respond(array('ok' => true));
+    }
+
+    case 'message_delete': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $id = (int)bval('id');
+      $st = db()->prepare('SELECT from_user FROM messages WHERE id = ?');
+      $st->execute(array($id));
+      $m = $st->fetch();
+      if (!$m) fail('Message not found', 404);
+      if ($m['from_user'] !== $u['username'] && $u['role'] !== 'superadmin') fail('You can only delete your own messages', 403);
+      db()->prepare('DELETE FROM messages WHERE id = ?')->execute(array($id));
+      audit($u['id'], 'message_delete', 'id=' . $id);
+      respond(array('ok' => true));
+    }
+
+    /* Lightweight member list so the OM can pick a message recipient. */
+    case 'members_list': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $rows = db()->query('SELECT username, name FROM users WHERE active = 1 ORDER BY username')->fetchAll();
+      respond($rows);
     }
 
     case 'messages_get': {
       $u = require_auth();
-      $rows = db()->query('SELECT from_user, body, at FROM messages ORDER BY id DESC LIMIT 10')->fetchAll();
+      $st = db()->prepare('SELECT from_user, body, at FROM messages WHERE to_user = "" OR to_user = ? ORDER BY id DESC LIMIT 10');
+      $st->execute(array($u['username']));
+      $rows = $st->fetchAll();
       respond($rows);
     }
 

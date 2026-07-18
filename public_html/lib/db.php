@@ -162,6 +162,9 @@ function ensure_schema($pdo) {
   try { $pdo->exec('ALTER TABLE users ADD COLUMN working_days VARCHAR(16) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   schema_v4_apply($pdo);
   try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT "upload"'); } catch (Exception $e) { /* exists */ }
+  try { $pdo->exec('ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+  try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN proof VARCHAR(80) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+  schema_v8_apply($pdo);
   seed($pdo);
 }
 
@@ -332,7 +335,53 @@ function upgrade_schema($pdo) {
     /* receipt-photo proof for waking an inactive agent */
     try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN proof VARCHAR(80) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
     $pdo->prepare('UPDATE app_settings SET value = "7" WHERE name = "schema_version"')->execute();
+    $ver = 7;
   }
+  if ($ver < 8) {
+    schema_v8_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "8" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v8: activeness-specialist BDO (wake-only window + recruitment pipeline +
+ * won't-return list), targeted/editable OM messages, wake proof by words.
+ */
+function schema_v8_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE users ADD COLUMN specialty VARCHAR(16) NOT NULL DEFAULT ""',
+    'ALTER TABLE messages ADD COLUMN to_user VARCHAR(64) NOT NULL DEFAULT ""',
+    'ALTER TABLE agent_month_kpi ADD COLUMN proof_note VARCHAR(255) NOT NULL DEFAULT ""',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS recruits (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bdo VARCHAR(64) NOT NULL,
+    name VARCHAR(191) NOT NULL,
+    branch VARCHAR(128) NOT NULL,
+    champion VARCHAR(128) NOT NULL,
+    phone VARCHAR(32) NOT NULL DEFAULT "",
+    stage TINYINT NOT NULL DEFAULT 1,
+    submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    audit_at DATETIME NULL,
+    approved_at DATETIME NULL,
+    paid_at DATETIME NULL,
+    done_at DATETIME NULL,
+    acc VARCHAR(64) NOT NULL DEFAULT "",
+    location VARCHAR(255) NOT NULL DEFAULT "",
+    agent_id INT NOT NULL DEFAULT 0,
+    INDEX idx_recruits_bdo (bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS wont_return (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id INT NOT NULL UNIQUE,
+    bdo VARCHAR(64) NOT NULL,
+    note VARCHAR(255) NOT NULL DEFAULT "",
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
 }
 
 function seed($pdo) {
@@ -373,5 +422,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","7")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","8")')->execute();
 }

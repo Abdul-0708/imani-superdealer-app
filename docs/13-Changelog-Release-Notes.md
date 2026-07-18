@@ -5,6 +5,44 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.11.0 — 2026-07-18 · "Activeness specialist, recruitment pipeline, message manager" — schema v8
+
+### Release notes
+**Activeness specialist.** Admin marks one BDO's *Specialty* as **Activeness (wake + recruit
+only)**. His agent lists then show ONLY the Wake chip (Served/Visit/APK hidden), and every agent
+carries an info line: **last transaction date (+days ago), last month's status, current status**.
+Waking still demands proof — now a receipt photo **or a typed commitment** (min 10 chars, e.g.
+"Nimeona float statement yake tawini leo"); the eye icon shows whichever was given.
+
+**Recruitment pipeline (his Daily Report tab).** Stage flow exactly as the business runs it:
+**1** form submitted at a branch, held by the named **BANK CHAMPION** → **2** passed bank audit →
+**3** approved → **4** paid + POS assigned → **5** acc + physical location filled → the recruit
+becomes a real **NEW + ACTIVE** agent and the activeness credit lands on the BDO. Each stage is
+timestamped; finishing without acc/location is rejected; a done recruit can't be advanced again.
+**OM downloads the whole pipeline by stages** (Excel, one row per recruit with all stage dates).
+
+**Won't-return list.** The specialist marks inactive agents he contacted who **confirmed they
+won't return** (with a note of what they said). They show a red WON'T RETURN pill and land on a
+list the **OM downloads** for the deletion discussion.
+
+**OM message manager.** Send to **everyone or one chosen member** (verified: a message to peter was
+invisible to mary), and **edit or delete** anything you sent, any time.
+
+### Changes
+- **Schema v8** (self-upgrading): `users.specialty`, `messages.to_user`,
+  `agent_month_kpi.proof_note`, tables `recruits` + `wont_return`
+- `api.php`: specialty in auth payloads + admin update; `message_send(to)` / `messages_sent` /
+  `message_update` / `message_delete` / `members_list`; kpi_mark proof-or-note; kpi maps expose
+  note; agents/base add `lastTx` / `actPrev` / `wontReturn`; `recruit_pipe_add/advance/list`;
+  `wont_return_toggle/list`
+- `app.js`: specialist mode (wake-only chips, info line, won't-return flow), pipeline panel +
+  stage modals, proof-by-words input, OM message manager, pipeline + won't-return Excel buttons,
+  Admin specialty dropdown; EN/SW strings. Assets `?v=14`, SW `imani-v14`
+- Deploy: cPanel Git pull + Deploy HEAD Commit (`api.php`, `app.js`, `index.html`, `sw.js`,
+  `lib/db.php`, `lib/helpers.php`)
+
+---
+
 ## v1.10.1 — 2026-07-18 · "Modal fix, 6-hour correction window, report discipline"
 
 ### Release notes

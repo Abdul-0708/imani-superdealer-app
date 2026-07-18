@@ -81,6 +81,43 @@
       'Jaza taarifa za wakala mpya - anaingia kwenye base yako kama MPYA + ACTIVE na anahesabika kwenye Activeness yako.',
     'Save new agent': 'Hifadhi wakala mpya',
     'Agent added - counted in your Activeness': 'Wakala ameongezwa - amehesabika kwenye Activeness yako',
+    'No photo? Confirm by words - how are you SURE he transacted?': 'Huna picha? Thibitisha kwa maneno - una uhakika gani kwamba alifanya miamala?',
+    'e.g. I saw his float statement at the branch today': 'mf. Nimeona taarifa yake ya float tawini leo',
+    'Last tx': 'Muamala wa mwisho',
+    'Last month': 'Mwezi uliopita',
+    'Now': 'Sasa',
+    'days ago': 'siku zilizopita',
+    'WON\'T RETURN': 'HATARUDI',
+    'Won\'t return': 'Hatarudi',
+    'Undo won\'t-return': 'Ondoa hatarudi',
+    'Only mark this if you CONTACTED the agent and he CONFIRMED he will not return to work. He goes on the deletion-discussion list the OM can download.':
+      'Weka alama hii tu kama ULIWASILIANA na wakala na AKATHIBITISHA kwamba hatarudi kazini. Anaingia kwenye orodha ya majadiliano ya kufutwa ambayo OM anaweza kupakua.',
+    'Note (what did he say?)': 'Maelezo (alisema nini?)',
+    'e.g. moved to Dodoma, sold the POS': 'mf. amehamia Dodoma, ameuza POS',
+    'Mark won\'t return': 'Weka hatarudi',
+    'Marked - on the deletion-discussion list': 'Imewekwa - yupo kwenye orodha ya majadiliano ya kufutwa',
+    'Removed from the won\'t-return list': 'Ameondolewa kwenye orodha ya hatarudi',
+    'Recruitment pipeline': 'Mchakato wa usajili',
+    'New agent form': 'Fomu ya wakala mpya',
+    'New agent form (stage 1)': 'Fomu ya wakala mpya (hatua 1)',
+    'The form is submitted at the branch and held by the BANK CHAMPION. It moves: audit -> approved -> paid & POS -> acc + location (becomes a real agent, counted in your Activeness).':
+      'Fomu inawasilishwa tawini na kushikiliwa na BANK CHAMPION. Inapita: ukaguzi -> kuidhinishwa -> kulipa & POS -> acc + mahali (anakuwa wakala kamili, anahesabika kwenye Activeness yako).',
+    'Save form': 'Hifadhi fomu',
+    'Form saved - stage 1': 'Fomu imehifadhiwa - hatua 1',
+    'Passed bank audit?': 'Amepita ukaguzi wa benki?',
+    'Approved?': 'Ameidhinishwa?',
+    'Paid & POS assigned?': 'Amelipa & amepewa POS?',
+    'Fill acc & location': 'Jaza acc & mahali',
+    'Finish: make him a real agent': 'Malizia: mfanye wakala kamili',
+    'paid and POS assigned. Fill his acc number and physical location; he becomes ACTIVE and counts in your Activeness.':
+      'amelipa na amepewa POS. Jaza namba yake ya acc na mahali alipo; anakuwa ACTIVE na anahesabika kwenye Activeness yako.',
+    'Create agent': 'Tengeneza wakala',
+    'Agent created - counted in your Activeness': 'Wakala ametengenezwa - amehesabika kwenye Activeness yako',
+    'Moved to stage': 'Amehamia hatua',
+    'No forms yet - tap "New agent form" to start one.': 'Hakuna fomu bado - gusa "Fomu ya wakala mpya" kuanza.',
+    'Recruit': 'Msajiliwa',
+    'Stages': 'Hatua',
+    'DONE': 'IMEKAMILIKA',
     'Two-step verification': 'Uthibitisho wa hatua mbili',
     'Open your authenticator app and type the 6-digit code for IMANI.': 'Fungua app yako ya authenticator kisha andika namba 6 za IMANI.',
     '6-digit code': 'Namba 6 za uthibitisho',
@@ -429,7 +466,7 @@
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
-    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td><td class="c-name">' + name + '</td>' +
+    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td><td class="c-name">' + name + actInfoHtml(a) + '</td>' +
       '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
       '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
       '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
@@ -544,18 +581,42 @@
     }).join('');
   }
   /* KPI chips for one agent: done -> who did it (locked); open -> markable. */
+  /* the activeness specialist works ONLY on waking + recruiting */
+  function isSpecial() { return state.user && state.user.specialty === 'activeness'; }
   function kpiChips(a, editable) {
     var isOM = can('agents', 'e');
-    return KPI_CHIPS.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('');
+    var list = isSpecial() ? KPI_CHIPS.filter(function (c) { return c.key === 'active'; }) : KPI_CHIPS;
+    return list.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('') + wontReturnBtn(a);
+  }
+  /* specialist info line: last transaction, days inactive, last month vs now */
+  function actInfoHtml(a) {
+    if (!isSpecial()) return '';
+    var days = '';
+    if (a.lastTx) {
+      var diff = Math.floor((Date.now() - new Date(a.lastTx + 'T00:00:00').getTime()) / 86400000);
+      if (diff >= 0) days = diff + ' ' + t('days ago');
+    }
+    var wr = a.wontReturn ? ' <span class="pill bad">' + t('WON\'T RETURN') + '</span>' : '';
+    return '<div class="note">' + t('Last tx') + ': ' + (a.lastTx ? esc(a.lastTx) + (days ? ' (' + days + ')' : '') : '-') +
+      ' &middot; ' + t('Last month') + ': ' + (a.actPrev || '-') + ' &middot; ' + t('Now') + ': ' + (a.actStatus || '-') + wr + '</div>';
+  }
+  /* specialist action: mark/unmark "agent confirmed he will NOT return to work" */
+  function wontReturnBtn(a) {
+    if (!isSpecial() || !can('mybase', 'e')) return '';
+    if (a.wontReturn) {
+      return ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '" data-marked="1">' + t('Undo won\'t-return') + '</button>';
+    }
+    if (a.actStatus !== 'INACTIVE') return '';
+    return ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Won\'t return') + '</button>';
   }
   function doneChip(a, c, mark, isOM) {
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : c.label);
     var mine = state.user && mark.by === state.user.username;
     var reversible = mark.src === 'bdo' && (isOM || mine);
     var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
-    /* wake came with a receipt photo - anyone can open the proof */
+    /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = (c.key === 'active' && mark.proof)
-      ? ' <button class="kchip-x" title="View receipt photo" aria-label="View receipt photo" data-action="viewProof" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('eye') + '</button>' : '';
+      ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
     return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
       esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + pr + x + '</span>';
   }
@@ -587,7 +648,7 @@
         var lv = a.level === 'priority' ? 'Priority' : a.level === 'new' ? 'New' : 'Never';
         var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
         return '<tr><td class="c-level"><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
-          '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div>' + actInfoHtml(a) + '</td>' +
           '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
           '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td><td class="c-kpis"><div class="kchips">' + chips + '</div></td></tr>';
       }).join('') || '<tr><td colspan="5">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
@@ -651,7 +712,7 @@
         card('check', t('My Served'), fmt(d.counts.served)) +
         '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('phone') + t('Agents - mark KPIs') + '</h2><div class="spacer"></div>' +
-        (editable ? '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>' : '') + '</div>' +
+        (editable ? (isSpecial() ? '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button>' : '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>') : '') + '</div>' +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -681,11 +742,30 @@
     }).catch(function (e) { toast(e.message, 'err'); });
   }
 
+  /* Recruitment pipeline: form -> audit -> approved -> paid+POS -> real agent. */
+  var PIPE_STAGES = ['Form', 'Audit', 'Approved', 'Paid+POS', 'Agent'];
+  function pipePanel(pipe) {
+    var rows = (pipe && pipe.rows || []).map(function (r) {
+      var stage = Number(r.stage);
+      var chips = PIPE_STAGES.map(function (s, i) {
+        return '<span class="kchip ' + (i < stage ? 'done' : 'off') + '">' + s + (i < stage ? ' &#10003;' : '') + '</span>';
+      }).join(' ');
+      var next = stage >= 5
+        ? '<span class="pill ok">' + t('DONE') + ' ' + esc(r.acc) + '</span>'
+        : '<button class="kchip todo" data-action="pipeNext" data-id="' + r.id + '" data-stage="' + stage + '" data-name="' + esc(r.name) + '">' +
+          (stage === 1 ? t('Passed bank audit?') : stage === 2 ? t('Approved?') : stage === 3 ? t('Paid & POS assigned?') : t('Fill acc & location')) + '</button>';
+      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + esc(r.branch) + ' &middot; ' + t('champion') + ': ' + esc(r.champion) + (r.phone ? ' &middot; ' + esc(r.phone) : '') + '</div></td>' +
+        '<td class="c-kpis"><div class="kchips">' + chips + ' ' + next + '</div></td></tr>';
+    }).join('') || '<tr><td colspan="2" class="note">' + t('No forms yet - tap "New agent form" to start one.') + '</td></tr>';
+    return '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('users') + t('Recruitment pipeline') + '</h2><div class="spacer"></div>' +
+      '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button></div>' +
+      '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>' + t('Recruit') + '</th><th>' + t('Stages') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
   /* ---------------- Daily Report (separate BDO tab) ---------------- */
   function viewDaily(v) {
     /* base gives his weighted performance so each saved report moves the trend */
-    Promise.all([api('daily_reports_get'), api('base')]).then(function (rr) {
-      var d = rr[0], base = rr[1];
+    Promise.all([api('daily_reports_get'), api('base'), isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null)]).then(function (rr) {
+      var d = rr[0], base = rr[1], pipe = rr[2];
       var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
       var tot = { f: 0, a: 0 };
       mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
@@ -711,7 +791,7 @@
         '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits and activeness: use the agent list, not this form.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
         '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
         '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
-        perfPanel +
+        perfPanel + (pipe ? pipePanel(pipe) : '') +
         '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -765,8 +845,8 @@
       .then(function () { toast('Mark reversed', 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
-  function kpiMark(id, kpi, name, node, location, proof) {
-    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '' } })
+  function kpiMark(id, kpi, name, node, location, proof, proofNote) {
+    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '', proofNote: proofNote || '' } })
       .then(function () {
         toast(name + ': ' + kpi + ' marked - counted for you', 'ok');
         swapChip(node, kpi, state.user.username);
@@ -806,11 +886,18 @@
       '<div class="field"><label>' + t('Receipt photo') + '</label>' +
       '<input id="proofFile" type="file" accept="image/*" capture="environment"></div>' +
       '<div id="proofPrev" style="margin-top:8px;text-align:center"></div>' +
+      '<div class="field" style="margin-top:8px"><label>' + t('No photo? Confirm by words - how are you SURE he transacted?') + '</label>' +
+      '<input id="proofNote" maxlength="255" placeholder="' + esc(t('e.g. I saw his float statement at the branch today')) + '"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
       '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
       '<button class="btn" data-action="proofConfirm" data-id="' + id + '" data-name="' + esc(name) + '" disabled>' + t('Save proof & wake') + '</button></div>');
     state._locNode = node;
     state._proofData = '';
+    var noteInp = elById('proofNote');
+    noteInp.addEventListener('input', function () {
+      var btn = document.querySelector('[data-action=proofConfirm]');
+      if (btn) btn.disabled = !(state._proofData || noteInp.value.trim().length >= 10);
+    });
     var inp = elById('proofFile');
     inp.addEventListener('change', function () {
       var f = inp.files && inp.files[0];
@@ -936,7 +1023,44 @@
       '<div class="field"><label>From</label><input id="rrFrom" type="date" value="' + isoDaysAgo(30) + '" max="' + isoToday() + '"></div>' +
       '<div class="field"><label>To</label><input id="rrTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
       '</div><div class="row" style="margin-top:8px">' + kpiBoxes + '</div>' +
-      '<div class="row" style="margin-top:10px"><button class="btn" data-action="rrDownload">' + svg('download') + ' Download Excel</button></div></div>';
+      '<div class="row" style="margin-top:10px"><button class="btn" data-action="rrDownload">' + svg('download') + ' Download Excel</button>' +
+      '<button class="ghost" data-action="pipeDownload">' + svg('download') + ' Recruitment pipeline (by stages)</button>' +
+      '<button class="ghost" data-action="wrDownload">' + svg('download') + ' Won\'t-return list</button></div></div>';
+  }
+  /* OM: every recruit with his stage + dates - the "report by stages". */
+  function pipeDownload() {
+    api('recruit_pipe_list').then(function (d) {
+      if (!d.rows.length) { toast('No recruits in the pipeline yet', 'warn'); return; }
+      var stages = ['', 'Form submitted', 'Audit passed', 'Approved', 'Paid + POS', 'Agent created'];
+      var rows = d.rows.map(function (r) {
+        return { 'BDO': r.bdo, 'Agent name': r.name, 'Branch': r.branch, 'Bank champion': r.champion,
+                 'Phone': r.phone, 'Stage': stages[Number(r.stage)] || r.stage,
+                 'Form submitted': (r.submitted_at || '').slice(0, 16), 'Audit passed': (r.audit_at || '').slice(0, 16),
+                 'Approved': (r.approved_at || '').slice(0, 16), 'Paid + POS': (r.paid_at || '').slice(0, 16),
+                 'Agent created': (r.done_at || '').slice(0, 16), 'Acc': r.acc, 'Location': r.location };
+      });
+      var ws = XLSX.utils.json_to_sheet(rows);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Recruitment pipeline');
+      XLSX.writeFile(wb, 'recruitment_pipeline_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      toast(d.rows.length + ' recruits exported', 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+  /* OM: agents who CONFIRMED they will not return - the deletion discussion list. */
+  function wrDownload() {
+    api('wont_return_list').then(function (d) {
+      if (!d.rows.length) { toast('No agents marked won\'t-return yet', 'warn'); return; }
+      var rows = d.rows.map(function (r) {
+        return { 'Acc': r.acc, 'Agent name': r.name, 'Phone': r.phone, 'Branch': r.branch,
+                 'Location': r.physical_location, 'Status now': r.act_current, 'Last month': r.act_prev,
+                 'Confirmed by (BDO)': r.bdo, 'Note': r.note, 'Marked on': (r.at || '').slice(0, 16) };
+      });
+      var ws = XLSX.utils.json_to_sheet(rows);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Wont return');
+      XLSX.writeFile(wb, 'wont_return_list_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      toast(d.rows.length + ' agents exported', 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
   }
   function rrDownload() {
     var kpis = Array.prototype.slice.call(document.querySelectorAll('.rrKpi:checked')).map(function (c) { return c.value; });
@@ -1180,10 +1304,11 @@
 
       /* --- management extras --- */
       var omTools = can('reports', 'e')
-        ? '<div class="panel"><h2>' + svg('mail') + 'Send message to all BDOs</h2>' +
-          '<div class="row"><input id="msgBody" placeholder="Type the announcement..." style="flex:1;min-width:220px" maxlength="500">' +
+        ? '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
+          '<div class="row"><div class="field"><label>To</label><select id="msgTo"><option value="">All members</option></select></div>' +
+          '<div class="field" style="flex:1;min-width:220px"><label>Message</label><input id="msgBody" placeholder="Type the announcement..." maxlength="500"></div>' +
           '<button class="btn" data-action="msgSend">Send</button></div>' +
-          ((msgs && msgs.length) ? '<div class="note" style="margin-top:8px">Last: "' + esc(msgs[0].body) + '" - ' + esc(msgs[0].from_user) + '</div>' : '') + '</div>' +
+          '<div id="msgSent" style="margin-top:10px"></div></div>' +
           '<div class="panel"><h2>' + svg('cal') + 'Working days</h2>' +
           '<p class="note">Default applies to everyone; override per BDO below (e.g. works Sunday instead of Saturday).</p>' +
           '<div class="row"><div class="field"><label>Default working days</label><input id="wdGlobal" value="' + esc(dr.globalWorkingDays) + '" placeholder="1,2,3,4,5,6"></div>' +
@@ -1221,11 +1346,32 @@
         '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Flags</th></tr></thead><tbody>' + flagRank + '</tbody></table></div>' +
         (flagDetails ? '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>BDO</th><th>Agent</th><th>Detail</th></tr></thead><tbody>' + flagDetails + '</tbody></table></div>' : '') +
         '</div>' + shortPanel;
+      msgMgrLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* recipient picker + the sender's own messages with edit/delete */
+  function msgMgrLoad() {
+    var sel = elById('msgTo'), box = elById('msgSent');
+    if (!sel || !box) return;
+    Promise.all([api('members_list'), api('messages_sent')]).then(function (rr) {
+      var members = rr[0], sent = rr[1];
+      sel.innerHTML = '<option value="">All members</option>' + members
+        .filter(function (m) { return m.username !== state.user.username; })
+        .map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('');
+      box.innerHTML = sent.length
+        ? '<div class="tablewrap"><table><thead><tr><th>To</th><th>Message</th><th>When</th><th></th></tr></thead><tbody>' +
+          sent.map(function (m) {
+            return '<tr><td>' + (m.to_user ? esc(m.to_user) : '<span class="pill dim">everyone</span>') + '</td>' +
+              '<td>' + esc(m.body) + '</td><td class="note">' + esc((m.at || '').slice(0, 16)) + '</td>' +
+              '<td><button class="ghost mini" data-action="msgEdit" data-id="' + m.id + '" data-body="' + esc(m.body) + '">Edit</button> ' +
+              '<button class="danger mini" data-action="msgDel" data-id="' + m.id + '">Delete</button></td></tr>';
+          }).join('') + '</tbody></table></div>'
+        : '<div class="note">No messages sent yet.</div>';
+    }).catch(function () { /* panel stays minimal */ });
+  }
   function msgSend() {
-    api('message_send', { body: { body: elById('msgBody').value } })
-      .then(function () { toast('Message sent to all BDOs', 'ok'); renderTab(); })
+    api('message_send', { body: { body: elById('msgBody').value, to: elById('msgTo') ? elById('msgTo').value : '' } })
+      .then(function () { toast('Message sent', 'ok'); elById('msgBody').value = ''; msgMgrLoad(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function wdSave() {
@@ -1257,7 +1403,11 @@
           : '<select data-change="uRole" data-id="' + u.id + '">' + state._roles.map(function (rr) {
               return '<option value="' + esc(rr) + '"' + (rr === u.role ? ' selected' : '') + '>' + esc(roleLabel(rr)) + '</option>';
             }).join('') + '</select>';
-        return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td>' + roleSel + '</td><td>' + esc(u.station || '-') + '</td>' +
+        var specSel = prot ? '-'
+          : '<select data-change="uSpec" data-id="' + u.id + '">' +
+            '<option value=""' + (!u.specialty ? ' selected' : '') + '>General</option>' +
+            '<option value="activeness"' + (u.specialty === 'activeness' ? ' selected' : '') + '>Activeness (wake + recruit only)</option></select>';
+        return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td>' + roleSel + '</td><td>' + specSel + '</td><td>' + esc(u.station || '-') + '</td>' +
           '<td>' + (Number(u.active) ? '<span class="pill ok">Active</span>' : '<span class="pill bad">Disabled</span>') + '</td><td>' + acts + '</td></tr>';
       }).join('');
 
@@ -1287,7 +1437,7 @@
         '<div class="field"><label>Station</label><input id="nuStation" placeholder="Arusha"></div>' +
         '<div class="field"><label>Password</label><input id="nuPass" placeholder="min 8 chars"></div>' +
         '<button class="btn" data-action="uAdd">Add member</button></div>' +
-        '<div class="tablewrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Station</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + userRows + '</tbody></table></div></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Specialty</th><th>Station</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + userRows + '</tbody></table></div></div>' +
         '<div class="panel"><h2>' + svg('lock') + 'Access Control</h2>' +
         '<p class="note" style="margin-bottom:12px">Pick a role, then switch on what it can <b>View</b>, <b>Edit</b> or <b>Delete</b> per module. Super Admin always has everything.</p>' +
         '<div class="role-chips" id="roleChips"></div>' +
@@ -1415,16 +1565,85 @@
     }
     if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi')); return; }
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
-    if (a === 'proofConfirm') { if (!state._proofData) { toast(t('Take the receipt photo first'), 'warn'); return; } var n3 = state._locNode, pd = state._proofData; state._proofData = ''; closeModal(); kpiMark(node.getAttribute('data-id'), 'active', node.getAttribute('data-name'), n3, '', pd); return; }
+    if (a === 'proofConfirm') {
+      var pNoteV = (elById('proofNote') ? elById('proofNote').value.trim() : '');
+      if (!state._proofData && pNoteV.length < 10) { toast(t('Take the receipt photo first'), 'warn'); return; }
+      var n3 = state._locNode, pd = state._proofData; state._proofData = ''; closeModal();
+      kpiMark(node.getAttribute('data-id'), 'active', node.getAttribute('data-name'), n3, '', pd, pNoteV);
+      return;
+    }
     if (a === 'viewProof') {
+      var pNote = node.getAttribute('data-note') || '';
       openModal('<h2>' + svg('eye') + ' ' + t('Receipt proof') + ' &mdash; ' + esc(node.getAttribute('data-name') || '') + '</h2>' +
-        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px">' +
+        (pNote ? '<p class="note" style="border:1px dashed var(--line);border-radius:10px;padding:10px">&ldquo;' + esc(pNote) + '&rdquo;</p>' : '') +
+        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px" onerror="this.style.display=\'none\'">' +
         '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
       return;
     }
     if (a === 'recruit') { recruitModal(); return; }
     if (a === 'recruitSave') { recruitSave(); return; }
     if (a === 'rrDownload') { rrDownload(); return; }
+    if (a === 'wontReturn') {
+      if (node.getAttribute('data-marked')) {
+        api('wont_return_toggle', { body: { agentId: Number(node.getAttribute('data-id')) } })
+          .then(function () { toast(t('Removed from the won\'t-return list'), 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
+          .catch(function (e2) { toast(e2.message, 'err'); });
+        return;
+      }
+      openModal('<h2>' + svg('alert') + ' ' + esc(node.getAttribute('data-name')) + '</h2>' +
+        '<p class="note">' + t('Only mark this if you CONTACTED the agent and he CONFIRMED he will not return to work. He goes on the deletion-discussion list the OM can download.') + '</p>' +
+        '<div class="field"><label>' + t('Note (what did he say?)') + '</label><input id="wrNote" maxlength="255" placeholder="' + esc(t('e.g. moved to Dodoma, sold the POS')) + '"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+        '<button class="danger" data-action="wrGo" data-id="' + node.getAttribute('data-id') + '">' + t('Mark won\'t return') + '</button></div>');
+      return;
+    }
+    if (a === 'wrGo') {
+      api('wont_return_toggle', { body: { agentId: Number(node.getAttribute('data-id')), note: elById('wrNote').value.trim() } })
+        .then(function () { closeModal(); toast(t('Marked - on the deletion-discussion list'), 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'pipeAdd') {
+      openModal('<h2>' + svg('users') + ' ' + t('New agent form (stage 1)') + '</h2>' +
+        '<p class="note">' + t('The form is submitted at the branch and held by the BANK CHAMPION. It moves: audit -> approved -> paid & POS -> acc + location (becomes a real agent, counted in your Activeness).') + '</p>' +
+        '<div class="field"><label>Agent name</label><input id="ppName"></div>' +
+        '<div class="field"><label>Branch</label><input id="ppBranch"></div>' +
+        '<div class="field"><label>Bank champion (holds the form)</label><input id="ppChamp"></div>' +
+        '<div class="field"><label>Phone (optional)</label><input id="ppPhone" inputmode="tel"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+        '<button class="btn" data-action="pipeAddGo">' + t('Save form') + '</button></div>');
+      return;
+    }
+    if (a === 'pipeAddGo') {
+      api('recruit_pipe_add', { body: { name: elById('ppName').value.trim(), branch: elById('ppBranch').value.trim(), champion: elById('ppChamp').value.trim(), phone: elById('ppPhone').value.trim() } })
+        .then(function () { closeModal(); toast(t('Form saved - stage 1'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'pipeNext') {
+      var pStage = Number(node.getAttribute('data-stage'));
+      if (pStage === 4) {
+        openModal('<h2>' + svg('check') + ' ' + t('Finish: make him a real agent') + '</h2>' +
+          '<p class="note">' + esc(node.getAttribute('data-name')) + ' - ' + t('paid and POS assigned. Fill his acc number and physical location; he becomes ACTIVE and counts in your Activeness.') + '</p>' +
+          '<div class="field"><label>Acc number</label><input id="ppAcc"></div>' +
+          '<div class="field"><label>Physical location</label><input id="ppLoc"></div>' +
+          '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+          '<button class="btn" data-action="pipeFinish" data-id="' + node.getAttribute('data-id') + '">' + t('Create agent') + '</button></div>');
+        return;
+      }
+      api('recruit_pipe_advance', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function (d) { toast(t('Moved to stage') + ' ' + d.stage, 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'pipeFinish') {
+      api('recruit_pipe_advance', { body: { id: Number(node.getAttribute('data-id')), acc: elById('ppAcc').value.trim(), location: elById('ppLoc').value.trim() } })
+        .then(function () { closeModal(); toast(t('Agent created - counted in your Activeness'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'pipeDownload') { pipeDownload(); return; }
+    if (a === 'wrDownload') { wrDownload(); return; }
     if (a === 'setLoc') { setLocModal(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
     if (a === 'setLocGo') { api('agent_location_set', { body: { agentId: Number(node.getAttribute('data-id')), location: elById('locInput').value } }).then(function () { closeModal(); toast('Location saved', 'ok'); renderTab(); }).catch(function (e2) { toast(e2.message, 'err'); }); return; }
     if (a === 'togglePw') { var pi = elById(node.getAttribute('data-for')); if (pi) pi.type = pi.type === 'password' ? 'text' : 'password'; return; }
@@ -1433,6 +1652,32 @@
     if (a === 'shortage') { shortageModal(); return; }
     if (a === 'shortageSave') { shortageSave(); return; }
     if (a === 'msgSend') { msgSend(); return; }
+    if (a === 'msgEdit') {
+      openModal('<h2>' + svg('mail') + ' Edit message</h2>' +
+        '<div class="field"><label>Message</label><input id="msgEditBody" maxlength="500" value="' + esc(node.getAttribute('data-body') || '') + '"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+        '<button class="btn" data-action="msgEditGo" data-id="' + node.getAttribute('data-id') + '">Save</button></div>');
+      return;
+    }
+    if (a === 'msgEditGo') {
+      api('message_update', { body: { id: Number(node.getAttribute('data-id')), body: elById('msgEditBody').value } })
+        .then(function () { closeModal(); toast('Message updated', 'ok'); msgMgrLoad(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'msgDel') {
+      openModal('<h2>' + svg('alert') + ' Delete message?</h2>' +
+        '<p class="note">Members will no longer see it.</p>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+        '<button class="danger" data-action="msgDelGo" data-id="' + node.getAttribute('data-id') + '">Delete</button></div>');
+      return;
+    }
+    if (a === 'msgDelGo') {
+      api('message_delete', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function () { closeModal(); toast('Message deleted', 'ok'); msgMgrLoad(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'wdSave') { wdSave(); return; }
     if (a === 'repLoad') { state._repMonth = elById('repMonth').value; renderTab(); return; }
     if (a === 'rankPeriod') { state._rankPeriod = node.getAttribute('data-p'); renderTab(); return; }
@@ -1481,6 +1726,7 @@
   function onChange(e) {
     var n = e.target;
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
     if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
     if (n && n.classList && n.classList.contains('kpivis')) { var lbl = n.closest('label'); if (lbl) lbl.classList.toggle('on', n.checked); return; }
