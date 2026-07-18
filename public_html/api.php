@@ -648,13 +648,17 @@ try {
       $want = array();
       foreach (explode(',', (string)($_GET['kpis'] ?? '')) as $k) {
         $k = trim($k);
-        if (in_array($k, array('served', 'float', 'visits', 'apk', 'activeness'), true)) $want[$k] = true;
+        if (in_array($k, array('served', 'float', 'visits', 'apk', 'activeness', 'reports'), true)) $want[$k] = true;
       }
       if (!$want) fail('Pick at least one KPI');
-      $rows = array();
-      $bq = db()->query('SELECT username, name FROM users WHERE active = 1 AND role NOT IN ("superadmin","md","om") ORDER BY username');
-      foreach ($bq->fetchAll() as $b) $rows[$b['username']] = array('bdo' => $b['username'], 'name' => $b['name'],
-        'served' => 0, 'float' => 0, 'visits' => 0, 'apkMarks' => 0, 'apkTyped' => 0, 'activeness' => 0);
+      $rows = array(); $bdoUsers = array();
+      $bq = db()->query('SELECT username, name, working_days FROM users WHERE active = 1 AND role NOT IN ("superadmin","md","om") ORDER BY username');
+      foreach ($bq->fetchAll() as $b) {
+        $bdoUsers[$b['username']] = $b;
+        $rows[$b['username']] = array('bdo' => $b['username'], 'name' => $b['name'],
+          'served' => 0, 'float' => 0, 'visits' => 0, 'apkMarks' => 0, 'apkTyped' => 0, 'activeness' => 0,
+          'reported' => 0, 'missed' => 0, 'late' => 0);
+      }
       $lq = db()->prepare('SELECT bdo, kpi, COUNT(*) n FROM agent_month_kpi
                            WHERE DATE(at) BETWEEN ? AND ? GROUP BY bdo, kpi');
       $lq->execute(array($from, $to));
@@ -676,6 +680,32 @@ try {
       foreach ($sq->fetchAll() as $r) {
         if (isset($rows[$r['bdo']])) $rows[$r['bdo']]['float'] += (float)$r['f'];
       }
+
+      /* Daily-report discipline: which working days he SENT a report and which
+       * he MISSED (per his working-days config), plus how many arrived late. */
+      if (isset($want['reports'])) {
+        $sent = array(); /* bdo => set of report dates */
+        $rq = db()->prepare('SELECT bdo, report_date, created_at FROM daily_reports WHERE report_date BETWEEN ? AND ?');
+        $rq->execute(array($from, $to));
+        foreach ($rq->fetchAll() as $r) {
+          if (!isset($rows[$r['bdo']])) continue;
+          $sent[$r['bdo']][$r['report_date']] = true;
+          if (substr($r['created_at'], 0, 10) > $r['report_date']) $rows[$r['bdo']]['late']++;
+        }
+        $lastDay = min($to, date('Y-m-d')); /* no "missed" for days that have not happened */
+        foreach ($bdoUsers as $uname => $bu) {
+          $wd = working_days_for($bu);
+          $reported = 0; $missed = 0;
+          for ($d = strtotime($from); $d <= strtotime($lastDay); $d += 86400) {
+            $day = date('Y-m-d', $d);
+            $has = isset($sent[$uname][$day]);
+            if ($has) $reported++;
+            elseif (isset($wd[(int)date('N', $d)])) $missed++;
+          }
+          $rows[$uname]['reported'] = $reported;
+          $rows[$uname]['missed'] = $missed;
+        }
+      }
       $out = array();
       foreach ($rows as $r) {
         $line = array('bdo' => $r['bdo'], 'name' => $r['name']);
@@ -684,6 +714,11 @@ try {
         if (isset($want['visits'])) $line['visits'] = $r['visits'];
         if (isset($want['apk'])) $line['apk'] = max($r['apkMarks'], $r['apkTyped']);
         if (isset($want['activeness'])) $line['activeness'] = $r['activeness'];
+        if (isset($want['reports'])) {
+          $line['reported'] = $r['reported'];
+          $line['missed'] = $r['missed'];
+          $line['late'] = $r['late'];
+        }
         $out[] = $line;
       }
       audit($u['id'], 'range_report', $from . '..' . $to . ' ' . implode(',', array_keys($want)));
@@ -704,12 +739,20 @@ try {
       $kpi = (string)bval('kpi');
       if (!in_array($kpi, array('served', 'visit', 'apk', 'active'), true)) fail('Unknown KPI');
       $month = open_month();
-      $chk = db()->prepare('SELECT bdo, source FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
+      /* age computed IN SQL so the PHP and DB clocks can never disagree */
+      $chk = db()->prepare('SELECT bdo, source, TIMESTAMPDIFF(SECOND, at, NOW()) AS age
+                            FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
       $chk->execute(array($month, $agentId, $kpi));
       $row = $chk->fetch();
       if (!$row) fail('Nothing to reverse', 404);
       if ($row['source'] !== 'bdo') fail('This status came from the uploaded file - re-upload to change it', 400);
       if (!$isOM && $row['bdo'] !== $u['username']) fail('You can only reverse your own marks', 403);
+      /* A BDO gets a 6-HOUR window to correct his own wrong tap. After that only
+       * the OM can return the agent's status (no time limit for the OM - the
+       * reversal updates the BDO's score against his targets immediately). */
+      if (!$isOM && (int)$row['age'] > 6 * 3600) {
+        fail('Your 6-hour correction window has passed - ask your OM to reverse it', 403);
+      }
 
       db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')->execute(array($month, $agentId, $kpi));
       if ($kpi === 'served') {

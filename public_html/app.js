@@ -824,7 +824,7 @@
         state._proofData = cv.toDataURL('image/jpeg', 0.72);
         URL.revokeObjectURL(img.src);
         var pv = elById('proofPrev');
-        if (pv) pv.innerHTML = '<img src="' + state._proofData + '" alt="receipt preview" style="max-width:100%;max-height:180px;border-radius:10px">';
+        if (pv) pv.innerHTML = '<img src="' + state._proofData + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
         var btn = document.querySelector('[data-action=proofConfirm]');
         if (btn) btn.disabled = false;
       };
@@ -925,12 +925,13 @@
   /* OM: download BDO performance for any date range with hand-picked KPIs. */
   function rangeReportPanel() {
     var kpiBoxes = [
-      ['served', 'Served'], ['float', 'Float'], ['visits', 'Visits'], ['apk', 'APK'], ['activeness', 'Activeness']
+      ['served', 'Served'], ['float', 'Float'], ['visits', 'Visits'], ['apk', 'APK'], ['activeness', 'Activeness'],
+      ['reports', 'Daily reports (sent/missed)']
     ].map(function (k) {
       return '<label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="rrKpi" value="' + k[0] + '" checked style="accent-color:var(--fire2);margin-right:5px">' + k[1] + '</label>';
     }).join(' ');
     return '<div class="panel"><h2>' + svg('chart') + 'Download BDO Report (Excel)</h2>' +
-      '<p class="note">Pick a date range and the KPIs you want - one row per BDO. Served/Visits/Activeness count his dated agent marks; Float and APK come from dated daily reports (APK uses the same max-of-marks-or-typed rule as the monthly score).</p>' +
+      '<p class="note">Pick a date range and the KPIs you want - one row per BDO. Served/Visits/Activeness count his dated agent marks; Float and APK come from dated daily reports (APK uses the same max-of-marks-or-typed rule as the monthly score). The reports option adds days he SENT a daily report, days he MISSED (per his working days) and how many were late.</p>' +
       '<div class="row">' +
       '<div class="field"><label>From</label><input id="rrFrom" type="date" value="' + isoDaysAgo(30) + '" max="' + isoToday() + '"></div>' +
       '<div class="field"><label>To</label><input id="rrTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
@@ -944,7 +945,8 @@
     if (!from || !to) { toast('Pick both dates', 'warn'); return; }
     api('bdo_range_report', { qs: '&from=' + from + '&to=' + to + '&kpis=' + kpis.join(',') }).then(function (d) {
       if (!d.rows.length) { toast('No BDOs found', 'warn'); return; }
-      var head = { bdo: 'BDO', name: 'Name', served: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness' };
+      var head = { bdo: 'BDO', name: 'Name', served: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness',
+                   reported: 'Reports sent', missed: 'Reports missed', late: 'Late reports' };
       var rows = d.rows.map(function (r) {
         var o = {};
         Object.keys(r).forEach(function (k) { o[head[k] || k] = r[k]; });

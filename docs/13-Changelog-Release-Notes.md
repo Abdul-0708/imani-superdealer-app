@@ -5,6 +5,31 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.10.1 — 2026-07-18 · "Modal fix, 6-hour correction window, report discipline"
+
+### Release notes
+**Modal fix** (live-site bug): modal title icons rendered full-screen and pushed the save button
+off the page — icons are now 18 px, modals scroll (max 92 vh), the receipt preview is capped, and
+the Save button is always reachable. **Correction window:** a BDO can reverse his OWN wrong tap
+only within **6 hours** of making it (server-enforced, measured on the DB clock so PHP/DB timezone
+differences can't shift it — verified: 4 h-old mark reversible, 10 h-old blocked with "ask your
+OM"). Uploaded-Excel statuses stay untouchable for BDOs as before. **The OM has NO time limit** —
+he can return an agent's status any time, and the reversal updates that BDO's score against his
+targets immediately. **Report discipline in the range report:** the OM's "Download BDO Report"
+gained a *Daily reports (sent/missed)* option — per BDO it adds **Reports sent**, **Reports
+missed** (working days in the range with no report, future days excluded) and **Late reports**
+(sent after midnight). Verified: Mon–Sat range with 1 report → sent 1 / missed 5.
+
+### Changes
+- `styles.css`: `.modalbox` max-height + scroll, `h2 svg` 18 px, img cap. Assets `?v=13`
+- `api.php`: kpi_unmark 6-h window via `TIMESTAMPDIFF` (OM exempt); `bdo_range_report` +
+  `reports` option (working_days_for per BDO, late = created after report date)
+- `app.js`: report checkbox + Reports sent/missed/Late columns, smaller proof preview
+- Deploy: pull + Deploy HEAD Commit in cPanel Git (`api.php`, `app.js`, `styles.css`,
+  `index.html`, `sw.js`)
+
+---
+
 ## v1.10.0 — 2026-07-18 · "Wake proof, field recruitment, range reports" — schema v7
 
 ### Release notes

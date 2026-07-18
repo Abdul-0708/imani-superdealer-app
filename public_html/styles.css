@@ -229,8 +229,10 @@ tbody tr:hover{background:rgba(255,140,26,.07)}
 .toast.err{border-left-color:var(--bad)}.toast.ok{border-left-color:var(--ok)}.toast.warn{border-left-color:var(--yellow)}
 @keyframes toastin{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
 .modalback{position:fixed;inset:0;background:rgba(10,5,2,.72);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px;animation:fadein .18s var(--ease)}
-.modalbox{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:18px;padding:24px;width:100%;max-width:380px;box-shadow:var(--e2),var(--glow);animation:pop .2s var(--ease)}
-.modalbox h2{margin:0 0 14px;font-size:18px}
+.modalbox{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:18px;padding:24px;width:100%;max-width:380px;box-shadow:var(--e2),var(--glow);animation:pop .2s var(--ease);max-height:92vh;overflow-y:auto}
+.modalbox h2{margin:0 0 14px;font-size:18px;display:flex;align-items:center;gap:8px}
+.modalbox h2 svg{width:18px;height:18px;flex:none;color:var(--fire2)}
+.modalbox img{max-width:100%}
 .modalbox .field{margin-bottom:12px}
 .modalbox select,.modalbox input{width:100%}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
