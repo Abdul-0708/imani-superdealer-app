@@ -1378,8 +1378,17 @@
       }).join('');
 
       /* --- management extras --- */
+      /* danger zone: delete or erase what a BDO filled - scores recalc live */
+      var dangerPanel = can('agents', 'e')
+        ? '<div class="panel"><h2>' + svg('alert') + 'BDO data (danger zone)</h2>' +
+          '<p class="note">Delete single typed reports or ERASE everything a BDO filled (agent marks, daily reports, won\'t-return, pipeline forms, shortages). His performance and all reports recalculate instantly. The uploaded Excel data is office data and always stays.</p>' +
+          '<div class="row"><div class="field"><label>BDO</label><select id="bdSel"><option value="">pick...</option></select></div>' +
+          '<button class="ghost" data-action="bdLoad">Load his data</button></div>' +
+          '<div id="bdBox" style="margin-top:10px"></div></div>'
+        : '';
       var omTools = can('reports', 'e')
-        ? '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
+        ? dangerPanel +
+          '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
           '<div class="row"><div class="field"><label>To</label><select id="msgTo"><option value="">All members</option></select></div>' +
           '<div class="field" style="flex:1;min-width:220px"><label>Message</label><input id="msgBody" placeholder="Type the announcement..." maxlength="500"></div>' +
           '<button class="btn" data-action="msgSend">Send</button></div>' +
@@ -1433,6 +1442,12 @@
       sel.innerHTML = '<option value="">All members</option>' + members
         .filter(function (m) { return m.username !== state.user.username; })
         .map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('');
+      var bd = elById('bdSel');
+      if (bd) {
+        bd.innerHTML = '<option value="">pick...</option>' + members
+          .filter(function (m) { return m.username !== state.user.username; })
+          .map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('');
+      }
       box.innerHTML = sent.length
         ? '<div class="tablewrap"><table><thead><tr><th>To</th><th>Message</th><th>When</th><th></th></tr></thead><tbody>' +
           sent.map(function (m) {
@@ -1448,6 +1463,30 @@
     api('message_send', { body: { body: elById('msgBody').value, to: elById('msgTo') ? elById('msgTo').value : '' } })
       .then(function () { toast('Message sent', 'ok'); elById('msgBody').value = ''; msgMgrLoad(); })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+  /* danger zone: show a BDO's filled data with per-report deletes + erase buttons */
+  function bdLoad() {
+    var bdo = elById('bdSel') ? elById('bdSel').value : '';
+    var box = elById('bdBox');
+    if (!bdo) { toast('Pick a BDO first', 'warn'); return; }
+    api('bdo_data_summary', { qs: '&bdo=' + encodeURIComponent(bdo) }).then(function (d) {
+      var c = d.counts;
+      var reps = (d.reports || []).map(function (r) {
+        return '<tr><td>' + esc(r.report_date) + '</td><td>' + fmt(r.float_served) + '</td><td>' + fmt(r.apk) + '</td>' +
+          '<td class="note">' + esc(r.note || '') + '</td>' +
+          '<td><button class="danger mini" data-action="bdDelReport" data-id="' + r.id + '">Delete</button></td></tr>';
+      }).join('') || '<tr><td colspan="5" class="note">No typed reports.</td></tr>';
+      box.innerHTML =
+        '<div class="row" style="margin-bottom:10px">' +
+        '<span class="pill fire">' + c.marksMonth + ' marks this month (' + c.marksAll + ' all-time)</span>' +
+        '<span class="pill gold">' + c.reportsMonth + ' reports this month (' + c.reportsAll + ' all-time)</span>' +
+        '<span class="pill dim">' + c.wontReturn + ' won\'t-return &middot; ' + c.recruits + ' forms &middot; ' + c.shortages + ' shortages</span></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>Date</th><th>Float</th><th>APK</th><th>Note</th><th></th></tr></thead><tbody>' + reps + '</tbody></table></div>' +
+        '<p class="note" style="margin-top:8px">Single agent marks: reverse them with the &times; on his chips in the agent list (you have no time limit).</p>' +
+        '<div class="row" style="margin-top:10px">' +
+        '<button class="danger" data-action="bdErase" data-bdo="' + esc(d.bdo) + '" data-scope="month">Erase THIS MONTH (' + esc(d.month) + ')</button>' +
+        '<button class="danger" data-action="bdErase" data-bdo="' + esc(d.bdo) + '" data-scope="all">Erase EVERYTHING</button></div>';
+    }).catch(function (e) { toast(e.message, 'err'); });
   }
   function wdSave() {
     var per = {};
@@ -1761,6 +1800,37 @@
     if (a === 'msgDelGo') {
       api('message_delete', { body: { id: Number(node.getAttribute('data-id')) } })
         .then(function () { closeModal(); toast('Message deleted', 'ok'); msgMgrLoad(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'bdLoad') { bdLoad(); return; }
+    if (a === 'bdDelReport') {
+      api('daily_report_delete', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function () { toast('Report deleted - the day reads as missed again', 'ok'); bdLoad(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'bdErase') {
+      var ebdo = node.getAttribute('data-bdo'), escope = node.getAttribute('data-scope');
+      openModal('<h2>' + svg('alert') + ' Erase ' + esc(ebdo) + '\'s data?</h2>' +
+        '<p class="note">' + (escope === 'all'
+          ? 'EVERYTHING he ever filled will be deleted: agent marks, daily reports, won\'t-return marks, pipeline forms, shortages. Proof photos are removed too. This cannot be undone.'
+          : 'Everything he filled THIS MONTH will be deleted: agent marks, daily reports, won\'t-return marks, pipeline forms, shortages. Agents he waked go back to INACTIVE. This cannot be undone.') + '</p>' +
+        '<div class="field"><label>Type his username (<b>' + esc(ebdo) + '</b>) to confirm</label><input id="bdConfirm" autocomplete="off"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+        '<button class="danger" data-action="bdEraseGo" data-bdo="' + esc(ebdo) + '" data-scope="' + esc(escope) + '">Erase ' + (escope === 'all' ? 'EVERYTHING' : 'this month') + '</button></div>');
+      return;
+    }
+    if (a === 'bdEraseGo') {
+      if (elById('bdConfirm').value.trim().toLowerCase() !== node.getAttribute('data-bdo')) {
+        toast('Type the username exactly to confirm', 'warn'); return;
+      }
+      api('bdo_data_erase', { body: { bdo: node.getAttribute('data-bdo'), scope: node.getAttribute('data-scope') } })
+        .then(function (d) {
+          closeModal();
+          toast('Erased: ' + d.deleted.marks + ' marks, ' + d.deleted.reports + ' reports, ' + d.deleted.wontReturn + ' won\'t-return, ' + d.deleted.recruits + ' forms', 'ok');
+          bdLoad();
+        })
         .catch(function (e2) { toast(e2.message, 'err'); });
       return;
     }

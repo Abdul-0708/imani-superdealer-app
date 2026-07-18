@@ -5,6 +5,29 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.13.0 — 2026-07-18 · "BDO data control for OM/admin"
+
+### Release notes
+Reports tab gained a **"BDO data (danger zone)"** panel for the OM and super admin. Pick a BDO →
+**Load his data** → see counts (marks, typed reports, won't-return, forms, shortages) and his
+typed daily reports with a **Delete** per row (the day reads as missed again). Two red buttons:
+**Erase THIS MONTH** and **Erase EVERYTHING** — both demand typing his username to confirm.
+Erasing removes everything HE filled (live agent marks + their proof photos, typed reports,
+won't-return marks, pipeline forms, shortages); agents he waked go back to INACTIVE; **uploaded
+Excel data always stays** (it is office data). Performance and every report recalculate instantly —
+verified live: Mary 43% → 15% the moment her month was erased. Single agent marks are still
+reversed with the × on chips (OM has no time limit). Guards: BDOs get 403, you cannot erase
+yourself or a super admin, every erase is audit-logged with counts.
+
+### Changes
+- `api.php`: `bdo_data_summary`, `daily_report_delete`, `bdo_data_erase` (scope month/all,
+  proof-file cleanup, act_current reset, per-table counts in the audit trail)
+- `app.js`: danger-zone panel + bdLoad/bdErase confirm-by-username flow. Assets `?v=17`,
+  SW `imani-v17`
+- Deploy: cPanel Git pull + Deploy HEAD Commit (`api.php`, `app.js`, `index.html`, `sw.js`)
+
+---
+
 ## v1.12.1 — 2026-07-18 · "Specialist field work auto-counts as his report"
 
 Any real field action the activeness specialist takes (wake, won't-return, pipeline form/stage,

@@ -800,6 +800,103 @@ try {
                     'inactiveVisited' => $waked + $wont, 'formsSubmitted' => $forms, 'recruited' => $recruited));
     }
 
+    /* ============ BDO DATA CONTROL (OM / admin danger zone) ============
+     * Everything a BDO filled - agent marks, typed daily reports, won't-return
+     * marks, pipeline forms, shortages - can be deleted one by one or erased in
+     * bulk. Scores/reports recalc automatically because they are computed live
+     * from these tables.
+     */
+    case 'bdo_data_summary': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      if ($bdo === '') fail('Pick a BDO');
+      $month = open_month();
+      $c = array();
+      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ? AND source = "bdo" AND month = ?');
+      $q->execute(array($bdo, $month)); $c['marksMonth'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ? AND source = "bdo"');
+      $q->execute(array($bdo)); $c['marksAll'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM daily_reports WHERE bdo = ? AND month = ?');
+      $q->execute(array($bdo, $month)); $c['reportsMonth'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM daily_reports WHERE bdo = ?');
+      $q->execute(array($bdo)); $c['reportsAll'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM wont_return WHERE bdo = ?');
+      $q->execute(array($bdo)); $c['wontReturn'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM recruits WHERE bdo = ?');
+      $q->execute(array($bdo)); $c['recruits'] = (int)$q->fetch()['c'];
+      $q = db()->prepare('SELECT COUNT(*) c FROM float_shortages WHERE bdo = ?');
+      $q->execute(array($bdo)); $c['shortages'] = (int)$q->fetch()['c'];
+      $rq = db()->prepare('SELECT id, report_date, float_served, apk, note FROM daily_reports
+                           WHERE bdo = ? ORDER BY report_date DESC LIMIT 31');
+      $rq->execute(array($bdo));
+      respond(array('bdo' => $bdo, 'month' => $month, 'counts' => $c, 'reports' => $rq->fetchAll()));
+    }
+
+    /* OM/admin deletes ONE typed daily report - the day reads as missed again. */
+    case 'daily_report_delete': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $id = (int)bval('id');
+      $st = db()->prepare('SELECT bdo, report_date FROM daily_reports WHERE id = ?');
+      $st->execute(array($id));
+      $r = $st->fetch();
+      if (!$r) fail('Report not found', 404);
+      db()->prepare('DELETE FROM daily_reports WHERE id = ?')->execute(array($id));
+      audit($u['id'], 'daily_report_delete', $r['bdo'] . ' ' . $r['report_date']);
+      respond(array('ok' => true));
+    }
+
+    /* Bulk erase of what a BDO filled (his live work only - the uploaded Excel
+     * data is office data and stays). scope: 'month' = open month, 'all'. */
+    case 'bdo_data_erase': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $bdo = strtolower(trim((string)bval('bdo')));
+      $scope = bval('scope') === 'all' ? 'all' : 'month';
+      $tu = db()->prepare('SELECT role FROM users WHERE username = ?');
+      $tu->execute(array($bdo));
+      $target = $tu->fetch();
+      if (!$target) fail('Unknown member: ' . $bdo, 404);
+      if ($target['role'] === 'superadmin') fail('Cannot erase a super admin\'s data');
+      if ($bdo === $u['username']) fail('You cannot erase your own data');
+      $month = open_month();
+      $mw = $scope === 'month' ? ' AND month = ?' : '';
+      $mv = $scope === 'month' ? array($bdo, $month) : array($bdo);
+
+      /* proof photos on his wake marks: remove the files too */
+      $pq = db()->prepare("SELECT proof FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo' AND proof <> ''" . $mw);
+      $pq->execute($mv);
+      foreach ($pq->fetchAll() as $r) {
+        $f = preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']);
+        if ($f !== '') @unlink(__DIR__ . '/uploads/proofs/' . $f);
+      }
+      /* agents he waked this month go back to INACTIVE (mirror of kpi_unmark) */
+      db()->prepare('UPDATE agents a JOIN agent_month_kpi k ON k.agent_id = a.id
+                     SET a.act_current = "INACTIVE"
+                     WHERE k.month = ? AND k.kpi = "active" AND k.bdo = ? AND k.source = "bdo" AND a.act_month = ?')
+          ->execute(array($month, $bdo, $month));
+      $n = array();
+      $d = db()->prepare("DELETE FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo'" . $mw);
+      $d->execute($mv); $n['marks'] = $d->rowCount();
+      $d = db()->prepare("DELETE FROM service_history WHERE bdo = ? AND source = 'bdo'" . $mw);
+      $d->execute($mv); $n['services'] = $d->rowCount();
+      $d = db()->prepare("DELETE FROM daily_reports WHERE bdo = ?" . $mw);
+      $d->execute($mv); $n['reports'] = $d->rowCount();
+      $d = db()->prepare("DELETE FROM float_shortages WHERE bdo = ?" . $mw);
+      $d->execute($mv); $n['shortages'] = $d->rowCount();
+      if ($scope === 'month') {
+        $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ? AND at LIKE ?');
+        $d->execute(array($bdo, $month . '%')); $n['wontReturn'] = $d->rowCount();
+        $d = db()->prepare('DELETE FROM recruits WHERE bdo = ? AND submitted_at LIKE ?');
+        $d->execute(array($bdo, $month . '%')); $n['recruits'] = $d->rowCount();
+      } else {
+        $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ?');
+        $d->execute(array($bdo)); $n['wontReturn'] = $d->rowCount();
+        $d = db()->prepare('DELETE FROM recruits WHERE bdo = ?');
+        $d->execute(array($bdo)); $n['recruits'] = $d->rowCount();
+      }
+      audit($u['id'], 'bdo_data_erase', $bdo . ' scope=' . $scope . ' ' . json_encode($n));
+      respond(array('ok' => true, 'scope' => $scope, 'deleted' => $n));
+    }
+
     /* ============ WON'T-RETURN list (deletion candidates) ============
      * The specialist contacted the agent and the agent CONFIRMED he will not
      * return to work. Marked agents feed the OM's deletion-discussion report.
