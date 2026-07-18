@@ -118,6 +118,25 @@
     'Recruit': 'Msajiliwa',
     'Stages': 'Hatua',
     'DONE': 'IMEKAMILIKA',
+    'My Dashboard': 'Dashibodi Yangu',
+    'your own performance only': 'utendaji wako pekee',
+    'Month': 'Mwezi',
+    'Inactive visited': 'Inactive waliotembelewa',
+    'Waked up': 'Walioamshwa',
+    'Forms submitted': 'Fomu zilizowasilishwa',
+    'became agents': 'wamekuwa mawakala',
+    'waked + won\'t-return': 'walioamshwa + hatarudi',
+    'computed from your agent list and forms - nothing to type, nothing to forget':
+      'imehesabiwa kutoka orodha yako ya mawakala na fomu - hakuna cha kuandika, hakuna cha kusahau',
+    'Your target: inactive agents waked + new agents recruited. Nothing else counts.':
+      'Lengo lako: mawakala inactive walioamshwa + mawakala wapya waliosajiliwa. Hakuna kingine kinachohesabika.',
+    'New agent - which one?': 'Wakala mpya - ipi?',
+    'Pick what you have in front of you.': 'Chagua ulichonacho mbele yako.',
+    'Agent recruited ALREADY': 'Wakala AMESHASAJILIWA',
+    'type name, acc, branch, phone, location - done': 'andika jina, acc, tawi, simu, mahali - imekamilika',
+    'Form of agent TO BE SUBMITTED': 'Fomu ya wakala ITAKAYOWASILISHWA',
+    'follows the stages: audit, approval, POS, acc': 'inafuata hatua: ukaguzi, idhini, POS, acc',
+    'Confirm his physical location (for the follow-up)': 'Thibitisha mahali alipo (kwa ufuatiliaji)',
     'Two-step verification': 'Uthibitisho wa hatua mbili',
     'Open your authenticator app and type the 6-digit code for IMANI.': 'Fungua app yako ya authenticator kisha andika namba 6 za IMANI.',
     '6-digit code': 'Namba 6 za uthibitisho',
@@ -326,6 +345,7 @@
   function visibleModules() {
     return MODULES.filter(function (m) {
       if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
+      if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
     });
@@ -392,7 +412,39 @@
   }
 
   /* ---------------- dashboard ---------------- */
+  /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
+  function personalDashboard(v) {
+    var calls = [api('base')];
+    if (isSpecial()) calls.push(api('specialist_summary'));
+    Promise.all(calls).then(function (rr) {
+      var d = rr[0], sum = rr[1];
+      var perf = d.performance;
+      var cards;
+      if (sum) {
+        /* activeness specialist: computed straight from his taps + forms */
+        cards = card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
+          card('zap', t('Waked up'), fmt(sum.waked)) +
+          card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
+          card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited));
+      } else {
+        cards = card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
+          card('users', t('Total Base'), fmt(d.counts.total)) +
+          card('check', t('My Served'), fmt(d.counts.served)) +
+          card('cal', t('Month'), d.month + (d.monthStatus ? ' · ' + d.monthStatus : ''));
+      }
+      v.innerHTML =
+        '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
+        (perf
+          ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
+            (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
+            perfBars(perf.kpis) + '</div>'
+          : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>');
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
   function viewDashboard(v) {
+    if (!can('dashboard', 'v')) { personalDashboard(v); return; }
     var m = state.month || '';
     api('dashboard', { qs: m ? '&month=' + m : '' }).then(function (d) {
       state.month = d.month;
@@ -764,8 +816,9 @@
   /* ---------------- Daily Report (separate BDO tab) ---------------- */
   function viewDaily(v) {
     /* base gives his weighted performance so each saved report moves the trend */
-    Promise.all([api('daily_reports_get'), api('base'), isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null)]).then(function (rr) {
-      var d = rr[0], base = rr[1], pipe = rr[2];
+    Promise.all([api('daily_reports_get'), api('base'), isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null),
+                 isSpecial() ? api('specialist_summary') : Promise.resolve(null)]).then(function (rr) {
+      var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3];
       var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
       var tot = { f: 0, a: 0 };
       mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
@@ -781,6 +834,22 @@
           '<p class="note">' + esc(t('My reports this month')) + ' + KPI = ' + esc(t('My Performance')) + '</p>' +
           perfBars(base.performance.kpis) + '</div>'
         : '<div class="panel"><div class="note">' + esc(t('Your OM has not set your targets for')) + ' ' + esc(base.month || '') + ' ' + esc(t('yet - your weighted score will appear here.')) + '</div></div>';
+      /* the activeness specialist types NOTHING: his report is COMPUTED from
+       * his agent taps + forms, so it always matches the agent list. No float
+       * shortage for him either. */
+      if (sum) {
+        v.innerHTML =
+          '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+          '<p class="page-sub">' + esc(sum.month) + ' &middot; ' + t('computed from your agent list and forms - nothing to type, nothing to forget') + '</p>' +
+          '<div class="grid cards" style="margin-bottom:16px">' +
+          card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
+          card('zap', t('Waked up'), fmt(sum.waked)) +
+          card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
+          card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited)) +
+          '</div>' +
+          perfPanel + (pipe ? pipePanel(pipe) : '');
+        return;
+      }
       v.innerHTML =
         '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
         '<p class="page-sub">' + t('Type only FLOAT and APK here. Serving, visits and activeness are done on the agent list - find the agent, tap his chip and confirm, so we know which agent was handled by which BDO.') + '</p>' +
@@ -861,7 +930,7 @@
       })
       .catch(function (e) {
         if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
-        if (e.data && e.data.needProof) { proofModal(id, name, node); return; }
+        if (e.data && e.data.needProof) { proofModal(id, name, node, e.data.agentLoc || ''); return; }
         toast(e.message, 'err');
         /* someone else already did it - show their name on the chip, in place */
         var m = String(e.message).match(/Already done by (\S+)/);
@@ -880,7 +949,7 @@
   }
   /* Waking an INACTIVE agent needs a receipt photo. The photo is downscaled on
    * the phone (max 1280px JPEG) so it uploads fast even on slow networks. */
-  function proofModal(id, name, node) {
+  function proofModal(id, name, node, knownLoc) {
     openModal('<h2>' + svg('zap') + ' ' + t('Wake') + ' ' + esc(name) + '</h2>' +
       '<p class="note">' + t('Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.') + '</p>' +
       '<div class="field"><label>' + t('Receipt photo') + '</label>' +
@@ -888,16 +957,23 @@
       '<div id="proofPrev" style="margin-top:8px;text-align:center"></div>' +
       '<div class="field" style="margin-top:8px"><label>' + t('No photo? Confirm by words - how are you SURE he transacted?') + '</label>' +
       '<input id="proofNote" maxlength="255" placeholder="' + esc(t('e.g. I saw his float statement at the branch today')) + '"></div>' +
+      '<div class="field" style="margin-top:8px"><label>' + t('Confirm his physical location (for the follow-up)') + '</label>' +
+      '<input id="proofLoc" maxlength="255" value="' + esc(knownLoc || '') + '" placeholder="' + esc(t('e.g. Kaloleni, opposite NMB Bank')) + '"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
       '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
       '<button class="btn" data-action="proofConfirm" data-id="' + id + '" data-name="' + esc(name) + '" disabled>' + t('Save proof & wake') + '</button></div>');
     state._locNode = node;
     state._proofData = '';
-    var noteInp = elById('proofNote');
-    noteInp.addEventListener('input', function () {
+    function proofReady() {
       var btn = document.querySelector('[data-action=proofConfirm]');
-      if (btn) btn.disabled = !(state._proofData || noteInp.value.trim().length >= 10);
-    });
+      var locOk = elById('proofLoc') && elById('proofLoc').value.trim() !== '';
+      var proofOk = state._proofData || (elById('proofNote') && elById('proofNote').value.trim().length >= 10);
+      if (btn) btn.disabled = !(proofOk && locOk);
+    }
+    state._proofReady = proofReady;
+    var noteInp = elById('proofNote');
+    noteInp.addEventListener('input', proofReady);
+    elById('proofLoc').addEventListener('input', proofReady);
     var inp = elById('proofFile');
     inp.addEventListener('change', function () {
       var f = inp.files && inp.files[0];
@@ -912,8 +988,7 @@
         URL.revokeObjectURL(img.src);
         var pv = elById('proofPrev');
         if (pv) pv.innerHTML = '<img src="' + state._proofData + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
-        var btn = document.querySelector('[data-action=proofConfirm]');
-        if (btn) btn.disabled = false;
+        if (state._proofReady) state._proofReady();
       };
       img.onerror = function () { toast(t('That file is not a photo'), 'err'); };
       img.src = URL.createObjectURL(f);
@@ -1567,9 +1642,11 @@
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
     if (a === 'proofConfirm') {
       var pNoteV = (elById('proofNote') ? elById('proofNote').value.trim() : '');
+      var pLocV = (elById('proofLoc') ? elById('proofLoc').value.trim() : '');
       if (!state._proofData && pNoteV.length < 10) { toast(t('Take the receipt photo first'), 'warn'); return; }
+      if (!pLocV) { toast(t('Confirm his physical location (for the follow-up)'), 'warn'); return; }
       var n3 = state._locNode, pd = state._proofData; state._proofData = ''; closeModal();
-      kpiMark(node.getAttribute('data-id'), 'active', node.getAttribute('data-name'), n3, '', pd, pNoteV);
+      kpiMark(node.getAttribute('data-id'), 'active', node.getAttribute('data-name'), n3, pLocV, pd, pNoteV);
       return;
     }
     if (a === 'viewProof') {
@@ -1604,6 +1681,15 @@
       return;
     }
     if (a === 'pipeAdd') {
+      /* first question: is this agent ALREADY recruited, or is it a form to submit? */
+      openModal('<h2>' + svg('users') + ' ' + t('New agent - which one?') + '</h2>' +
+        '<p class="note">' + t('Pick what you have in front of you.') + '</p>' +
+        '<button class="btn" data-action="recruit" style="width:100%;margin-bottom:10px">' + t('Agent recruited ALREADY') + '<br><small style="font-weight:600">' + t('type name, acc, branch, phone, location - done') + '</small></button>' +
+        '<button class="ghost" data-action="pipeFormNew" style="width:100%">' + t('Form of agent TO BE SUBMITTED') + '<br><small style="font-weight:600">' + t('follows the stages: audit, approval, POS, acc') + '</small></button>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button></div>');
+      return;
+    }
+    if (a === 'pipeFormNew') {
       openModal('<h2>' + svg('users') + ' ' + t('New agent form (stage 1)') + '</h2>' +
         '<p class="note">' + t('The form is submitted at the branch and held by the BANK CHAMPION. It moves: audit -> approved -> paid & POS -> acc + location (becomes a real agent, counted in your Activeness).') + '</p>' +
         '<div class="field"><label>Agent name</label><input id="ppName"></div>' +

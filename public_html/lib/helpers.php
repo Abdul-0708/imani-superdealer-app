@@ -515,3 +515,19 @@ function save_proof_image($dataUrl) {
   if (file_put_contents($dir . '/' . $name, $raw) === false) fail('Could not store the photo - contact admin', 500);
   return $name;
 }
+
+/* Activeness specialist: his ONLY KPI is activeness = waked + recruited. */
+function bdo_score_specialist($actuals, $t) {
+  $target = (float)$t['activeness_target'];
+  $actual = (float)$actuals['active'];
+  $pct = $target > 0 ? min(100, round($actual / $target * 100)) : null;
+  $flag = $pct === null ? 'none' : ($pct < 50 ? 'red' : ($pct >= 80 ? 'excellent' : 'mid'));
+  return array('kpis' => array('activeness' => array('actual' => $actual, 'target' => $target, 'weight' => 100, 'pct' => $pct)),
+               'score' => $pct, 'flag' => $flag);
+}
+function user_specialty($username) {
+  $st = db()->prepare('SELECT specialty FROM users WHERE username = ?');
+  $st->execute(array($username));
+  $r = $st->fetch();
+  return $r ? (string)$r['specialty'] : '';
+}

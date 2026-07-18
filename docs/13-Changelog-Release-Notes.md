@@ -5,6 +5,38 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.12.0 — 2026-07-18 · "Personal BDO dashboards + specialist workflow complete"
+
+### Release notes
+**Every BDO now lands on "My Dashboard"** — his own performance only (score pill, weighted KPI
+bars, his base counts). No office KPIs, no office targets, nothing that isn't his. The OM/MD
+office dashboard is untouched.
+
+**The activeness specialist is now fully self-contained:**
+- **Scored on activeness ONLY** — waked + recruited vs his activeness target (verified 20%=2/10);
+  the OM's ranked table uses the same rule for him. Other KPIs don't exist in his world.
+- **His Daily Report types NOTHING** — it is computed live from what he actually did, so it always
+  matches his agent list and forms: *Inactive visited* (waked + won't-return), *Waked up*,
+  *Confirmed won't return*, *Forms submitted* (+ how many became agents). No float-shortage button.
+- **New-agent flow starts with a choice:** "Agent recruited ALREADY" (name, acc, branch, phone,
+  location — done) or "Form TO BE SUBMITTED" (the staged pipeline).
+- **Waking now also confirms the agent's physical location** for the follow-up team: the wake modal
+  asks for it (prefilled when known), the server refuses a wake without one, and the typed location
+  is saved on the agent. Verified: words-without-location blocked, words+location → waked + stored.
+
+### Changes
+- `lib/helpers.php`: `bdo_score_specialist()` (activeness-only, weight 100), `user_specialty()`
+- `api.php`: `base` + `bdo_performance` branch on specialty; new `specialist_summary` (computed
+  counts; recruits excluded from "waked"); kpi_mark wake requires location (typed or known),
+  saves it, echoes `agentLoc` for prefill
+- `app.js`: Dashboard tab visible to `mybase` viewers → `personalDashboard()`; specialist Daily
+  = computed cards + pipeline; recruit chooser modal; proofModal location field with combined
+  enable logic; EN/SW strings. Assets `?v=16`, SW `imani-v16`
+- Deploy: cPanel Git pull + Deploy HEAD Commit (`api.php`, `app.js`, `index.html`, `sw.js`,
+  `lib/helpers.php`)
+
+---
+
 ## v1.11.0 — 2026-07-18 · "Activeness specialist, recruitment pipeline, message manager" — schema v8
 
 ### Release notes

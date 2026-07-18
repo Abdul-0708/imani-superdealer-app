@@ -522,7 +522,11 @@ try {
       $perf = null;
       $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
       $tq->execute(array($month, $bdo));
-      if ($t = $tq->fetch()) $perf = bdo_score(bdo_actuals($month, $bdo), $t);
+      if ($t = $tq->fetch()) {
+        $perf = user_specialty($bdo) === 'activeness'
+          ? bdo_score_specialist(bdo_actuals($month, $bdo), $t)
+          : bdo_score(bdo_actuals($month, $bdo), $t);
+      }
 
       /* SPECIAL agents: served by partners this month - every BDO should build
        * the relationship and capture the physical location. */
@@ -577,14 +581,24 @@ try {
 
       /* WAKING an INACTIVE agent needs proof: a photo of the agent's transaction
        * receipts, OR a typed commitment that the BDO is sure the agent
-       * transacted. Either is stored and management can open it from the chip. */
+       * transacted. He must also CONFIRM the agent's physical location so the
+       * follow-up team knows where to find him. */
       $proofFile = ''; $proofNote = '';
       if ($kpi === 'active' && strtoupper((string)$agent['act_current']) === 'INACTIVE') {
         $img = (string)bval('proof');
         $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
+        $wakeLoc = trim((string)bval('location'));
+        if ($img === '' && mb_strlen($proofNote) < 10) {
+          fail('Attach a receipt photo OR write how you are sure the agent transacted (at least 10 characters)', 400,
+               array('needProof' => true, 'agentLoc' => (string)$agent['physical_location']));
+        }
+        if ($wakeLoc === '' && trim((string)$agent['physical_location']) === '') {
+          fail('Confirm the agent\'s physical location for the follow-up', 400,
+               array('needProof' => true, 'agentLoc' => ''));
+        }
         if ($img !== '') $proofFile = save_proof_image($img);
-        elseif (mb_strlen($proofNote) < 10) {
-          fail('Attach a receipt photo OR write how you are sure the agent transacted (at least 10 characters)', 400, array('needProof' => true));
+        if ($wakeLoc !== '') {
+          db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?')->execute(array($wakeLoc, $agentId));
         }
       }
 
@@ -743,6 +757,43 @@ try {
         $rows = $st->fetchAll();
       }
       respond(array('rows' => $rows));
+    }
+
+    /*
+     * Activeness specialist's daily numbers - COMPUTED from what he actually
+     * did (agent taps + forms), so the report always matches his agent list:
+     *   inactiveVisited = waked + confirmed won't-return (agents he handled)
+     *   waked           = wake credits on existing agents (recruits excluded)
+     *   wontReturn      = agents who confirmed they will not return
+     *   formsSubmitted  = new-agent forms opened in the pipeline this month
+     *   recruited       = recruits that became REAL agents this month
+     */
+    case 'specialist_summary': {
+      $u = require_auth();
+      $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      if ($bdo === '' || !can($u, 'targets', 'v')) $bdo = $u['username'];
+      if (!can($u, 'mybase', 'v') && !can($u, 'targets', 'v')) fail('No access', 403);
+      $month = open_month();
+      $nq = db()->prepare('SELECT agent_id FROM base WHERE month = ? AND bdo = ? AND kind = "new"');
+      $nq->execute(array($month, $bdo));
+      $newIds = array_map(function ($r) { return (int)$r['agent_id']; }, $nq->fetchAll());
+      $recruited = count($newIds);
+      $sql = 'SELECT COUNT(*) c FROM agent_month_kpi WHERE month = ? AND bdo = ? AND kpi = "active" AND source = "bdo"';
+      $vals = array($month, $bdo);
+      if ($newIds) {
+        $sql .= ' AND agent_id NOT IN (' . implode(',', array_fill(0, count($newIds), '?')) . ')';
+        $vals = array_merge($vals, $newIds);
+      }
+      $wq = db()->prepare($sql); $wq->execute($vals);
+      $waked = (int)$wq->fetch()['c'];
+      $wr = db()->prepare('SELECT COUNT(*) c FROM wont_return WHERE bdo = ? AND at LIKE ?');
+      $wr->execute(array($bdo, $month . '%'));
+      $wont = (int)$wr->fetch()['c'];
+      $fq = db()->prepare('SELECT COUNT(*) c FROM recruits WHERE bdo = ? AND submitted_at LIKE ?');
+      $fq->execute(array($bdo, $month . '%'));
+      $forms = (int)$fq->fetch()['c'];
+      respond(array('month' => $month, 'bdo' => $bdo, 'waked' => $waked, 'wontReturn' => $wont,
+                    'inactiveVisited' => $waked + $wont, 'formsSubmitted' => $forms, 'recruited' => $recruited));
     }
 
     /* ============ WON'T-RETURN list (deletion candidates) ============
@@ -1125,11 +1176,14 @@ try {
       $tq->execute(array($month));
       $targets = array();
       foreach ($tq->fetchAll() as $t) $targets[$t['bdo']] = $t;
-      $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      $bdos = db()->query('SELECT username, name, specialty FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
       $out = array();
       foreach ($bdos as $b) {
         if (isset($targets[$b['username']])) {
-          $s = bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
+          /* the activeness specialist is scored on activeness ONLY (waked + recruited) */
+          $s = $b['specialty'] === 'activeness'
+            ? bdo_score_specialist(bdo_actuals($month, $b['username']), $targets[$b['username']])
+            : bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
           $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => $s['score'], 'flag' => $s['flag'], 'kpis' => $s['kpis'], 'hasTargets' => true);
         } else {
           $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => null, 'flag' => 'none', 'kpis' => new stdClass(), 'hasTargets' => false);
