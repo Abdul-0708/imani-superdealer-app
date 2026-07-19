@@ -1125,15 +1125,16 @@ try {
       /* Permission ladder for reversing a KPI tick:
        *  - OM (agents.edit): can overturn ANY tick, any source, no time limit.
        *  - a BDO: can overturn his OWN live (bdo-source) mark within 6 hours,
-       *    OR an ORPHAN tick nobody personally owns (unassigned / partners) at
-       *    any time - so he can take it over and serve the agent himself.
-       *  - a BDO can NEVER touch a FELLOW BDO's personal mark. */
-      $orphanOwners = array('unassigned', 'partners');
+       *    OR an UNASSIGNED tick (an orphan nobody owns) at any time - so he can
+       *    take it over and serve the agent himself.
+       *  - a BDO can NEVER touch anyone else's mark: not a FELLOW BDO's, and not
+       *    a PARTNERS mark. Only the OM can. */
       $mineOwn = ($row['source'] === 'bdo' && $row['bdo'] === $u['username']);
-      $orphan = in_array($row['bdo'], $orphanOwners, true);
+      $orphan = ($row['bdo'] === 'unassigned');
       if (!$isOM) {
         if (!$orphan && $row['bdo'] !== $u['username']) {
-          fail('That belongs to ' . $row['bdo'] . ' - only the OM can overturn a colleague\'s mark', 403);
+          $who = $row['bdo'] === 'partners' ? 'the partners' : $row['bdo'];
+          fail('That belongs to ' . $who . ' - only the OM can overturn it', 403);
         }
         if (!$mineOwn && !$orphan) {
           fail('This status came from the uploaded file - only the OM can overturn it', 400);

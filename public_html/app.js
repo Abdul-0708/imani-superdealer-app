@@ -775,11 +775,11 @@
   function doneChip(a, c, mark, isOM) {
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : (c.key === 'apk' ? 'APK YES' : c.label));
     var mine = state.user && mark.by === state.user.username;
-    /* OM overturns ANY tick; a BDO overturns his OWN live mark OR an ORPHAN mark
-     * (unassigned / partners) - never a fellow BDO's personal mark. */
-    var orphan = (mark.by === 'unassigned' || mark.by === 'partners');
+    /* OM overturns ANY tick; a BDO overturns his OWN live mark OR an UNASSIGNED
+     * orphan only - never a fellow BDO's mark and never a partners mark. */
+    var orphan = (mark.by === 'unassigned');
     var reversible = isOM || (mine && mark.src === 'bdo') || (orphan && can('mybase', 'e'));
-    var xTitle = orphan ? 'Take over / clear this ' + mark.by + ' mark' : 'Reverse this mark';
+    var xTitle = orphan ? 'Take over / clear this unassigned mark' : 'Reverse this mark';
     var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = (c.key === 'active' && mark.proof)

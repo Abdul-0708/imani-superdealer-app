@@ -5,6 +5,19 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.16.2 — 2026-07-19 · "Unmark restricted to unassigned only"
+
+A BDO can now overturn ONLY his own live mark (within 6h) or an **unassigned** orphan mark. Marks
+owned by a fellow BDO **or by partners** are no longer reversible by a BDO — only the OM can
+(v1.16.1 had wrongly allowed partners too). Verified: Mary → John's served = 403, Mary → partners
+APK = 403, neither chip shows the × for her; the OM still sees the × on every mark.
+
+### Changes
+- `api.php` `kpi_unmark`: orphan = `unassigned` only (removed `partners`); clearer 403 message
+- `app.js` `doneChip`: take-over × shows for `unassigned` only. Assets `?v=23`, SW `imani-v23`
+
+---
+
 ## v1.16.1 — 2026-07-19 · "Serving UX + orphan-mark take-over"
 
 Four field-reported fixes:
