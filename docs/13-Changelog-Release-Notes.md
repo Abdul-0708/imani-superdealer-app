@@ -5,6 +5,31 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.16.1 — 2026-07-19 · "Serving UX + orphan-mark take-over"
+
+Four field-reported fixes:
+- **Members can take over ORPHAN marks** (owned by `unassigned` / `partners`) on the agent list and
+  serve the agent themselves — but they still CANNOT touch a fellow BDO's personal mark (server:
+  403 "belongs to <bdo>"). The chip shows a × titled "Take over / clear this <owner> mark".
+  Verified: Mary cleared a `partners` mark and served the agent; John's mark stayed protected.
+- **Activeness chip fixed**: an unknown/blank status no longer shows a misleading orange "Active"
+  button. Only a real ACTIVE status from the file shows the green **Active ✓**; everything else
+  reads **Inactive (wake up)**.
+- **No more page reset when serving**: marking/reversing a KPI now swaps only that chip in place
+  and shows a small "Status updated" toast — the BDO keeps his scroll position and carries on
+  (verified: scrollY unchanged after serving mid-list).
+- **Search no longer sticks**: navigating away from the agent list and back starts clean (search
+  box + KPI filters reset on tab change).
+
+### Changes
+- `api.php` `kpi_unmark`: orphan owners (`unassigned`,`partners`) reversible by any BDO; fellow-BDO
+  marks blocked; own live-mark 6h window unchanged
+- `app.js`: activeness chip collapses unknown→Inactive; `kpiMark` swaps in place only (no reload);
+  `kpiUnmark` swaps the chip back to its todo label in place; tab switch clears agent search/filters;
+  orphan × on chips. Assets `?v=22`, SW `imani-v22`
+
+---
+
 ## v1.16.0 — 2026-07-19 · "Team leader, routes, two-way messages, EAT" — schema v10
 
 ### Release notes

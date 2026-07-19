@@ -1122,18 +1122,25 @@ try {
       $chk->execute(array($month, $agentId, $kpi));
       $row = $chk->fetch();
       if (!$row) fail('Nothing to reverse', 404);
-      /* BDOs can only touch their OWN live marks; the OM can overturn ANY tick,
-       * including ones the uploaded file gave (served/visit/apk/active). The
-       * overturn hits that BDO's performance and base immediately. */
-      if ($row['source'] !== 'bdo' && !$isOM) {
-        fail('This status came from the uploaded file - only the OM can overturn it', 400);
-      }
-      if (!$isOM && $row['bdo'] !== $u['username']) fail('You can only reverse your own marks', 403);
-      /* A BDO gets a 6-HOUR window to correct his own wrong tap. After that only
-       * the OM can return the agent's status (no time limit for the OM - the
-       * reversal updates the BDO's score against his targets immediately). */
-      if (!$isOM && (int)$row['age'] > 6 * 3600) {
-        fail('Your 6-hour correction window has passed - ask your OM to reverse it', 403);
+      /* Permission ladder for reversing a KPI tick:
+       *  - OM (agents.edit): can overturn ANY tick, any source, no time limit.
+       *  - a BDO: can overturn his OWN live (bdo-source) mark within 6 hours,
+       *    OR an ORPHAN tick nobody personally owns (unassigned / partners) at
+       *    any time - so he can take it over and serve the agent himself.
+       *  - a BDO can NEVER touch a FELLOW BDO's personal mark. */
+      $orphanOwners = array('unassigned', 'partners');
+      $mineOwn = ($row['source'] === 'bdo' && $row['bdo'] === $u['username']);
+      $orphan = in_array($row['bdo'], $orphanOwners, true);
+      if (!$isOM) {
+        if (!$orphan && $row['bdo'] !== $u['username']) {
+          fail('That belongs to ' . $row['bdo'] . ' - only the OM can overturn a colleague\'s mark', 403);
+        }
+        if (!$mineOwn && !$orphan) {
+          fail('This status came from the uploaded file - only the OM can overturn it', 400);
+        }
+        if ($mineOwn && (int)$row['age'] > 6 * 3600) {
+          fail('Your 6-hour correction window has passed - ask your OM to reverse it', 403);
+        }
       }
 
       db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')->execute(array($month, $agentId, $kpi));

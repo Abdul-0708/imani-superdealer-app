@@ -165,6 +165,7 @@
     'Search in': 'Tafuta kwenye',
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
+    'Status updated': 'Hali imesasishwa',
     'Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.':
       'Waliokuwa ACTIVE mwezi uliopita kwanza: wamekaa kimya - waamshe kabla mwezi haujaisha. Kuamsha kunahitaji uthibitisho wa risiti na mahali alipo.',
     'My Dashboard': 'Dashibodi Yangu',
@@ -774,9 +775,12 @@
   function doneChip(a, c, mark, isOM) {
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : (c.key === 'apk' ? 'APK YES' : c.label));
     var mine = state.user && mark.by === state.user.username;
-    /* OM overturns ANY tick (even file-sourced); a BDO only his own live marks */
-    var reversible = isOM || (mine && mark.src === 'bdo');
-    var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
+    /* OM overturns ANY tick; a BDO overturns his OWN live mark OR an ORPHAN mark
+     * (unassigned / partners) - never a fellow BDO's personal mark. */
+    var orphan = (mark.by === 'unassigned' || mark.by === 'partners');
+    var reversible = isOM || (mine && mark.src === 'bdo') || (orphan && can('mybase', 'e'));
+    var xTitle = orphan ? 'Take over / clear this ' + mark.by + ' mark' : 'Reverse this mark';
+    var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = (c.key === 'active' && mark.proof)
       ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
@@ -789,10 +793,11 @@
   function kpiChip(a, c, editable, isOM) {
     var mark = a.kpi && a.kpi[c.key];
     if (c.key === 'active' && !mark) {
-      /* real status from the file even when no one "marked" it */
+      /* ONLY a real ACTIVE status from the file shows the green tick. INACTIVE
+       * and unknown both read "Inactive (wake up)" - an orange "Active" button
+       * was misleading (it looked like a claim), so it is gone. */
       if (a.actStatus === 'ACTIVE') return '<span class="kchip done" title="Active (from uploaded file)">Active &#10003;</span>';
-      if (a.actStatus === 'INACTIVE') return editable ? todoChip(a, c, 'Inactive - wake up') : '<span class="kchip bad-off">Inactive (wake up)</span>';
-      return editable ? todoChip(a, c, 'Active') : '<span class="kchip off">Active</span>';
+      return editable ? todoChip(a, c, 'Inactive - wake up') : '<span class="kchip bad-off">Inactive (wake up)</span>';
     }
     if (c.key === 'visit' && !mark) {
       /* reads as NO until the BDO taps + confirms it to YES */
@@ -1055,24 +1060,38 @@
     node.parentNode.replaceChild(tmp.firstChild, node);
     return true;
   }
-  function kpiUnmark(id, kpi) {
+  /* label a freshly-reversed chip should fall back to, per KPI */
+  var TODO_LABEL = { served: 'Not Served', visit: 'Visit NO', apk: 'APK NO', active: 'Inactive - wake up' };
+  function kpiUnmark(id, kpi, node) {
     api('kpi_unmark', { body: { agentId: Number(id), kpi: kpi } })
-      .then(function () { toast('Mark reversed', 'ok'); if (state.tab === 'agents') agentsBodyLoad(); else renderTab(); })
+      .then(function () {
+        toast(t('Status updated'), 'ok');
+        /* swap the reversed chip back to its "todo" state in place - no reload,
+         * so the scroll position is kept */
+        var chip = node && node.closest ? node.closest('.kchip') : null;
+        if (chip && chip.parentNode) {
+          var row = chip.closest ? chip.closest('tr') : null;
+          var nameCell = row ? row.querySelector('.c-name') : null;
+          var nm = nameCell ? (nameCell.childNodes[0] ? nameCell.childNodes[0].textContent.trim() : '') : '';
+          var b = document.createElement('button');
+          b.className = 'kchip todo';
+          b.setAttribute('data-action', 'kpiMark');
+          b.setAttribute('data-id', id);
+          b.setAttribute('data-kpi', kpi);
+          b.setAttribute('data-name', nm);
+          b.textContent = TODO_LABEL[kpi] || kpi;
+          chip.parentNode.replaceChild(b, chip);
+        } else { renderTab(); }
+      })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function kpiMark(id, kpi, name, node, location, proof, proofNote) {
     api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '', proofNote: proofNote || '' } })
       .then(function () {
-        toast(name + ': ' + kpi + ' marked - counted for you', 'ok');
+        toast(t('Status updated') + ' - ' + esc(name), 'ok');
+        /* swap ONLY the tapped chip in place - never reload the list, so the
+         * BDO keeps his scroll position and carries on down the page */
         swapChip(node, kpi, state.user.username);
-        /* finished serving an agent found via search? clear the search so the
-         * next lookup starts fresh (the list reloads, position resets cleanly) */
-        if (kpi === 'served' && state.tab === 'agents' && state._agentSearch) {
-          state._agentSearch = ''; state.agentPage = 1;
-          var si = elById('agentSearch');
-          if (si) { si.value = ''; si.focus(); }
-          agentsBodyLoad();
-        }
       })
       .catch(function (e) {
         if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
@@ -1905,7 +1924,16 @@
     var node = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!node) return;
     var a = node.getAttribute('data-action');
-    if (a === 'tab') { state.tab = node.getAttribute('data-tab'); renderShell(); return; }
+    if (a === 'tab') {
+      var toTab = node.getAttribute('data-tab');
+      /* fresh visit to the agent list starts clean - a stale search/filter left
+       * in the box after navigating away confused people */
+      if (toTab !== state.tab) {
+        state._agentSearch = ''; state._agentField = ''; state.agentPage = 1;
+        state._fserved = state._fvisit = state._fapk = state._factive = '';
+      }
+      state.tab = toTab; renderShell(); return;
+    }
     if (a === 'toggleTheme') { toggleTheme(); return; }
     if (a === 'toggleLang') { toggleLang(); return; }
     if (a === 'logout') { doLogout(); return; }
@@ -1947,7 +1975,7 @@
       }
       return;
     }
-    if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi')); return; }
+    if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node); return; }
     if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
     if (a === 'proofConfirm') {
       var pNoteV = (elById('proofNote') ? elById('proofNote').value.trim() : '');
