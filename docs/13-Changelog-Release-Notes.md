@@ -5,6 +5,40 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.14.0 — 2026-07-19 · "Data Manager tab + upload registry" — schema v9
+
+### Release notes
+Why "erased BDO data but reports still read": the remaining numbers were **Excel-attributed** —
+the uploaded file credits work to BDOs, and that is office data the BDO-eraser deliberately keeps.
+Now there is a dedicated **Data Manager tab** (OM + super admin) with every eraser in one place:
+
+- **Uploaded Excel files registry** — every upload is now saved with its exact **date & time**,
+  a **label** (typed at upload or auto), who uploaded it and how many rows. Buttons per upload:
+  **Rename** and **Erase** (removes its rows + the credits it created; the month's office numbers
+  fall back to the latest remaining upload). Verified: John read served 2 / float 200,000 from a
+  test upload → erase that upload → 0 / 0.
+- **Erase ALL Excel data** — one button: every upload, office snapshot and file status gone;
+  agents (the roster) and BDO live work stay.
+- **One BDO — inspect & erase** (moved here from Reports): counts, per-report deletes, erase
+  month/all with type-his-username confirm.
+- **Tick members or take everyone** — checkbox list + scope (month/everything) + **Erase ticked**
+  / **Erase ALL BDO data at once**. Verified multi (mary+john) and ALL (all three).
+
+Every big eraser demands typing **ERASE**; everything is audit-logged; BDOs get 403 on all of it;
+performance and reports recalculate instantly.
+
+### Changes
+- **Schema v9** (self-upgrading): `uploads` table (month, week, label, by_user, rows_count,
+  stats snapshot, at); `service_history.upload_id` + `agent_month_kpi.upload_id`
+- `api.php`: upload_weekly registers the upload + tags all rows/credits; `uploads_list`,
+  `upload_label`, `upload_erase` (snapshot fallback), `excel_erase_all`; `bdo_data_erase` now
+  takes a ticked list or ALL. `lib/helpers.php`: `erase_bdo_data()`, `setting_del()`
+- `app.js`: Data Manager tab (agents.e), upload Label field, dmConfirm type-ERASE pattern;
+  danger panel removed from Reports. Assets `?v=18`, SW `imani-v18`
+- Deploy: cPanel Git pull + Deploy HEAD Commit
+
+---
+
 ## v1.13.0 — 2026-07-18 · "BDO data control for OM/admin"
 
 ### Release notes

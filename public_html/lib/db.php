@@ -165,6 +165,7 @@ function ensure_schema($pdo) {
   try { $pdo->exec('ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN proof VARCHAR(80) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   schema_v8_apply($pdo);
+  schema_v9_apply($pdo);
   seed($pdo);
 }
 
@@ -340,7 +341,37 @@ function upgrade_schema($pdo) {
   if ($ver < 8) {
     schema_v8_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "8" WHERE name = "schema_version"')->execute();
+    $ver = 8;
   }
+  if ($ver < 9) {
+    schema_v9_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "9" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v9: every Excel upload becomes a registered, labelled, dated record whose
+ * rows/credits are tagged with its id - so single uploads can be erased.
+ */
+function schema_v9_apply($pdo) {
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS uploads (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    week VARCHAR(12) NOT NULL DEFAULT "",
+    label VARCHAR(160) NOT NULL DEFAULT "",
+    by_user VARCHAR(64) NOT NULL,
+    rows_count INT NOT NULL DEFAULT 0,
+    stats MEDIUMTEXT NOT NULL,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
+  $alters = array(
+    'ALTER TABLE service_history ADD COLUMN upload_id INT NOT NULL DEFAULT 0',
+    'ALTER TABLE agent_month_kpi ADD COLUMN upload_id INT NOT NULL DEFAULT 0',
+    'ALTER TABLE service_history ADD INDEX idx_svc_upload (upload_id)',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
 }
 
 /*
@@ -422,5 +453,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","8")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","9")')->execute();
 }

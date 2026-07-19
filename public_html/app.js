@@ -245,6 +245,7 @@
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
+    { key: 'data', label: 'Data Manager', icon: 'alert' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
   ];
   var TARGET_DEFS = [
@@ -345,6 +346,7 @@
   function visibleModules() {
     return MODULES.filter(function (m) {
       if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
+      if (m.key === 'data') return can('agents', 'e'); // OM/superadmin data manager
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -378,6 +380,7 @@
     else if (state.tab === 'agents') viewAgents(v);
     else if (state.tab === 'mybase') viewMyBase(v);
     else if (state.tab === 'daily') viewDaily(v);
+    else if (state.tab === 'data') viewData(v);
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
@@ -1005,6 +1008,7 @@
       '<div class="row" style="margin-top:8px">' +
       '<div class="field"><label>Month</label><input id="upMonth" type="month" value="' + esc(state.openMonth || curMonth()) + '"></div>' +
       '<div class="field"><label>Week</label><input id="upWeek" placeholder="e.g. W1"></div>' +
+      '<div class="field"><label>Label (optional)</label><input id="upLabel" maxlength="160" placeholder="e.g. July week 2 final file"></div>' +
       '<div class="field"><label>Excel file (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
       (can('upload', 'e') ? '<button class="btn" data-action="doUpload">Upload</button><button class="ghost" data-action="loadDemo">Load demo data</button>' : '<span class="note">View only.</span>') +
       '</div>' +
@@ -1028,7 +1032,7 @@
   function doUpload() {
     readExcel(elById('upFile'), function (rows) {
       var mode = elById('upPriority') && elById('upPriority').checked ? 'priority' : '';
-      api('upload_weekly', { body: { month: elById('upMonth').value, week: elById('upWeek').value, mode: mode, rows: rows } })
+      api('upload_weekly', { body: { month: elById('upMonth').value, week: elById('upWeek').value, label: elById('upLabel') ? elById('upLabel').value : '', mode: mode, rows: rows } })
         .then(function (d) { elById('upResult').innerHTML = uploadSummary(d); toast('Upload complete', 'ok'); })
         .catch(function (e) { elById('upResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
     });
@@ -1378,17 +1382,8 @@
       }).join('');
 
       /* --- management extras --- */
-      /* danger zone: delete or erase what a BDO filled - scores recalc live */
-      var dangerPanel = can('agents', 'e')
-        ? '<div class="panel"><h2>' + svg('alert') + 'BDO data (danger zone)</h2>' +
-          '<p class="note">Delete single typed reports or ERASE everything a BDO filled (agent marks, daily reports, won\'t-return, pipeline forms, shortages). His performance and all reports recalculate instantly. The uploaded Excel data is office data and always stays.</p>' +
-          '<div class="row"><div class="field"><label>BDO</label><select id="bdSel"><option value="">pick...</option></select></div>' +
-          '<button class="ghost" data-action="bdLoad">Load his data</button></div>' +
-          '<div id="bdBox" style="margin-top:10px"></div></div>'
-        : '';
       var omTools = can('reports', 'e')
-        ? dangerPanel +
-          '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
+        ? '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
           '<div class="row"><div class="field"><label>To</label><select id="msgTo"><option value="">All members</option></select></div>' +
           '<div class="field" style="flex:1;min-width:220px"><label>Message</label><input id="msgBody" placeholder="Type the announcement..." maxlength="500"></div>' +
           '<button class="btn" data-action="msgSend">Send</button></div>' +
@@ -1442,12 +1437,6 @@
       sel.innerHTML = '<option value="">All members</option>' + members
         .filter(function (m) { return m.username !== state.user.username; })
         .map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('');
-      var bd = elById('bdSel');
-      if (bd) {
-        bd.innerHTML = '<option value="">pick...</option>' + members
-          .filter(function (m) { return m.username !== state.user.username; })
-          .map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('');
-      }
       box.innerHTML = sent.length
         ? '<div class="tablewrap"><table><thead><tr><th>To</th><th>Message</th><th>When</th><th></th></tr></thead><tbody>' +
           sent.map(function (m) {
@@ -1496,6 +1485,61 @@
     api('working_days_save', { body: { global: elById('wdGlobal').value.trim(), perBdo: per } })
       .then(function () { toast('Working days saved', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+
+  /* ---------------- Data Manager (OM/superadmin) ---------------- */
+  function viewData(v) {
+    Promise.all([api('uploads_list'), api('members_list')]).then(function (rr) {
+      var ups = rr[0].rows || [];
+      var members = (rr[1] || []).filter(function (m) { return m.username !== state.user.username; });
+      var upRows = ups.map(function (u) {
+        return '<tr><td>' + esc((u.at || '').slice(0, 16)) + '</td><td>' + esc(u.month) + '</td><td>' + esc(u.week || '-') + '</td>' +
+          '<td>' + esc(u.label) + '</td><td>' + esc(u.by_user) + '</td><td>' + fmt(u.rows_count) + '</td>' +
+          '<td><button class="ghost mini" data-action="upRename" data-id="' + u.id + '" data-label="' + esc(u.label) + '">Rename</button> ' +
+          '<button class="danger mini" data-action="upErase" data-id="' + u.id + '" data-label="' + esc(u.label) + '">Erase</button></td></tr>';
+      }).join('') || '<tr><td colspan="7" class="note">No uploads registered yet. New uploads appear here with their date and time.</td></tr>';
+      var memChecks = members.map(function (m) {
+        return '<label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="mSel" value="' + esc(m.username) + '" style="accent-color:var(--fire2);margin-right:5px">' + esc(m.name) + ' (' + esc(m.username) + ')</label>';
+      }).join(' ');
+      v.innerHTML =
+        '<h1 class="page-title">Data Manager</h1>' +
+        '<p class="page-sub">Every eraser in one place. Performance and all reports recalculate instantly after any erase. Everything here is audit-logged.</p>' +
+
+        '<div class="panel"><h2>' + svg('upload') + 'Uploaded Excel files</h2>' +
+        '<p class="note">Every upload is saved with its exact date &amp; time, label and who uploaded it. Erasing one removes its rows and the credits it created; the month\'s office numbers fall back to the latest remaining upload.</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>When</th><th>Month</th><th>Week</th><th>Label</th><th>By</th><th>Rows</th><th></th></tr></thead><tbody>' + upRows + '</tbody></table></div>' +
+        '<div class="row" style="margin-top:10px"><button class="danger" data-action="exErase">Erase ALL Excel data</button>' +
+        '<span class="note">removes every upload, all office numbers and file statuses - agents and BDO live work stay</span></div></div>' +
+
+        '<div class="panel"><h2>' + svg('users') + 'One BDO - inspect &amp; erase</h2>' +
+        '<p class="note">See what he filled, delete single typed reports, or erase his month / everything (type his username to confirm).</p>' +
+        '<div class="row"><div class="field"><label>BDO</label><select id="bdSel"><option value="">pick...</option>' +
+        members.map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('') +
+        '</select></div><button class="ghost" data-action="bdLoad">Load his data</button></div>' +
+        '<div id="bdBox" style="margin-top:10px"></div></div>' +
+
+        '<div class="panel"><h2>' + svg('alert') + 'Erase BDO data - tick members or take everyone</h2>' +
+        '<p class="note">Removes what THEY filled: agent marks (+proof photos), typed reports, won\'t-return marks, pipeline forms, shortages. Excel data is untouched here.</p>' +
+        '<div class="row" style="margin-bottom:8px">' + (memChecks || '<span class="note">no members</span>') + '</div>' +
+        '<div class="row"><div class="field"><label>Scope</label><select id="mScope"><option value="month">This month only</option><option value="all">Everything (all months)</option></select></div>' +
+        '<button class="danger" data-action="mEraseSel">Erase ticked members</button>' +
+        '<button class="danger" data-action="mEraseAll">Erase ALL BDO data at once</button></div></div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* one confirm pattern for every big eraser: type ERASE to proceed */
+  function dmConfirm(title, note, action, attrs) {
+    var extra = '';
+    Object.keys(attrs || {}).forEach(function (k) { extra += ' data-' + k + '="' + esc(String(attrs[k])) + '"'; });
+    openModal('<h2>' + svg('alert') + ' ' + title + '</h2>' +
+      '<p class="note">' + note + ' This cannot be undone.</p>' +
+      '<div class="field"><label>Type <b>ERASE</b> to confirm</label><input id="dmWord" autocomplete="off"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+      '<button class="danger" data-action="' + action + '"' + extra + '>Erase now</button></div>');
+  }
+  function dmWordOk() {
+    var w = elById('dmWord');
+    if (!w || w.value.trim().toUpperCase() !== 'ERASE') { toast('Type ERASE to confirm', 'warn'); return false; }
+    return true;
   }
 
   /* ---------------- admin: users + permissions ---------------- */
@@ -1804,6 +1848,58 @@
       return;
     }
     if (a === 'bdLoad') { bdLoad(); return; }
+    if (a === 'upRename') {
+      openModal('<h2>' + svg('upload') + ' Rename upload</h2>' +
+        '<div class="field"><label>Label</label><input id="upNewLabel" maxlength="160" value="' + esc(node.getAttribute('data-label') || '') + '"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">Cancel</button>' +
+        '<button class="btn" data-action="upRenameGo" data-id="' + node.getAttribute('data-id') + '">Save</button></div>');
+      return;
+    }
+    if (a === 'upRenameGo') {
+      api('upload_label', { body: { id: Number(node.getAttribute('data-id')), label: elById('upNewLabel').value.trim() } })
+        .then(function () { closeModal(); toast('Upload renamed', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'upErase') {
+      dmConfirm('Erase this upload?', '"' + esc(node.getAttribute('data-label') || '') + '" - its rows and the credits it created are removed; the month\'s office numbers fall back to the latest remaining upload.', 'upEraseGo', { id: node.getAttribute('data-id') });
+      return;
+    }
+    if (a === 'upEraseGo') {
+      if (!dmWordOk()) return;
+      api('upload_erase', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function (d) { closeModal(); toast('Upload erased: ' + d.deleted.services + ' rows, ' + d.deleted.marks + ' credits', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'exErase') {
+      dmConfirm('Erase ALL Excel data?', 'Every upload, every office number and every file status disappears everywhere. Agents and BDO live work stay.', 'exEraseGo', {});
+      return;
+    }
+    if (a === 'exEraseGo') {
+      if (!dmWordOk()) return;
+      api('excel_erase_all', { body: {} })
+        .then(function (d) { closeModal(); toast('Excel data erased: ' + d.deleted.services + ' rows, ' + d.deleted.marks + ' credits, ' + d.deleted.uploads + ' uploads', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'mEraseSel') {
+      var mSel = Array.prototype.slice.call(document.querySelectorAll('.mSel:checked')).map(function (c) { return c.value; });
+      if (!mSel.length) { toast('Tick at least one member', 'warn'); return; }
+      dmConfirm('Erase ' + mSel.length + ' member(s)?', mSel.join(', ') + ' - scope: ' + (elById('mScope').value === 'all' ? 'EVERYTHING' : 'this month') + '.', 'mEraseGo', { bdos: mSel.join(','), scope: elById('mScope').value });
+      return;
+    }
+    if (a === 'mEraseAll') {
+      dmConfirm('Erase ALL BDO data at once?', 'Every member\'s filled work goes - scope: ' + (elById('mScope').value === 'all' ? 'EVERYTHING' : 'this month') + '.', 'mEraseGo', { bdos: 'ALL', scope: elById('mScope').value });
+      return;
+    }
+    if (a === 'mEraseGo') {
+      if (!dmWordOk()) return;
+      api('bdo_data_erase', { body: { bdos: node.getAttribute('data-bdos').split(','), scope: node.getAttribute('data-scope') } })
+        .then(function (d) { closeModal(); toast('Erased ' + d.bdos.length + ' member(s): ' + d.deleted.marks + ' marks, ' + d.deleted.reports + ' reports', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'bdDelReport') {
       api('daily_report_delete', { body: { id: Number(node.getAttribute('data-id')) } })
         .then(function () { toast('Report deleted - the day reads as missed again', 'ok'); bdLoad(); })

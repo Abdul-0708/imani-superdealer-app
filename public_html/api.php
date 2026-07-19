@@ -845,56 +845,94 @@ try {
       respond(array('ok' => true));
     }
 
-    /* Bulk erase of what a BDO filled (his live work only - the uploaded Excel
-     * data is office data and stays). scope: 'month' = open month, 'all'. */
+    /* Bulk erase of what BDOs filled (their live work only - Excel data has its
+     * own eraser below). Accepts one bdo, a ticked list, or "ALL". */
     case 'bdo_data_erase': {
       $u = require_auth(); require_perm($u, 'agents', 'e');
-      $bdo = strtolower(trim((string)bval('bdo')));
       $scope = bval('scope') === 'all' ? 'all' : 'month';
-      $tu = db()->prepare('SELECT role FROM users WHERE username = ?');
-      $tu->execute(array($bdo));
-      $target = $tu->fetch();
-      if (!$target) fail('Unknown member: ' . $bdo, 404);
-      if ($target['role'] === 'superadmin') fail('Cannot erase a super admin\'s data');
-      if ($bdo === $u['username']) fail('You cannot erase your own data');
-      $month = open_month();
-      $mw = $scope === 'month' ? ' AND month = ?' : '';
-      $mv = $scope === 'month' ? array($bdo, $month) : array($bdo);
+      $list = bval('bdos');
+      if (!is_array($list)) $list = array((string)bval('bdo'));
+      if (count($list) === 1 && strtoupper((string)$list[0]) === 'ALL') {
+        $list = array();
+        foreach (db()->query('SELECT username FROM users WHERE active = 1 AND role NOT IN ("superadmin","om","md")')->fetchAll() as $r) $list[] = $r['username'];
+      }
+      $totals = array(); $done = array();
+      foreach ($list as $bdo) {
+        $bdo = strtolower(trim((string)$bdo));
+        if ($bdo === '' || $bdo === $u['username']) continue;
+        $tu = db()->prepare('SELECT role FROM users WHERE username = ?');
+        $tu->execute(array($bdo));
+        $target = $tu->fetch();
+        if (!$target || $target['role'] === 'superadmin') continue;
+        $n = erase_bdo_data($bdo, $scope);
+        foreach ($n as $k => $v) $totals[$k] = (isset($totals[$k]) ? $totals[$k] : 0) + $v;
+        $done[] = $bdo;
+      }
+      if (!$done) fail('Nothing to erase - pick at least one member');
+      audit($u['id'], 'bdo_data_erase', implode(',', $done) . ' scope=' . $scope . ' ' . json_encode($totals));
+      respond(array('ok' => true, 'scope' => $scope, 'bdos' => $done, 'deleted' => $totals));
+    }
 
-      /* proof photos on his wake marks: remove the files too */
-      $pq = db()->prepare("SELECT proof FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo' AND proof <> ''" . $mw);
-      $pq->execute($mv);
-      foreach ($pq->fetchAll() as $r) {
-        $f = preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']);
-        if ($f !== '') @unlink(__DIR__ . '/uploads/proofs/' . $f);
-      }
-      /* agents he waked this month go back to INACTIVE (mirror of kpi_unmark) */
-      db()->prepare('UPDATE agents a JOIN agent_month_kpi k ON k.agent_id = a.id
-                     SET a.act_current = "INACTIVE"
-                     WHERE k.month = ? AND k.kpi = "active" AND k.bdo = ? AND k.source = "bdo" AND a.act_month = ?')
-          ->execute(array($month, $bdo, $month));
+    /* ============ UPLOADED EXCEL registry + erasers ============ */
+
+    /* Every upload, newest first: date+time, label, who, how many rows. */
+    case 'uploads_list': {
+      $u = require_auth();
+      if (!can($u, 'upload', 'v') && !can($u, 'agents', 'e')) fail('No access', 403);
+      $rows = db()->query('SELECT id, month, week, label, by_user, rows_count, at FROM uploads ORDER BY id DESC LIMIT 200')->fetchAll();
+      respond(array('rows' => $rows));
+    }
+
+    case 'upload_label': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $id = (int)bval('id');
+      $label = mb_substr(trim((string)bval('label')), 0, 160);
+      if ($label === '') fail('Type a label');
+      $d = db()->prepare('UPDATE uploads SET label = ? WHERE id = ?');
+      $d->execute(array($label, $id));
+      if (!$d->rowCount()) fail('Upload not found', 404);
+      audit($u['id'], 'upload_label', 'id=' . $id . ' ' . $label);
+      respond(array('ok' => true));
+    }
+
+    /* Erase ONE upload: its history rows + the ledger credits it created. The
+     * month's office snapshot falls back to the latest remaining upload. */
+    case 'upload_erase': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $id = (int)bval('id');
+      $st = db()->prepare('SELECT * FROM uploads WHERE id = ?');
+      $st->execute(array($id));
+      $up = $st->fetch();
+      if (!$up) fail('Upload not found', 404);
       $n = array();
-      $d = db()->prepare("DELETE FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo'" . $mw);
-      $d->execute($mv); $n['marks'] = $d->rowCount();
-      $d = db()->prepare("DELETE FROM service_history WHERE bdo = ? AND source = 'bdo'" . $mw);
-      $d->execute($mv); $n['services'] = $d->rowCount();
-      $d = db()->prepare("DELETE FROM daily_reports WHERE bdo = ?" . $mw);
-      $d->execute($mv); $n['reports'] = $d->rowCount();
-      $d = db()->prepare("DELETE FROM float_shortages WHERE bdo = ?" . $mw);
-      $d->execute($mv); $n['shortages'] = $d->rowCount();
-      if ($scope === 'month') {
-        $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ? AND at LIKE ?');
-        $d->execute(array($bdo, $month . '%')); $n['wontReturn'] = $d->rowCount();
-        $d = db()->prepare('DELETE FROM recruits WHERE bdo = ? AND submitted_at LIKE ?');
-        $d->execute(array($bdo, $month . '%')); $n['recruits'] = $d->rowCount();
-      } else {
-        $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ?');
-        $d->execute(array($bdo)); $n['wontReturn'] = $d->rowCount();
-        $d = db()->prepare('DELETE FROM recruits WHERE bdo = ?');
-        $d->execute(array($bdo)); $n['recruits'] = $d->rowCount();
-      }
-      audit($u['id'], 'bdo_data_erase', $bdo . ' scope=' . $scope . ' ' . json_encode($n));
-      respond(array('ok' => true, 'scope' => $scope, 'deleted' => $n));
+      $d = db()->prepare('DELETE FROM service_history WHERE upload_id = ?');
+      $d->execute(array($id)); $n['services'] = $d->rowCount();
+      $d = db()->prepare('DELETE FROM agent_month_kpi WHERE upload_id = ? AND source = "upload"');
+      $d->execute(array($id)); $n['marks'] = $d->rowCount();
+      db()->prepare('DELETE FROM uploads WHERE id = ?')->execute(array($id));
+      /* office snapshot: fall back to the latest remaining upload of that month */
+      $lq = db()->prepare('SELECT stats FROM uploads WHERE month = ? ORDER BY id DESC LIMIT 1');
+      $lq->execute(array($up['month']));
+      $last = $lq->fetch();
+      if ($last) setting_set('month_stats_' . $up['month'], $last['stats']);
+      else setting_del('month_stats_' . $up['month']);
+      audit($u['id'], 'upload_erase', 'id=' . $id . ' ' . $up['month'] . ' "' . $up['label'] . '" ' . json_encode($n));
+      respond(array('ok' => true, 'deleted' => $n, 'snapshotRestored' => (bool)$last));
+    }
+
+    /* Erase ALL Excel-derived data everywhere: history rows, upload-sourced
+     * ledger credits, office snapshots, agent activeness statuses from files.
+     * Agents themselves (the roster) and all BDO live work stay. */
+    case 'excel_erase_all': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $n = array();
+      $n['services'] = db()->exec("DELETE FROM service_history WHERE source <> 'bdo'");
+      $n['marks'] = db()->exec("DELETE FROM agent_month_kpi WHERE source = 'upload'");
+      $n['uploads'] = db()->exec('DELETE FROM uploads');
+      $n['snapshots'] = db()->exec("DELETE FROM app_settings WHERE name LIKE 'month\\_stats\\_%'");
+      db()->exec("UPDATE agents SET act_current = '', act_prev = '', act_month = '', partner = 0");
+      audit($u['id'], 'excel_erase_all', json_encode($n));
+      respond(array('ok' => true, 'deleted' => $n));
     }
 
     /* ============ WON'T-RETURN list (deletion candidates) ============
@@ -1089,13 +1127,13 @@ try {
           name = IF(? = "", name, ?), phone = IF(? = "", phone, ?), branch = IF(? = "", branch, ?),
           physical_location = IF(? = "", physical_location, ?), partner = ? WHERE id = ?');
       $insSvc = db()->prepare('INSERT INTO service_history
-          (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly")');
+          (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source, upload_id)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
       $priorityMode = bval('mode') === 'priority'; // OM seeding priority bases (agents + locations + BDO names)
       $kind = $priorityMode ? 'priority' : 'uploaded';
       $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
-      $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?,?,?, 'upload')");
+      $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $getKpiOwner = db()->prepare('SELECT bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "served"');
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
@@ -1124,6 +1162,14 @@ try {
       }
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
+
+      /* Register this upload: dated, labelled, and every row/credit it writes
+       * carries its id - so it can be renamed or ERASED as one unit later. */
+      $upLabel = trim((string)bval('label'));
+      if ($upLabel === '') $upLabel = ($week !== '' ? $week . ' - ' : '') . $month . ' file';
+      db()->prepare('INSERT INTO uploads (month, week, label, by_user, rows_count, stats) VALUES (?,?,?,?,?,?)')
+          ->execute(array($month, $week, mb_substr($upLabel, 0, 160), $u['username'], count($parsed), json_encode($stats)));
+      $uploadId = (int)db()->lastInsertId();
 
       /* PASS 2: write agents, history, bases, ledger, flags. */
       foreach ($parsed as $r) {
@@ -1165,13 +1211,13 @@ try {
         $agents++;
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
-                               $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served']));
+                               $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'], $uploadId));
         $insBase->execute(array($month, $key, $id, $kind));
         /* Ledger credits (BDO personal scores; first credit wins). */
-        if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key));
-        if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key));
-        if ($r['apk_yes']) $insKpi->execute(array($month, $id, 'apk', $key));
-        if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key));
+        if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key, $uploadId));
+        if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
+        if ($r['apk_yes']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
+        if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key, $uploadId));
 
         /* Cross-check: claimed served but the released file says NOT_SERVED. */
         if ($r['served'] === 'NOT_SERVED') {

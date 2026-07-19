@@ -541,3 +541,46 @@ function specialist_touch_report($user) {
                  VALUES (?,?,?,0,0,0,0, "auto: activeness field work")')
       ->execute(array($user['username'], date('Y-m-d'), date('Y-m')));
 }
+
+function setting_del($name) {
+  db()->prepare('DELETE FROM app_settings WHERE name = ?')->execute(array($name));
+}
+
+/* Erase everything ONE BDO filled (live work only - Excel/office data stays).
+ * scope 'month' = open month only, 'all' = his entire history. Returns counts. */
+function erase_bdo_data($bdo, $scope) {
+  $month = open_month();
+  $mw = $scope === 'month' ? ' AND month = ?' : '';
+  $mv = $scope === 'month' ? array($bdo, $month) : array($bdo);
+  $pq = db()->prepare("SELECT proof FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo' AND proof <> ''" . $mw);
+  $pq->execute($mv);
+  foreach ($pq->fetchAll() as $r) {
+    $f = preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']);
+    if ($f !== '') @unlink(dirname(__DIR__) . '/uploads/proofs/' . $f);
+  }
+  db()->prepare('UPDATE agents a JOIN agent_month_kpi k ON k.agent_id = a.id
+                 SET a.act_current = "INACTIVE"
+                 WHERE k.month = ? AND k.kpi = "active" AND k.bdo = ? AND k.source = "bdo" AND a.act_month = ?')
+      ->execute(array($month, $bdo, $month));
+  $n = array();
+  $d = db()->prepare("DELETE FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo'" . $mw);
+  $d->execute($mv); $n['marks'] = $d->rowCount();
+  $d = db()->prepare("DELETE FROM service_history WHERE bdo = ? AND source = 'bdo'" . $mw);
+  $d->execute($mv); $n['services'] = $d->rowCount();
+  $d = db()->prepare("DELETE FROM daily_reports WHERE bdo = ?" . $mw);
+  $d->execute($mv); $n['reports'] = $d->rowCount();
+  $d = db()->prepare("DELETE FROM float_shortages WHERE bdo = ?" . $mw);
+  $d->execute($mv); $n['shortages'] = $d->rowCount();
+  if ($scope === 'month') {
+    $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ? AND at LIKE ?');
+    $d->execute(array($bdo, $month . '%')); $n['wontReturn'] = $d->rowCount();
+    $d = db()->prepare('DELETE FROM recruits WHERE bdo = ? AND submitted_at LIKE ?');
+    $d->execute(array($bdo, $month . '%')); $n['recruits'] = $d->rowCount();
+  } else {
+    $d = db()->prepare('DELETE FROM wont_return WHERE bdo = ?');
+    $d->execute(array($bdo)); $n['wontReturn'] = $d->rowCount();
+    $d = db()->prepare('DELETE FROM recruits WHERE bdo = ?');
+    $d->execute(array($bdo)); $n['recruits'] = $d->rowCount();
+  }
+  return $n;
+}
