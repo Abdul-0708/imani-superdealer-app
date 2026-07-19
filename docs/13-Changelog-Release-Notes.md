@@ -5,6 +5,39 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.15.0 — 2026-07-19 · "SA stations, APK = upgraders, specialist station panels"
+
+### Release notes
+**SA-station dashboard.** The upload now reads the **SA STATION** column (Arusha / Manyara / …),
+stores it on every agent, and builds a per-station breakdown inside the month snapshot. The OM's
+dashboard gained an **SA Station picker**: choose a station and every KPI card retitles and shows
+that station's numbers — including the **withdraw-volume sum for that station only** (verified:
+ARUSHA 700,000 vs MANYARA 300,000, exact per-row sums). Target attainment stays office-wide.
+
+**APK now counts UPGRADERS only.** The dashboard APK number counts agents who were **below the
+required version (or unknown) last month and at/above it this month** — mirroring how "waked"
+works for activeness. An agent already on 2.0 last month no longer inflates the card (verified:
+3 agents on 2.0+, only 2 upgraded → card reads 2). The card reads "APK upgraded to 2.0+ · was
+below 2.0 last month". Upload ledger APK credits to BDOs follow the same rule.
+
+**Specialist station panels.** The Inactive Agents panel (now also on the activeness specialist's
+My Base) is **grouped by SA station**, with the two lists he works: **were ACTIVE last month → now
+inactive** (first) and **all inactive**. Each agent row has **Wake** (receipt proof + location
+confirm flow) and **Won't return** right there.
+
+### Changes
+- `lib/helpers.php`: parse_weekly_row picks SA STATION (uppercased)
+- `api.php`: upload builds `_stations` breakdown in the snapshot (rides through upload_erase
+  fallback automatically), saves agent.station, `apk_up` rule for stats + ledger;
+  `dashboard` accepts `station` (stations list + stationStats + filtered agent count);
+  `inactive_agents` returns station, ordered by station
+- `app.js`: dashboard SA Station select + per-station cards, APK card relabel; inactivePanelLoad
+  grouped by station with Wake / Won't-return actions; panel added to specialist My Base.
+  Assets `?v=20`, SW `imani-v20`
+- Note: station numbers appear after the next upload (existing snapshots have no breakdown)
+
+---
+
 ## v1.14.1 — 2026-07-19 · "BDO erase = truly zero + OM overturns file ticks"
 
 ### Release notes

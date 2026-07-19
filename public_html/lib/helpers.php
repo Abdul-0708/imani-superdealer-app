@@ -226,6 +226,7 @@ function parse_weekly_row($row, $month = '') {
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
+    'station' => strtoupper(trim((string)pick($idx, array('SA STATION','SA Station','Station','StationName','kituo','region','mkoa')))),
   );
 }
 

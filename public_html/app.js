@@ -118,6 +118,8 @@
     'Recruit': 'Msajiliwa',
     'Stages': 'Hatua',
     'DONE': 'IMEKAMILIKA',
+    'Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.':
+      'Waliokuwa ACTIVE mwezi uliopita kwanza: wamekaa kimya - waamshe kabla mwezi haujaisha. Kuamsha kunahitaji uthibitisho wa risiti na mahali alipo.',
     'My Dashboard': 'Dashibodi Yangu',
     'your own performance only': 'utendaji wako pekee',
     'Month': 'Mwezi',
@@ -449,9 +451,14 @@
   function viewDashboard(v) {
     if (!can('dashboard', 'v')) { personalDashboard(v); return; }
     var m = state.month || '';
-    api('dashboard', { qs: m ? '&month=' + m : '' }).then(function (d) {
+    api('dashboard', { qs: (m ? '&month=' + m : '') + (state._dashStation ? '&station=' + encodeURIComponent(state._dashStation) : '') }).then(function (d) {
       state.month = d.month;
       var att = d.attainment;
+      /* a chosen SA station swaps the CARD numbers to that station's share
+       * (incl. its own withdraw sum); target attainment stays office-wide */
+      var ss = d.stationStats;
+      function cardVal(k) { return ss ? (ss[k] || 0) : att[k].actual; }
+      var stTag = ss ? ' - ' + esc(d.station) : '';
       var visible = (d.visibleKpis || '').split(',');
       function shown(k) { return visible.indexOf(k) >= 0; }
       var defs = OFFICE_DEFS.filter(function (t) { return shown(t.key) && att[t.key]; });
@@ -468,13 +475,14 @@
           '<span class="tg-pct">' + (a.pct == null ? '-' : a.pct + '%') + '</span></div>';
       }).join('');
 
-      var cards = card('users', 'Total Agents', fmt(d.totalAgents));
-      if (shown('serving')) cards += card('users', 'Served', fmt(att.serving.actual));
-      if (shown('float')) cards += card('dollar', 'Float (SERVED only)', fmt(att.float.actual));
-      if (shown('visits')) cards += card('target', 'Visits', fmt(att.visits.actual));
-      if (shown('apk')) cards += card('rotate', 'APK ' + esc(d.apkRequired) + '+', fmt(att.apk.actual));
-      if (shown('activeness')) cards += card('zap', 'Activeness (net)', fmt(att.activeness.actual), 'waked ' + fmt(d.waked) + ' - lost ' + fmt(d.lost));
-      if (shown('withdraw')) cards += card('chart', 'Withdraw Volume', fmt(att.withdraw.actual), 'office-wide');
+      var cards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents));
+      if (shown('serving')) cards += card('users', 'Served' + stTag, fmt(cardVal('serving')));
+      if (shown('float')) cards += card('dollar', 'Float (SERVED only)' + stTag, fmt(cardVal('float')));
+      if (shown('visits')) cards += card('target', 'Visits' + stTag, fmt(cardVal('visits')));
+      if (shown('apk')) cards += card('rotate', 'APK upgraded to ' + esc(d.apkRequired) + '+' + stTag, fmt(cardVal('apk')), 'was below ' + esc(d.apkRequired) + ' last month');
+      if (shown('activeness')) cards += card('zap', 'Activeness (net)' + stTag, fmt(ss ? (ss.net_active || 0) : att.activeness.actual),
+        'waked ' + fmt(ss ? ss.waked : d.waked) + ' - lost ' + fmt(ss ? ss.lost : d.lost));
+      if (shown('withdraw')) cards += card('chart', 'Withdraw Volume' + stTag, fmt(cardVal('withdraw')), ss ? esc(d.station) + ' only' : 'office-wide');
       cards += card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
         d.achievement == null ? '-' : d.achievement + '%',
         d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
@@ -497,7 +505,13 @@
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
-        '<button class="btn" data-action="dashLoad">Load</button></div></div>' +
+        '<div class="field"><label>SA Station</label><select data-change="dashStation">' +
+        '<option value="">All stations</option>' +
+        (d.stations || []).map(function (s) { return '<option value="' + esc(s) + '"' + (d.station === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
+        '</select></div>' +
+        '<button class="btn" data-action="dashLoad">Load</button>' +
+        (ss ? '<span class="note">cards show ' + esc(d.station) + ' only &middot; target attainment stays office-wide</span>' : '') +
+        '</div></div>' +
         settings +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         '<div class="panel"><h2>' + svg('target') + t('Target Attainment') + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
@@ -573,25 +587,44 @@
     var s = elById('agentSearch'); if (s && state._agentSearch) s.focus();
   }
   /* Inactive agents - two categories, visible to every BDO and management. */
+  /* Inactive agents grouped BY SA STATION (Arusha / Manyara / ...): the LOST
+   * ones (active last month, silent now) first, then all inactive. A BDO with
+   * edit rights - especially the activeness specialist - wakes them or marks
+   * won't-return straight from here. */
   function inactivePanelLoad() {
     var el = elById('inactivePanel'); if (!el) return;
     api('inactive_agents').then(function (d) {
       if (!d.counts.all) { el.innerHTML = ''; return; }
       var mode = state._inactMode === 'all' ? 'all' : 'lost';
       var list = mode === 'all' ? d.all : d.lost;
-      var rows = list.map(function (a) {
-        var lostTag = a.act_prev === 'ACTIVE' ? ' <span class="pill bad">was ACTIVE</span>' : '';
-        return '<tr><td class="c-name">' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
-          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-          '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td></tr>';
-      }).join('') || '<tr><td colspan="4" class="note">None - great.</td></tr>';
+      var editable = can('mybase', 'e');
+      var byStation = {};
+      list.forEach(function (a) {
+        var st = (a.station || 'NO STATION').toUpperCase();
+        (byStation[st] = byStation[st] || []).push(a);
+      });
+      var sections = Object.keys(byStation).sort().map(function (st) {
+        var rows = byStation[st].map(function (a) {
+          var lostTag = a.act_prev === 'ACTIVE' ? ' <span class="pill bad">was ACTIVE</span>' : '';
+          var actions = editable
+            ? '<div class="kchips"><button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="active" data-name="' + esc(a.name) + '">' + t('Wake') + '</button>' +
+              (isSpecial() ? ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Won\'t return') + '</button>' : '') + '</div>'
+            : '-';
+          return '<tr><td class="c-name">' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
+            '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+            '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
+            '<td class="c-kpis">' + actions + '</td></tr>';
+        }).join('');
+        return '<h3 style="margin:14px 0 6px;font-size:13px"><span class="pill fire">' + esc(st) + '</span> <span class="note">' + byStation[st].length + ' agent' + (byStation[st].length > 1 ? 's' : '') + '</span></h3>' +
+          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }).join('') || '<div class="note">None - great.</div>';
       el.innerHTML =
-        '<div class="panel"><h2>' + svg('zap') + 'Inactive Agents &mdash; ' + esc(d.month) + '</h2>' +
-        '<p class="note">Category 2 first: they were ACTIVE last month and went silent - wake them before month end.</p>' +
-        '<div class="row" style="margin-bottom:10px">' +
+        '<div class="panel"><h2>' + svg('zap') + 'Inactive Agents by SA Station &mdash; ' + esc(d.month) + '</h2>' +
+        '<p class="note">' + t('Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.') + '</p>' +
+        '<div class="row" style="margin-bottom:4px">' +
         '<button class="role-chip' + (mode === 'lost' ? ' active' : '') + '" data-action="inactMode" data-m="lost">Were active last month (' + d.counts.lost + ')</button>' +
         '<button class="role-chip' + (mode === 'all' ? ' active' : '') + '" data-action="inactMode" data-m="all">All inactive this month (' + d.counts.all + ')</button></div>' +
-        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        sections + '</div>';
     }).catch(function () { el.innerHTML = ''; });
   }
   function locExport() {
@@ -769,7 +802,9 @@
         '</div>' + dailyPanel + perfPanel + prioPanel + specialPanel +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('phone') + t('Agents - mark KPIs') + '</h2><div class="spacer"></div>' +
         (editable ? (isSpecial() ? '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button>' : '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>') : '') + '</div>' +
-        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+        (isSpecial() ? '<div id="inactivePanel"></div>' : '');
+      if (isSpecial()) inactivePanelLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* New agent recruited in the field - counts as the BDO's activeness credit. */
@@ -1980,6 +2015,7 @@
     var n = e.target;
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
     if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
     if (n && n.classList && n.classList.contains('kpivis')) { var lbl = n.closest('label'); if (lbl) lbl.classList.toggle('on', n.checked); return; }

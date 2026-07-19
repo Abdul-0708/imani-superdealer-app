@@ -323,15 +323,33 @@ try {
       $u = require_auth(); require_perm($u, 'dashboard', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
 
-      $tot = (int)db()->query('SELECT COUNT(*) c FROM agents')->fetch()['c'];
       $oa = office_attainment($month);
       $visible = setting_get('dashboard_kpis', 'serving,float,visits,apk,activeness,withdraw');
+
+      /* SA-station breakdown rides inside the month snapshot (from the file).
+       * The OM picks a station; the KPI cards then show THAT station's numbers
+       * (incl. its own withdraw-volume sum). Target attainment stays office-wide. */
+      $snap = json_decode(setting_get('month_stats_' . $month, '{}'), true);
+      $byStation = isset($snap['_stations']) && is_array($snap['_stations']) ? $snap['_stations'] : array();
+      $stations = array_keys($byStation);
+      sort($stations);
+      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+      $stationStats = ($station !== '' && isset($byStation[$station])) ? $byStation[$station] : null;
+
+      if ($station !== '') {
+        $tq = db()->prepare('SELECT COUNT(*) c FROM agents WHERE station = ?');
+        $tq->execute(array($station));
+        $tot = (int)$tq->fetch()['c'];
+      } else {
+        $tot = (int)db()->query('SELECT COUNT(*) c FROM agents')->fetch()['c'];
+      }
 
       respond(array(
         'month' => $month, 'status' => month_status($month), 'openMonth' => open_month(),
         'totalAgents' => $tot, 'attainment' => $oa['attainment'], 'achievement' => $oa['achievement'],
         'weighted' => $oa['weighted'], 'fromUpload' => $oa['fromUpload'],
         'waked' => $oa['waked'], 'lost' => $oa['lost'],
+        'stations' => $stations, 'station' => $station, 'stationStats' => $stationStats,
         'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
       ));
     }
@@ -363,9 +381,9 @@ try {
       $u = require_auth();
       if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
       $month = open_month();
-      $st = db()->prepare('SELECT id, acc, name, phone, branch, physical_location, act_prev
+      $st = db()->prepare('SELECT id, acc, name, phone, branch, station, physical_location, act_prev
                            FROM agents WHERE act_month = ? AND act_current = "INACTIVE"
-                           ORDER BY (act_prev = "ACTIVE") DESC, name LIMIT 500');
+                           ORDER BY station, (act_prev = "ACTIVE") DESC, name LIMIT 500');
       $st->execute(array($month));
       $all = $st->fetchAll();
       $lost = array_values(array_filter($all, function ($a) { return $a['act_prev'] === 'ACTIVE'; }));
@@ -1133,10 +1151,10 @@ try {
       $created = array(); $bdos = array(); $served = 0; $agents = 0;
 
       $findAgent = db()->prepare('SELECT id FROM agents WHERE acc = ?');
-      $insAgent = db()->prepare('INSERT INTO agents (acc, name, phone, branch, physical_location, partner) VALUES (?,?,?,?,?,?)');
+      $insAgent = db()->prepare('INSERT INTO agents (acc, name, phone, branch, physical_location, partner, station) VALUES (?,?,?,?,?,?,?)');
       $updAgent = db()->prepare('UPDATE agents SET
           name = IF(? = "", name, ?), phone = IF(? = "", phone, ?), branch = IF(? = "", branch, ?),
-          physical_location = IF(? = "", physical_location, ?), partner = ? WHERE id = ?');
+          physical_location = IF(? = "", physical_location, ?), partner = ?, station = IF(? = "", station, ?) WHERE id = ?');
       $insSvc = db()->prepare('INSERT INTO service_history
           (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source, upload_id)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
@@ -1153,26 +1171,39 @@ try {
       /* PASS 1: parse everything (needed for office snapshot totals). */
       $apkRequired = setting_get('apk_required_version', '2.0');
       $parsed = array();
-      $stats = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0);
+      $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0);
+      $stats = $zero;
+      $byStation = array(); /* SA-station breakdown (ARUSHA / MANYARA / ...) */
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
         $r['act_cur'] = act_norm($r['activeness']);
         $r['act_prev'] = act_norm($r['activeness_prev']);
         $r['apk_yes'] = apk_is_yes($r['apk_raw'], $apkRequired);
+        /* APK credit = truly UPGRADED: below the required version (or unknown)
+         * last month, at/above it now - mirrors how waked works for activeness */
+        $r['apk_up'] = $r['apk_yes'] && !apk_is_yes($r['apk_prev_raw'], $apkRequired);
         /* activeness credit = truly WAKED: inactive last month, active now */
         $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_prev'] === 'INACTIVE');
         $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_prev'] === 'ACTIVE');
         $parsed[] = $r;
-        if ($r['served'] === 'SERVED') { $stats['serving']++; $stats['float'] += $r['float']; }
-        if ($r['visit'] === 'YES') $stats['visits']++;
-        if ($r['apk_yes']) $stats['apk']++;
-        if ($r['waked']) $stats['waked']++;
-        if ($r['lost']) $stats['lost']++;
+        $stKey = $r['station'] !== '' ? $r['station'] : 'UNSPECIFIED';
+        if (!isset($byStation[$stKey])) $byStation[$stKey] = $zero;
+        if ($r['served'] === 'SERVED') {
+          $stats['serving']++; $stats['float'] += $r['float'];
+          $byStation[$stKey]['serving']++; $byStation[$stKey]['float'] += $r['float'];
+        }
+        if ($r['visit'] === 'YES') { $stats['visits']++; $byStation[$stKey]['visits']++; }
+        if ($r['apk_up']) { $stats['apk']++; $byStation[$stKey]['apk']++; }
+        if ($r['waked']) { $stats['waked']++; $byStation[$stKey]['waked']++; }
+        if ($r['lost']) { $stats['lost']++; $byStation[$stKey]['lost']++; }
         $stats['withdraw'] += $r['withdraw'];
+        $byStation[$stKey]['withdraw'] += $r['withdraw'];
       }
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
+      foreach ($byStation as $k => $s) $byStation[$k]['net_active'] = $s['waked'] - $s['lost'];
+      $stats['_stations'] = $byStation; /* rides inside the snapshot json */
 
       /* Register this upload: dated, labelled, and every row/credit it writes
        * carries its id - so it can be renamed or ERASED as one unit later. */
@@ -1211,9 +1242,9 @@ try {
         $found = $findAgent->fetch();
         if ($found) {
           $id = (int)$found['id'];
-          $updAgent->execute(array($r['name'],$r['name'],$r['phone'],$r['phone'],$r['branch'],$r['branch'],$r['location'],$r['location'],$r['partner'],$id));
+          $updAgent->execute(array($r['name'],$r['name'],$r['phone'],$r['phone'],$r['branch'],$r['branch'],$r['location'],$r['location'],$r['partner'],$r['station'],$r['station'],$id));
         } else {
-          $insAgent->execute(array($r['acc'],$r['name'],$r['phone'],$r['branch'],$r['location'],$r['partner']));
+          $insAgent->execute(array($r['acc'],$r['name'],$r['phone'],$r['branch'],$r['location'],$r['partner'],$r['station']));
           $id = (int)db()->lastInsertId();
         }
         /* activeness transition snapshot - drives the Inactive Agents panel */
@@ -1227,7 +1258,7 @@ try {
         /* Ledger credits (BDO personal scores; first credit wins). */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key, $uploadId));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
-        if ($r['apk_yes']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
+        if ($r['apk_up']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
         if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key, $uploadId));
 
         /* Cross-check: claimed served but the released file says NOT_SERVED. */
