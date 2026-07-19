@@ -118,6 +118,53 @@
     'Recruit': 'Msajiliwa',
     'Stages': 'Hatua',
     'DONE': 'IMEKAMILIKA',
+    'GOOD MORNING': 'HABARI ZA ASUBUHI',
+    'GOOD AFTERNOON': 'HABARI ZA MCHANA',
+    'GOOD EVENING': 'HABARI ZA JIONI',
+    'WELCOME': 'KARIBU',
+    'Messages': 'Ujumbe',
+    'Your box': 'Sanduku lako',
+    'Newest first. Reply to the sender, or delete a message from your own box once read.':
+      'Mpya kwanza. Jibu aliyetuma, au futa ujumbe kwenye sanduku lako baada ya kuusoma.',
+    'Reply': 'Jibu',
+    'Reply to': 'Jibu kwa',
+    'Your reply': 'Jibu lako',
+    'Send reply': 'Tuma jibu',
+    'Reply sent': 'Jibu limetumwa',
+    'Delete for me': 'Futa kwangu',
+    'Message removed from your inbox': 'Ujumbe umeondolewa kwenye sanduku lako',
+    'No messages yet.': 'Hakuna ujumbe bado.',
+    'everyone': 'wote',
+    'to you': 'kwako',
+    'to management': 'kwa uongozi',
+    'MARKET FEEDBACK': 'MREJESHO WA SOKO',
+    'REPLY': 'JIBU',
+    'Market feedback - complaints, opinions, suggestions': 'Mrejesho wa soko - malalamiko, maoni na mapendekezo',
+    'What you face in the market goes straight to your team leader and the operational manager.':
+      'Unachokutana nacho sokoni kinaenda moja kwa moja kwa kiongozi wa timu na meneja wa uendeshaji.',
+    'e.g. agents in Kaloleni complain about float delays...': 'mf. mawakala wa Kaloleni wanalalamika kuchelewa kwa float...',
+    'Send to management': 'Tuma kwa uongozi',
+    'Sent to your team leader and the OM': 'Imetumwa kwa kiongozi wa timu na OM',
+    'My route plan today': 'Mpango wangu wa njia leo',
+    'Write the places you are going to visit BEFORE 10:00 EAT. Your team leader approves it.':
+      'Andika sehemu utakazotembelea KABLA ya saa nne asubuhi (10:00 EAT). Kiongozi wa timu ataidhinisha.',
+    'e.g. Kaloleni -> Sakina -> Njiro, then HYDOM branch': 'mf. Kaloleni -> Sakina -> Njiro, kisha tawi la HYDOM',
+    'Send route plan': 'Tuma mpango wa njia',
+    'Update plan': 'Sasisha mpango',
+    'Resend plan': 'Tuma tena mpango',
+    'waiting for your team leader': 'inasubiri kiongozi wa timu',
+    'Route plans close at 10:00 EAT - ask your team leader to assign one.':
+      'Mipango ya njia inafungwa saa nne asubuhi - muombe kiongozi wa timu akupangie.',
+    'Route plan sent - waiting for your team leader': 'Mpango wa njia umetumwa - unasubiri kiongozi wa timu',
+    'CLOSED': 'IMEFUNGWA',
+    'My report days': 'Siku zangu za ripoti',
+    'Your report days and the top performers': 'Siku zako za ripoti na wanaoongoza',
+    'Top performing - weighted score': 'Wanaoongoza - alama ya uzito',
+    'Weighted score': 'Alama ya uzito',
+    'on time': 'kwa wakati',
+    'Search in': 'Tafuta kwenye',
+    'Everything': 'Kila kitu',
+    'Any': 'Yoyote',
     'Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.':
       'Waliokuwa ACTIVE mwezi uliopita kwanza: wamekaa kimya - waamshe kabla mwezi haujaisha. Kuamsha kunahitaji uthibitisho wa risiti na mahali alipo.',
     'My Dashboard': 'Dashibodi Yangu',
@@ -247,6 +294,7 @@
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
+    { key: 'inbox', label: 'Messages', icon: 'mail' },
     { key: 'data', label: 'Data Manager', icon: 'alert' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
   ];
@@ -349,6 +397,7 @@
     return MODULES.filter(function (m) {
       if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
       if (m.key === 'data') return can('agents', 'e'); // OM/superadmin data manager
+      if (m.key === 'inbox') return true; // everyone has a message box
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -383,6 +432,7 @@
     else if (state.tab === 'mybase') viewMyBase(v);
     else if (state.tab === 'daily') viewDaily(v);
     else if (state.tab === 'data') viewData(v);
+    else if (state.tab === 'inbox') viewInbox(v);
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
@@ -417,6 +467,13 @@
   }
 
   /* ---------------- dashboard ---------------- */
+  /* Time-of-day greeting on the EAT (+3 Nairobi) business clock. */
+  function greetingLine() {
+    var h = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Africa/Nairobi' }).format(new Date()));
+    var g = h < 12 ? t('GOOD MORNING') : h < 17 ? t('GOOD AFTERNOON') : t('GOOD EVENING');
+    var first = (state.user && state.user.name ? state.user.name : '').split(' ')[0] || (state.user ? state.user.username : '');
+    return '<div class="greet">' + g + ', ' + esc(first.toUpperCase()) + ' &mdash; ' + t('WELCOME') + ' 👋</div>';
+  }
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
   function personalDashboard(v) {
     var calls = [api('base')];
@@ -438,7 +495,7 @@
           card('cal', t('Month'), d.month + (d.monthStatus ? ' · ' + d.monthStatus : ''));
       }
       v.innerHTML =
-        '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         (perf
@@ -501,7 +558,7 @@
         : '';
 
       v.innerHTML =
-        '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
+        greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
@@ -545,7 +602,12 @@
     var body = elById('agentsBody'); if (!body) return;
     var seq = ++state._agentSeq;
     var qs = '&page=' + (state.agentPage || 1) + '&per=' + (state.agentPer || 50) +
-      (state._agentSearch ? '&search=' + encodeURIComponent(state._agentSearch) : '');
+      (state._agentSearch ? '&search=' + encodeURIComponent(state._agentSearch) : '') +
+      (state._agentField ? '&field=' + state._agentField : '') +
+      (state._fserved ? '&fserved=' + state._fserved : '') +
+      (state._fvisit ? '&fvisit=' + state._fvisit : '') +
+      (state._fapk ? '&fapk=' + state._fapk : '') +
+      (state._factive ? '&factive=' + state._factive : '');
     api('agents', { qs: qs }).then(function (d) {
       if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
       state._agentsMeta = d;
@@ -572,7 +634,19 @@
         ? t('Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.')
         : t('Master list with live KPI status.')) + '</p>' +
       '<div class="panel"><div class="row">' +
+      '<div class="field"><label>' + t('Search in') + '</label><select data-change="agentField">' +
+      [['', t('Everything')], ['acc', 'Account'], ['name', 'Name'], ['phone', 'Phone'], ['branch', 'Branch'], ['location', 'Physical Location']].map(function (o) {
+        return '<option value="' + o[0] + '"' + ((state._agentField || '') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+      }).join('') + '</select></div>' +
       '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search (live)') + '</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      '<div class="field"><label>Served</label><select data-change="fserved">' +
+      '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fserved === 'yes' ? ' selected' : '') + '>Served</option><option value="no"' + (state._fserved === 'no' ? ' selected' : '') + '>Not Served</option></select></div>' +
+      '<div class="field"><label>Visit</label><select data-change="fvisit">' +
+      '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fvisit === 'yes' ? ' selected' : '') + '>Visit YES</option><option value="no"' + (state._fvisit === 'no' ? ' selected' : '') + '>Visit NO</option></select></div>' +
+      '<div class="field"><label>APK</label><select data-change="fapk">' +
+      '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fapk === 'yes' ? ' selected' : '') + '>APK YES</option><option value="no"' + (state._fapk === 'no' ? ' selected' : '') + '>APK NO</option></select></div>' +
+      '<div class="field"><label>Active</label><select data-change="factive">' +
+      '<option value="">' + t('Any') + '</option><option value="active"' + (state._factive === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (state._factive === 'inactive' ? ' selected' : '') + '>Inactive</option></select></div>' +
       '<div class="field"><label>' + t('Show') + '</label><select id="agentPer">' + perOpts + '</select></div>' +
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
@@ -698,7 +772,7 @@
     return ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Won\'t return') + '</button>';
   }
   function doneChip(a, c, mark, isOM) {
-    var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : c.label);
+    var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : (c.key === 'apk' ? 'APK YES' : c.label));
     var mine = state.user && mark.by === state.user.username;
     /* OM overturns ANY tick (even file-sourced); a BDO only his own live marks */
     var reversible = isOM || (mine && mark.src === 'bdo');
@@ -717,12 +791,18 @@
     if (c.key === 'active' && !mark) {
       /* real status from the file even when no one "marked" it */
       if (a.actStatus === 'ACTIVE') return '<span class="kchip done" title="Active (from uploaded file)">Active &#10003;</span>';
-      if (a.actStatus === 'INACTIVE') return editable ? todoChip(a, c, 'Wake') : '<span class="kchip bad-off">Inactive</span>';
+      if (a.actStatus === 'INACTIVE') return editable ? todoChip(a, c, 'Inactive - wake up') : '<span class="kchip bad-off">Inactive (wake up)</span>';
       return editable ? todoChip(a, c, 'Active') : '<span class="kchip off">Active</span>';
     }
     if (c.key === 'visit' && !mark) {
       /* reads as NO until the BDO taps + confirms it to YES */
       return editable ? todoChip(a, c, 'Visit NO') : '<span class="kchip off">Visit NO</span>';
+    }
+    if (c.key === 'served' && !mark) {
+      return editable ? todoChip(a, c, 'Not Served') : '<span class="kchip off">Not Served</span>';
+    }
+    if (c.key === 'apk' && !mark) {
+      return editable ? todoChip(a, c, 'APK NO') : '<span class="kchip off">APK NO</span>';
     }
     if (mark) return doneChip(a, c, mark, isOM);
     return editable ? todoChip(a, c) : '<span class="kchip off">' + esc(c.label) + '</span>';
@@ -856,8 +936,35 @@
   function viewDaily(v) {
     /* base gives his weighted performance so each saved report moves the trend */
     Promise.all([api('daily_reports_get'), api('base'), isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null),
-                 isSpecial() ? api('specialist_summary') : Promise.resolve(null)]).then(function (rr) {
-      var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3];
+                 isSpecial() ? api('specialist_summary') : Promise.resolve(null),
+                 api('route_plans_get')]).then(function (rr) {
+      var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3], rp = rr[4];
+
+      /* today's ROUTE PLAN (EAT): write before 10:00; leader approves/assigns */
+      var todayPlan = (rp.rows || []).filter(function (r) { return r.date === rp.today; })[0];
+      var before10 = Number((rp.now || '00:00').slice(0, 2)) < 10;
+      var routeHtml;
+      if (todayPlan && todayPlan.status !== 'PENDING') {
+        var rpPill = todayPlan.status === 'APPROVED' ? '<span class="pill ok">APPROVED</span>'
+          : todayPlan.status === 'ASSIGNED' ? '<span class="pill fire">ASSIGNED ' + (todayPlan.by_leader ? '&middot; ' + esc(todayPlan.by_leader) : '') + '</span>'
+          : '<span class="pill bad">REJECTED' + (todayPlan.note ? ' &middot; ' + esc(todayPlan.note) : '') + '</span>';
+        routeHtml = '<div class="note" style="margin-top:6px">' + rpPill + ' ' + esc(todayPlan.plan) + '</div>' +
+          (todayPlan.status === 'REJECTED' && before10
+            ? '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" value="' + esc(todayPlan.plan) + '"><button class="btn" data-action="routeSave">' + t('Resend plan') + '</button></div>'
+            : '');
+      } else if (todayPlan) {
+        routeHtml = '<div class="note" style="margin-top:6px"><span class="pill gold">PENDING</span> ' + esc(todayPlan.plan) + ' &middot; ' + t('waiting for your team leader') + '</div>' +
+          (before10 ? '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" value="' + esc(todayPlan.plan) + '"><button class="btn" data-action="routeSave">' + t('Update plan') + '</button></div>' : '');
+      } else if (before10) {
+        routeHtml = '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" placeholder="' + esc(t('e.g. Kaloleni -> Sakina -> Njiro, then HYDOM branch')) + '">' +
+          '<button class="btn" data-action="routeSave">' + t('Send route plan') + '</button></div>';
+      } else {
+        routeHtml = '<div class="note" style="margin-top:6px"><span class="pill bad">' + t('CLOSED') + '</span> ' + t('Route plans close at 10:00 EAT - ask your team leader to assign one.') + '</div>';
+      }
+      var routePanel = can('mybase', 'e')
+        ? '<div class="panel"><h2>' + svg('pin') + t('My route plan today') + ' <span class="pill dim">' + esc(rp.now || '') + ' EAT</span></h2>' +
+          '<p class="note">' + t('Write the places you are going to visit BEFORE 10:00 EAT. Your team leader approves it.') + '</p>' + routeHtml + '</div>'
+        : '';
       var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
       var tot = { f: 0, a: 0 };
       mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
@@ -878,7 +985,7 @@
        * shortage for him either. */
       if (sum) {
         v.innerHTML =
-          '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+          greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
           '<p class="page-sub">' + esc(sum.month) + ' &middot; ' + t('computed from your agent list and forms - nothing to type, nothing to forget') + '</p>' +
           '<div class="grid cards" style="margin-bottom:16px">' +
           card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
@@ -886,11 +993,11 @@
           card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
           card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited)) +
           '</div>' +
-          perfPanel + (pipe ? pipePanel(pipe) : '');
+          routePanel + perfPanel + (pipe ? pipePanel(pipe) : '');
         return;
       }
       v.innerHTML =
-        '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+        greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
         '<p class="page-sub">' + t('Type only FLOAT and APK here. Serving, visits and activeness are done on the agent list - find the agent, tap his chip and confirm, so we know which agent was handled by which BDO.') + '</p>' +
         '<div class="panel"><h2>' + svg('cal') + t('Send report') + '</h2>' +
         '<div class="row"><div class="field"><label>' + t('Report date (today or up to 2 days back)') + '</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
@@ -899,7 +1006,7 @@
         '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits and activeness: use the agent list, not this form.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
         '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
         '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
-        perfPanel + (pipe ? pipePanel(pipe) : '') +
+        routePanel + perfPanel + (pipe ? pipePanel(pipe) : '') +
         '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -1370,12 +1477,21 @@
     var m = state._repMonth || state.openMonth || curMonth();
     state._repMonth = m;
     var period = state._rankPeriod || 'daily';
+    var isMgmt = can('reports', 'e') || can('targets', 'v');
     var calls = [api('daily_reports_get', { qs: '&month=' + m }), api('flags_get', { qs: '&month=' + m }),
                  api('rank_get', { qs: '&period=' + period + '&date=' + (state._rankDate || new Date().toISOString().slice(0, 10)) }),
-                 api('messages_get')];
-    if (can('targets', 'v')) calls.push(api('shortages_get', { qs: '&month=' + m }));
+                 api('messages_get'), api('bdo_rank_public')];
+    calls.push(isMgmt ? api('shortages_get', { qs: '&month=' + m }) : Promise.resolve(null));
+    calls.push(can('reports', 'e') ? api('route_plans_get') : Promise.resolve(null));
     Promise.all(calls).then(function (rr) {
-      var dr = rr[0], fl = rr[1], rk = rr[2], msgs = rr[3], sh = rr[4] || null;
+      var dr = rr[0], fl = rr[1], rk = rr[2], msgs = rr[3], wrk = rr[4], sh = rr[5], rp = rr[6];
+
+      /* weighted TOP-PERFORMING ranking - the one list every member sees */
+      var weightRank = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
+        ((wrk.rows || []).map(function (r, i) {
+          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
+        }).join('') || '<tr><td colspan="3" class="note">No targets set yet.</td></tr>') + '</tbody></table></div></div>';
 
       /* --- daily report matrix: BDO x day, OK / LATE / MISSING(red) --- */
       var byKey = {};
@@ -1432,14 +1548,57 @@
           '<button class="btn" data-action="wdSave">Save</button></div>' +
           '<div class="note" style="margin-top:6px">1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat 7=Sun</div></div>'
         : '';
+      /* shortage chain: PENDING until the team leader approves; only APPROVED
+       * ones reach top management (the server already filters per role) */
+      var canApprove = can('reports', 'e');
       var shortPanel = (sh !== null)
-        ? '<div class="panel"><h2>' + svg('alert') + 'Float shortages (management only)</h2>' +
-          '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Amount</th><th>Reason</th><th>Recover by</th><th>Notified?</th><th>When</th></tr></thead><tbody>' +
+        ? '<div class="panel"><h2>' + svg('alert') + 'Float shortages</h2>' +
+          (canApprove ? '<p class="note">PENDING shortages wait for YOUR approval before top management sees them.</p>' : '') +
+          '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Amount</th><th>Reason</th><th>Recover by</th><th>Status</th><th>When</th>' + (canApprove ? '<th></th>' : '') + '</tr></thead><tbody>' +
           ((sh || []).map(function (s) {
+            var stPill = s.status === 'APPROVED'
+              ? '<span class="pill ok">APPROVED' + (s.approved_by ? ' &middot; ' + esc(s.approved_by) : '') + '</span>'
+              : '<span class="pill gold">PENDING</span>';
+            var act = canApprove && s.status === 'PENDING'
+              ? '<td><button class="btn mini" data-action="shortApprove" data-id="' + s.id + '">Approve</button></td>'
+              : (canApprove ? '<td></td>' : '');
             return '<tr><td>' + esc(s.bdo) + '</td><td>' + fmt(s.amount) + '</td><td>' + esc(s.reason) + '</td><td>' + esc(s.recover_by || '-') + '</td>' +
-              '<td>' + (Number(s.notified) ? '<span class="pill ok">Yes</span>' : '<span class="pill bad">No</span>') + '</td><td class="note">' + esc((s.at || '').slice(0, 16)) + '</td></tr>';
-          }).join('') || '<tr><td colspan="6" class="note">No shortages reported.</td></tr>') + '</tbody></table></div></div>'
+              '<td>' + stPill + '</td><td class="note">' + esc((s.at || '').slice(0, 16)) + '</td>' + act + '</tr>';
+          }).join('') || '<tr><td colspan="7" class="note">No shortages reported.</td></tr>') + '</tbody></table></div></div>'
         : '';
+
+      /* team leader: today's route plans - approve, reject, assign */
+      var routePanel = rp
+        ? '<div class="panel"><h2>' + svg('pin') + 'Daily route plans (EAT)</h2>' +
+          '<p class="note">BDOs submit before 10:00 EAT. Approve or reject; assign a route yourself when needed.</p>' +
+          '<div class="tablewrap"><table><thead><tr><th>Date</th><th>BDO</th><th>Route</th><th>Status</th><th></th></tr></thead><tbody>' +
+          ((rp.rows || []).map(function (r) {
+            var pill = r.status === 'APPROVED' ? '<span class="pill ok">APPROVED</span>'
+              : r.status === 'ASSIGNED' ? '<span class="pill fire">ASSIGNED' + (r.by_leader ? ' &middot; ' + esc(r.by_leader) : '') + '</span>'
+              : r.status === 'REJECTED' ? '<span class="pill bad">REJECTED</span>'
+              : '<span class="pill gold">PENDING</span>';
+            var act = r.status === 'PENDING'
+              ? '<button class="btn mini" data-action="routeOk" data-id="' + r.id + '">Approve</button> <button class="danger mini" data-action="routeNo" data-id="' + r.id + '">Reject</button>'
+              : '';
+            return '<tr><td class="note">' + esc(r.date) + '</td><td>' + esc(r.bdo) + '</td><td>' + esc(r.plan) + '</td><td>' + pill + '</td><td>' + act + '</td></tr>';
+          }).join('') || '<tr><td colspan="5" class="note">No route plans yet.</td></tr>') + '</tbody></table></div>' +
+          '<div class="row" style="margin-top:10px"><div class="field"><label>Assign to</label><select id="raBdo">' +
+          (dr.bdos || []).map(function (b) { return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>'; }).join('') + '</select></div>' +
+          '<div class="field" style="flex:1;min-width:200px"><label>Route for today</label><input id="raPlan" maxlength="2000" placeholder="e.g. Kaloleni -> Sakina -> Njiro"></div>' +
+          '<button class="btn" data-action="routeAssign">Assign route</button></div></div>'
+        : '';
+
+      /* plain BDO: HIS report days + the weighted top-performers list. Nothing else. */
+      if (!isMgmt) {
+        v.innerHTML =
+          greetingLine() +
+          '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">' + t('Your report days and the top performers') + '</p>' +
+          '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(m) + '</h2>' +
+          '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span></p>' +
+          '<div class="tablewrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + matrix + '</tbody></table></div></div>' +
+          weightRank;
+        return;
+      }
 
       v.innerHTML =
         '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">Daily reports, rankings and flags - visible to every member.</p>' +
@@ -1460,7 +1619,7 @@
         '<p class="note">A flag = claimed served, but the released performance file said NOT served.</p>' +
         '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Flags</th></tr></thead><tbody>' + flagRank + '</tbody></table></div>' +
         (flagDetails ? '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>BDO</th><th>Agent</th><th>Detail</th></tr></thead><tbody>' + flagDetails + '</tbody></table></div>' : '') +
-        '</div>' + shortPanel;
+        '</div>' + weightRank + routePanel + shortPanel;
       msgMgrLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -1521,6 +1680,37 @@
     api('working_days_save', { body: { global: elById('wdGlobal').value.trim(), perBdo: per } })
       .then(function () { toast('Working days saved', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+
+  /* ---------------- Messages (every member's box) ---------------- */
+  function viewInbox(v) {
+    api('messages_get').then(function (msgs) {
+      var rows = (msgs || []).map(function (m2) {
+        var kindPill = m2.kind === 'feedback' ? '<span class="pill fire">' + t('MARKET FEEDBACK') + '</span> '
+          : m2.kind === 'reply' ? '<span class="pill gold">' + t('REPLY') + '</span> ' : '';
+        var toTag = m2.to_user === '' ? '<span class="pill dim">' + t('everyone') + '</span>'
+          : m2.to_user === 'mgmt' ? '<span class="pill gold">' + t('to management') + '</span>'
+          : '<span class="pill ok">' + t('to you') + '</span>';
+        return '<div class="msg-item">' +
+          '<div class="msg-head"><b>' + esc(m2.from_user) + '</b> ' + toTag + ' <span class="note">' + esc((m2.at || '').slice(0, 16)) + '</span></div>' +
+          '<div class="msg-body">' + kindPill + esc(m2.body) + '</div>' +
+          '<div class="row" style="margin-top:6px">' +
+          (m2.from_user !== state.user.username ? '<button class="ghost tiny" data-action="msgReply" data-id="' + m2.id + '" data-from="' + esc(m2.from_user) + '" data-body="' + esc(m2.body) + '">' + t('Reply') + '</button>' : '') +
+          '<button class="ghost tiny" data-action="msgDismiss" data-id="' + m2.id + '">' + t('Delete for me') + '</button></div></div>';
+      }).join('') || '<div class="note">' + t('No messages yet.') + '</div>';
+      var fb = can('mybase', 'e')
+        ? '<div class="panel"><h2>' + svg('flame') + t('Market feedback - complaints, opinions, suggestions') + '</h2>' +
+          '<p class="note">' + t('What you face in the market goes straight to your team leader and the operational manager.') + '</p>' +
+          '<div class="row"><input id="fbBody" maxlength="500" style="flex:1;min-width:220px" placeholder="' + esc(t('e.g. agents in Kaloleni complain about float delays...')) + '">' +
+          '<button class="btn" data-action="fbSend">' + t('Send to management') + '</button></div></div>'
+        : '';
+      v.innerHTML =
+        greetingLine() +
+        '<h1 class="page-title">' + t('Messages') + '</h1>' +
+        '<p class="page-sub">' + t('Newest first. Reply to the sender, or delete a message from your own box once read.') + '</p>' +
+        fb +
+        '<div class="panel"><h2>' + svg('mail') + t('Your box') + '</h2>' + rows + '</div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
   /* ---------------- Data Manager (OM/superadmin) ---------------- */
@@ -1884,6 +2074,56 @@
       return;
     }
     if (a === 'bdLoad') { bdLoad(); return; }
+    if (a === 'shortApprove') {
+      api('shortage_approve', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function () { toast('Shortage approved - top management can now see it', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'routeOk' || a === 'routeNo') {
+      api('route_plan_review', { body: { id: Number(node.getAttribute('data-id')), approve: a === 'routeOk' ? 1 : 0 } })
+        .then(function (d) { toast('Route ' + d.status, 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'routeAssign') {
+      api('route_assign', { body: { bdo: elById('raBdo').value, plan: elById('raPlan').value.trim() } })
+        .then(function () { toast('Route assigned', 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'routeSave') {
+      api('route_plan_save', { body: { plan: elById('rpPlan').value.trim() } })
+        .then(function () { toast(t('Route plan sent - waiting for your team leader'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'msgReply') {
+      openModal('<h2>' + svg('mail') + ' ' + t('Reply to') + ' ' + esc(node.getAttribute('data-from')) + '</h2>' +
+        '<p class="note" style="border:1px dashed var(--line);border-radius:10px;padding:8px">&ldquo;' + esc(node.getAttribute('data-body') || '') + '&rdquo;</p>' +
+        '<div class="field"><label>' + t('Your reply') + '</label><input id="mrBody" maxlength="500"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+        '<button class="btn" data-action="msgReplyGo" data-id="' + node.getAttribute('data-id') + '">' + t('Send reply') + '</button></div>');
+      return;
+    }
+    if (a === 'msgReplyGo') {
+      api('message_reply', { body: { id: Number(node.getAttribute('data-id')), body: elById('mrBody').value.trim() } })
+        .then(function () { closeModal(); toast(t('Reply sent'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'msgDismiss') {
+      api('message_dismiss', { body: { id: Number(node.getAttribute('data-id')) } })
+        .then(function () { toast(t('Message removed from your inbox'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
+    if (a === 'fbSend') {
+      api('feedback_send', { body: { body: elById('fbBody').value.trim() } })
+        .then(function () { elById('fbBody').value = ''; toast(t('Sent to your team leader and the OM'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'upRename') {
       openModal('<h2>' + svg('upload') + ' Rename upload</h2>' +
         '<div class="field"><label>Label</label><input id="upNewLabel" maxlength="160" value="' + esc(node.getAttribute('data-label') || '') + '"></div>' +
@@ -2016,6 +2256,10 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
+    if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive'].indexOf(n.getAttribute('data-change')) >= 0) {
+      state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
+      state.agentPage = 1; agentsBodyLoad(); return;
+    }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
     if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
     if (n && n.classList && n.classList.contains('kpivis')) { var lbl = n.closest('label'); if (lbl) lbl.classList.toggle('on', n.checked); return; }

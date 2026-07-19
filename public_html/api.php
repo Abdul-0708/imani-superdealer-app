@@ -408,18 +408,40 @@ try {
       $limit = (int)($_GET['per'] ?? 50);
       if (!in_array($limit, array(20, 50, 100), true)) $limit = 50;
       $off = ($page - 1) * $limit;
-      $where = ''; $vals = array();
+      $month = open_month();
+      $conds = array(); $vals = array();
+      /* targeted search: the user picks WHICH column to search */
+      $field = (string)($_GET['field'] ?? '');
+      $colMap = array('acc' => 'acc', 'name' => 'name', 'phone' => 'phone', 'branch' => 'branch', 'location' => 'physical_location');
       if ($search !== '') {
-        if (preg_match('/^\d+$/', $search)) {
+        if (isset($colMap[$field])) {
+          $conds[] = $colMap[$field] . ' LIKE ?';
+          $vals[] = ($field === 'acc' || $field === 'phone') ? $search . '%' : '%' . $search . '%';
+        } elseif (preg_match('/^\d+$/', $search)) {
           /* digits = account/phone lookup; prefix match uses the indexes (fast) */
-          $where = 'WHERE acc LIKE ? OR phone LIKE ?';
-          $vals = array($search . '%', $search . '%');
+          $conds[] = '(acc LIKE ? OR phone LIKE ?)';
+          $vals[] = $search . '%'; $vals[] = $search . '%';
         } else {
           /* text: names/branches anywhere + account prefix (accounts can be alphanumeric) */
-          $where = 'WHERE name LIKE ? OR branch LIKE ? OR acc LIKE ?';
-          $s = '%' . $search . '%'; $vals = array($s, $s, $search . '%');
+          $conds[] = '(name LIKE ? OR branch LIKE ? OR acc LIKE ?)';
+          $s = '%' . $search . '%'; $vals[] = $s; $vals[] = $s; $vals[] = $search . '%';
         }
       }
+      /* KPI status filters: Served / Visit / APK from this month's ledger,
+       * Active from the real status - so "show me the NOT served" is one tap */
+      foreach (array('fserved' => 'served', 'fvisit' => 'visit', 'fapk' => 'apk') as $p => $kk) {
+        $v = (string)($_GET[$p] ?? '');
+        if ($v === 'yes' || $v === 'no') {
+          $conds[] = ($v === 'yes' ? '' : 'NOT ') .
+            "EXISTS (SELECT 1 FROM agent_month_kpi k WHERE k.agent_id = agents.id AND k.month = ? AND k.kpi = '$kk')";
+          $vals[] = $month;
+        }
+      }
+      $fa = (string)($_GET['factive'] ?? '');
+      if ($fa === 'active') { $conds[] = '(act_month = ? AND act_current = "ACTIVE")'; $vals[] = $month; }
+      elseif ($fa === 'inactive') { $conds[] = '(act_month = ? AND act_current = "INACTIVE")'; $vals[] = $month; }
+
+      $where = count($conds) ? 'WHERE ' . implode(' AND ', $conds) : '';
       $tot = db()->prepare("SELECT COUNT(*) c FROM agents $where");
       $tot->execute($vals);
       $total = (int)$tot->fetch()['c'];
@@ -428,7 +450,6 @@ try {
       $rows = $st->fetchAll();
 
       /* Current-month KPI status for the page's agents (who did what + source). */
-      $month = open_month();
       $kpiMap = array(); $lastTx = array(); $wr = array();
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
@@ -1419,9 +1440,16 @@ try {
     case 'daily_reports_get': {
       $u = require_auth();
       if (!can($u, 'reports', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      /* a plain BDO sees ONLY his own report days; leaders/management see all */
+      $mgmt = can($u, 'reports', 'e') || can($u, 'targets', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $st = db()->prepare('SELECT * FROM daily_reports WHERE month = ? ORDER BY report_date, bdo');
-      $st->execute(array($month));
+      if ($mgmt) {
+        $st = db()->prepare('SELECT * FROM daily_reports WHERE month = ? ORDER BY report_date, bdo');
+        $st->execute(array($month));
+      } else {
+        $st = db()->prepare('SELECT * FROM daily_reports WHERE month = ? AND bdo = ? ORDER BY report_date');
+        $st->execute(array($month, $u['username']));
+      }
       $reports = array();
       foreach ($st->fetchAll() as $r) {
         $late = substr($r['created_at'], 0, 10) > $r['report_date']; // after 00:00 next day = LATE
@@ -1429,7 +1457,13 @@ try {
                            'visited' => (int)$r['visited'], 'waked' => (int)$r['waked'], 'apk' => (int)$r['apk'],
                            'note' => $r['note'], 'late' => $late);
       }
-      $bdoRows = db()->query('SELECT username, name, working_days FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      if ($mgmt) {
+        $bdoRows = db()->query('SELECT username, name, working_days FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      } else {
+        $bq = db()->prepare('SELECT username, name, working_days FROM users WHERE username = ?');
+        $bq->execute(array($u['username']));
+        $bdoRows = $bq->fetchAll();
+      }
       $bdos = array();
       foreach ($bdoRows as $b) {
         $wd = working_days_for($b);
@@ -1437,6 +1471,94 @@ try {
       }
       respond(array('month' => $month, 'today' => date('Y-m-d'), 'reports' => $reports, 'bdos' => $bdos,
                     'globalWorkingDays' => setting_get('working_days', '1,2,3,4,5,6')));
+    }
+
+    /* Everyone sees the weighted ranking: who is on top this month (score only). */
+    case 'bdo_rank_public': {
+      $u = require_auth();
+      if (!can($u, 'reports', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      $month = open_month();
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
+      $tq->execute(array($month));
+      $targets = array();
+      foreach ($tq->fetchAll() as $t) $targets[$t['bdo']] = $t;
+      $bdos = db()->query('SELECT username, name, specialty FROM users WHERE role = "bdo" AND active = 1')->fetchAll();
+      $out = array();
+      foreach ($bdos as $b) {
+        if (!isset($targets[$b['username']])) { $out[] = array('name' => $b['name'], 'bdo' => $b['username'], 'score' => null, 'flag' => 'none'); continue; }
+        $s = $b['specialty'] === 'activeness'
+          ? bdo_score_specialist(bdo_actuals($month, $b['username']), $targets[$b['username']])
+          : bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
+        $out[] = array('name' => $b['name'], 'bdo' => $b['username'], 'score' => $s['score'], 'flag' => $s['flag']);
+      }
+      usort($out, function ($a, $b) {
+        $as = $a['score'] === null ? -1 : $a['score'];
+        $bs = $b['score'] === null ? -1 : $b['score'];
+        return $bs - $as;
+      });
+      respond(array('month' => $month, 'rows' => $out));
+    }
+
+    /* ================= DAILY ROUTE PLANS (EAT clock) ================= */
+
+    /* BDO writes today's route BEFORE 10:00 EAT; the team leader approves. */
+    case 'route_plan_save': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $plan = mb_substr(trim((string)bval('plan')), 0, 2000);
+      if ($plan === '') fail('Write the places you are going to visit');
+      if ((int)date('G') >= 10) fail('Route plans close at 10:00 EAT - ask your team leader to assign one');
+      $today = date('Y-m-d');
+      $ex = db()->prepare('SELECT status FROM route_plans WHERE bdo = ? AND date = ?');
+      $ex->execute(array($u['username'], $today));
+      if (($row = $ex->fetch()) && $row['status'] !== 'PENDING') fail('Today\'s route is already ' . $row['status'] . ' - it cannot be changed');
+      db()->prepare('INSERT INTO route_plans (bdo, date, plan) VALUES (?,?,?)
+                     ON DUPLICATE KEY UPDATE plan = VALUES(plan), status = "PENDING", by_leader = "", note = ""')
+          ->execute(array($u['username'], $today, $plan));
+      specialist_touch_report($u);
+      audit($u['id'], 'route_plan', $u['username'] . ' ' . $today);
+      respond(array('ok' => true, 'date' => $today));
+    }
+
+    case 'route_plans_get': {
+      $u = require_auth();
+      $lead = can($u, 'reports', 'e');
+      if ($lead) {
+        $st = db()->prepare('SELECT * FROM route_plans WHERE date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) ORDER BY date DESC, bdo');
+        $st->execute();
+      } elseif (can($u, 'mybase', 'v')) {
+        $st = db()->prepare('SELECT * FROM route_plans WHERE bdo = ? ORDER BY date DESC LIMIT 14');
+        $st->execute(array($u['username']));
+      } else fail('No access', 403);
+      respond(array('today' => date('Y-m-d'), 'now' => date('H:i'), 'rows' => $st->fetchAll()));
+    }
+
+    /* Team leader approves/rejects a submitted route. */
+    case 'route_plan_review': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $id = (int)bval('id');
+      $ok = bval('approve') ? 'APPROVED' : 'REJECTED';
+      $note = mb_substr(trim((string)bval('note')), 0, 255);
+      $d = db()->prepare('UPDATE route_plans SET status = ?, by_leader = ?, note = ? WHERE id = ?');
+      $d->execute(array($ok, $u['username'], $note, $id));
+      if (!$d->rowCount()) fail('Route not found', 404);
+      audit($u['id'], 'route_review', 'id=' . $id . ' ' . $ok);
+      respond(array('ok' => true, 'status' => $ok));
+    }
+
+    /* Team leader ASSIGNS a route to a BDO for today (overrides/creates). */
+    case 'route_assign': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $bdo = strtolower(trim((string)bval('bdo')));
+      $plan = mb_substr(trim((string)bval('plan')), 0, 2000);
+      if ($bdo === '' || $plan === '') fail('Pick the BDO and write the route');
+      $ck = db()->prepare('SELECT 1 FROM users WHERE username = ? AND active = 1');
+      $ck->execute(array($bdo));
+      if (!$ck->fetch()) fail('Unknown member: ' . $bdo);
+      db()->prepare('INSERT INTO route_plans (bdo, date, plan, status, by_leader) VALUES (?,?,?, "ASSIGNED", ?)
+                     ON DUPLICATE KEY UPDATE plan = VALUES(plan), status = "ASSIGNED", by_leader = VALUES(by_leader)')
+          ->execute(array($bdo, date('Y-m-d'), $plan, $u['username']));
+      audit($u['id'], 'route_assign', $bdo . ': ' . mb_substr($plan, 0, 60));
+      respond(array('ok' => true));
     }
 
     /* OM: default working days (Mon..Sat) + per-BDO override (e.g. Sunday man). */
@@ -1523,10 +1645,54 @@ try {
 
     case 'messages_get': {
       $u = require_auth();
-      $st = db()->prepare('SELECT from_user, body, at FROM messages WHERE to_user = "" OR to_user = ? ORDER BY id DESC LIMIT 10');
-      $st->execute(array($u['username']));
-      $rows = $st->fetchAll();
-      respond($rows);
+      /* everyone: broadcasts + personal; leaders (reports.e) ALSO see the
+       * "mgmt" box - BDO market complaints/opinions/suggestions. Newest first;
+       * rows the user dismissed are gone for HIM only. */
+      $lead = can($u, 'reports', 'e');
+      $sql = 'SELECT m.id, m.from_user, m.to_user, m.kind, m.reply_to, m.body, m.at
+              FROM messages m
+              LEFT JOIN msg_hidden h ON h.message_id = m.id AND h.username = ?
+              WHERE h.message_id IS NULL AND (m.to_user = "" OR m.to_user = ?' . ($lead ? ' OR m.to_user = "mgmt"' : '') . ')
+              ORDER BY m.id DESC LIMIT 30';
+      $st = db()->prepare($sql);
+      $st->execute(array($u['username'], $u['username']));
+      respond($st->fetchAll());
+    }
+
+    /* Reader hides a message from HIS inbox (sender's copy is untouched). */
+    case 'message_dismiss': {
+      $u = require_auth();
+      $id = (int)bval('id');
+      db()->prepare('INSERT IGNORE INTO msg_hidden (message_id, username) VALUES (?,?)')->execute(array($id, $u['username']));
+      respond(array('ok' => true));
+    }
+
+    /* Any member replies to a message he received - lands in the sender's box. */
+    case 'message_reply': {
+      $u = require_auth();
+      $id = (int)bval('id');
+      $body = trim((string)bval('body'));
+      if ($body === '' || mb_strlen($body) > 500) fail('Reply must be 1-500 characters');
+      $st = db()->prepare('SELECT from_user FROM messages WHERE id = ?');
+      $st->execute(array($id));
+      $m = $st->fetch();
+      if (!$m) fail('Message not found', 404);
+      db()->prepare('INSERT INTO messages (from_user, to_user, body, kind, reply_to) VALUES (?,?,?, "reply", ?)')
+          ->execute(array($u['username'], $m['from_user'], $body, $id));
+      audit($u['id'], 'message_reply', 'to ' . $m['from_user']);
+      respond(array('ok' => true));
+    }
+
+    /* BDO writes market complaints / opinions / suggestions - visible to the
+     * team leader and operational manager (the "mgmt" box). */
+    case 'feedback_send': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $body = trim((string)bval('body'));
+      if ($body === '' || mb_strlen($body) > 500) fail('Write 1-500 characters');
+      db()->prepare('INSERT INTO messages (from_user, to_user, body, kind) VALUES (?, "mgmt", ?, "feedback")')
+          ->execute(array($u['username'], $body));
+      audit($u['id'], 'feedback', mb_substr($body, 0, 80));
+      respond(array('ok' => true));
     }
 
     /* ================= FLOAT SHORTAGE (management-only visibility) ================= */
@@ -1545,11 +1711,32 @@ try {
     }
 
     case 'shortages_get': {
-      $u = require_auth(); require_perm($u, 'targets', 'v'); // management only (om/md/superadmin)
+      $u = require_auth();
+      $isLeader = can($u, 'reports', 'e'); /* team leader / OM: sees + approves everything */
+      if (!$isLeader && !can($u, 'targets', 'v')) fail('No access', 403);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $st = db()->prepare('SELECT bdo, amount, reason, recover_by, notified, at FROM float_shortages WHERE month = ? ORDER BY id DESC');
+      if ($isLeader) {
+        /* leader view: everything, PENDING first, with the approve button data */
+        $st = db()->prepare('SELECT id, bdo, amount, reason, recover_by, notified, status, approved_by, at
+                             FROM float_shortages WHERE month = ? ORDER BY (status = "PENDING") DESC, id DESC');
+      } else {
+        /* top management sees only what the team leader has APPROVED */
+        $st = db()->prepare('SELECT id, bdo, amount, reason, recover_by, notified, status, approved_by, at
+                             FROM float_shortages WHERE month = ? AND status = "APPROVED" ORDER BY id DESC');
+      }
       $st->execute(array($month));
       respond($st->fetchAll());
+    }
+
+    /* Team leader clears a shortage report before top management sees it. */
+    case 'shortage_approve': {
+      $u = require_auth(); require_perm($u, 'reports', 'e');
+      $id = (int)bval('id');
+      $d = db()->prepare('UPDATE float_shortages SET status = "APPROVED", approved_by = ? WHERE id = ? AND status = "PENDING"');
+      $d->execute(array($u['username'], $id));
+      if (!$d->rowCount()) fail('Shortage not found or already approved', 404);
+      audit($u['id'], 'shortage_approve', 'id=' . $id);
+      respond(array('ok' => true));
     }
 
     /* ================= FLAGS (upload cross-check) & RANKINGS ================= */

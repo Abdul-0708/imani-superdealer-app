@@ -2,6 +2,7 @@
 /* Shared helpers: JSON I/O, session auth, permissions, normalizers. */
 
 error_reporting(E_ALL & ~E_DEPRECATED);
+date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {

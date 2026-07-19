@@ -5,6 +5,37 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.16.0 — 2026-07-19 · "Team leader, routes, two-way messages, EAT" — schema v10
+
+### Release notes
+- **EAT everywhere**: the whole server runs on Africa/Nairobi (+3); every date, cutoff and
+  greeting uses the business clock.
+- **Greetings**: "GOOD MORNING, ALEX — WELCOME 👋" (time-of-day, EAT) tops the dashboards.
+- **Agent search filters**: pick WHICH column to search (Account / Name / Phone / Branch /
+  Physical Location) + one-tap KPI filters (Served/Not Served, Visit YES/NO, APK YES/NO,
+  Active/Inactive). Chips now read **Not Served / Visit NO / APK NO / Inactive (wake up)**.
+- **BDO's Reports & Ranks**: he sees ONLY his own report days (server-enforced) plus one list —
+  **Top performing by weighted score** (everyone ranked).
+- **Messages 2.0**: new **Messages tab** for every member — newest first, **Reply** to the sender,
+  **Delete for me** (per-user; sender's copy stays). BDOs get a **Market feedback** composer
+  (complaints/opinions/suggestions) that lands only in the team leader's and OM's box (verified:
+  invisible to other BDOs).
+- **TEAM LEADER role** (assign in Admin): sees every BDO's reports/activities, messages all BDOs,
+  **approves float shortages before top management sees them** (verified: MD saw 0 until approval),
+  and runs **daily route plans**: BDOs write their route before **10:00 EAT** (server-enforced —
+  late submissions are rejected), the leader approves/rejects or **assigns** a route himself.
+
+### Changes
+- **Schema v10**: messages.kind/reply_to, msg_hidden, route_plans, float_shortages.status/
+  approved_by, `teamleader` role + permissions
+- `api.php`: agents field+KPI filters; daily_reports_get scoped; bdo_rank_public; messages_get
+  rework + message_dismiss/message_reply/feedback_send; shortages_get role-filtered +
+  shortage_approve; route_plan_save/get/review + route_assign
+- `app.js`: greetingLine (EAT), filter bar, chip labels, BDO reports branch, weighted-rank panel,
+  leader route+shortage panels, Messages tab, route panel on Daily. Assets `?v=21`, SW `imani-v21`
+
+---
+
 ## v1.15.0 — 2026-07-19 · "SA stations, APK = upgraders, specialist station panels"
 
 ### Release notes

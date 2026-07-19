@@ -166,6 +166,7 @@ function ensure_schema($pdo) {
   try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN proof VARCHAR(80) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
   schema_v8_apply($pdo);
   schema_v9_apply($pdo);
+  schema_v10_apply($pdo);
   seed($pdo);
 }
 
@@ -346,7 +347,54 @@ function upgrade_schema($pdo) {
   if ($ver < 9) {
     schema_v9_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "9" WHERE name = "schema_version"')->execute();
+    $ver = 9;
   }
+  if ($ver < 10) {
+    schema_v10_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "10" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v10: two-way messages (replies, per-user dismiss, BDO market feedback),
+ * TEAM LEADER role, float-shortage approval chain, daily route plans (EAT).
+ */
+function schema_v10_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE messages ADD COLUMN kind VARCHAR(12) NOT NULL DEFAULT "msg"',
+    'ALTER TABLE messages ADD COLUMN reply_to INT NOT NULL DEFAULT 0',
+    'ALTER TABLE float_shortages ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT "PENDING"',
+    'ALTER TABLE float_shortages ADD COLUMN approved_by VARCHAR(64) NOT NULL DEFAULT ""',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS msg_hidden (
+    message_id INT NOT NULL,
+    username VARCHAR(64) NOT NULL,
+    PRIMARY KEY (message_id, username)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS route_plans (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bdo VARCHAR(64) NOT NULL,
+    date DATE NOT NULL,
+    plan VARCHAR(2000) NOT NULL,
+    status VARCHAR(12) NOT NULL DEFAULT "PENDING",
+    by_leader VARCHAR(64) NOT NULL DEFAULT "",
+    note VARCHAR(255) NOT NULL DEFAULT "",
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_route (bdo, date)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
+  /* TEAM LEADER: sees every BDO report/activity, messages all BDOs, approves
+   * shortages and route plans. */
+  $pdo->prepare('INSERT IGNORE INTO roles (name, builtin) VALUES ("teamleader", 1)')->execute();
+  $perms = array(
+    array('teamleader','dashboard',1,0,0), array('teamleader','agents',1,0,0),
+    array('teamleader','targets',1,0,0), array('teamleader','reports',1,1,0),
+  );
+  $ins = $pdo->prepare('INSERT IGNORE INTO permissions (role, module, v, e, d) VALUES (?,?,?,?,?)');
+  foreach ($perms as $p) $ins->execute($p);
 }
 
 /*
@@ -453,5 +501,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","9")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","10")')->execute();
 }
