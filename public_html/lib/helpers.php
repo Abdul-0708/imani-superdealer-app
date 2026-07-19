@@ -546,13 +546,16 @@ function setting_del($name) {
   db()->prepare('DELETE FROM app_settings WHERE name = ?')->execute(array($name));
 }
 
-/* Erase everything ONE BDO filled (live work only - Excel/office data stays).
+/* Erase EVERYTHING attributed to one BDO: his live taps AND the credits the
+ * uploaded file gave him (served/visit/apk/active by him, his float rows) AND
+ * his saved base. His performance reads zero after this; the office month
+ * totals (dashboard snapshot) are separate and stay until uploads are erased.
  * scope 'month' = open month only, 'all' = his entire history. Returns counts. */
 function erase_bdo_data($bdo, $scope) {
   $month = open_month();
   $mw = $scope === 'month' ? ' AND month = ?' : '';
   $mv = $scope === 'month' ? array($bdo, $month) : array($bdo);
-  $pq = db()->prepare("SELECT proof FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo' AND proof <> ''" . $mw);
+  $pq = db()->prepare("SELECT proof FROM agent_month_kpi WHERE bdo = ? AND proof <> ''" . $mw);
   $pq->execute($mv);
   foreach ($pq->fetchAll() as $r) {
     $f = preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']);
@@ -563,10 +566,12 @@ function erase_bdo_data($bdo, $scope) {
                  WHERE k.month = ? AND k.kpi = "active" AND k.bdo = ? AND k.source = "bdo" AND a.act_month = ?')
       ->execute(array($month, $bdo, $month));
   $n = array();
-  $d = db()->prepare("DELETE FROM agent_month_kpi WHERE bdo = ? AND source = 'bdo'" . $mw);
+  $d = db()->prepare("DELETE FROM agent_month_kpi WHERE bdo = ?" . $mw);
   $d->execute($mv); $n['marks'] = $d->rowCount();
-  $d = db()->prepare("DELETE FROM service_history WHERE bdo = ? AND source = 'bdo'" . $mw);
+  $d = db()->prepare("DELETE FROM service_history WHERE bdo = ?" . $mw);
   $d->execute($mv); $n['services'] = $d->rowCount();
+  $d = db()->prepare("DELETE FROM base WHERE bdo = ?" . $mw);
+  $d->execute($mv); $n['base'] = $d->rowCount();
   $d = db()->prepare("DELETE FROM daily_reports WHERE bdo = ?" . $mw);
   $d->execute($mv); $n['reports'] = $d->rowCount();
   $d = db()->prepare("DELETE FROM float_shortages WHERE bdo = ?" . $mw);

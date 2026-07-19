@@ -667,7 +667,8 @@
   function doneChip(a, c, mark, isOM) {
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : c.label);
     var mine = state.user && mark.by === state.user.username;
-    var reversible = mark.src === 'bdo' && (isOM || mine);
+    /* OM overturns ANY tick (even file-sourced); a BDO only his own live marks */
+    var reversible = isOM || (mine && mark.src === 'bdo');
     var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = (c.key === 'active' && mark.proof)
@@ -1512,14 +1513,14 @@
         '<span class="note">removes every upload, all office numbers and file statuses - agents and BDO live work stay</span></div></div>' +
 
         '<div class="panel"><h2>' + svg('users') + 'One BDO - inspect &amp; erase</h2>' +
-        '<p class="note">See what he filled, delete single typed reports, or erase his month / everything (type his username to confirm).</p>' +
+        '<p class="note">See what is attributed to him, delete single typed reports, or erase his month / everything - marks, base and file credits included, his performance returns to zero (type his username to confirm).</p>' +
         '<div class="row"><div class="field"><label>BDO</label><select id="bdSel"><option value="">pick...</option>' +
         members.map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('') +
         '</select></div><button class="ghost" data-action="bdLoad">Load his data</button></div>' +
         '<div id="bdBox" style="margin-top:10px"></div></div>' +
 
         '<div class="panel"><h2>' + svg('alert') + 'Erase BDO data - tick members or take everyone</h2>' +
-        '<p class="note">Removes what THEY filled: agent marks (+proof photos), typed reports, won\'t-return marks, pipeline forms, shortages. Excel data is untouched here.</p>' +
+        '<p class="note">Removes EVERYTHING attributed to them: agent marks including the ones the uploaded file gave (+proof photos), typed reports, won\'t-return marks, pipeline forms, shortages and their saved base. Performance reads ZERO after. Office month totals stay until you erase uploads above.</p>' +
         '<div class="row" style="margin-bottom:8px">' + (memChecks || '<span class="note">no members</span>') + '</div>' +
         '<div class="row"><div class="field"><label>Scope</label><select id="mScope"><option value="month">This month only</option><option value="all">Everything (all months)</option></select></div>' +
         '<button class="danger" data-action="mEraseSel">Erase ticked members</button>' +

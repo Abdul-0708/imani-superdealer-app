@@ -812,9 +812,9 @@ try {
       if ($bdo === '') fail('Pick a BDO');
       $month = open_month();
       $c = array();
-      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ? AND source = "bdo" AND month = ?');
+      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ? AND month = ?');
       $q->execute(array($bdo, $month)); $c['marksMonth'] = (int)$q->fetch()['c'];
-      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ? AND source = "bdo"');
+      $q = db()->prepare('SELECT COUNT(*) c FROM agent_month_kpi WHERE bdo = ?');
       $q->execute(array($bdo)); $c['marksAll'] = (int)$q->fetch()['c'];
       $q = db()->prepare('SELECT COUNT(*) c FROM daily_reports WHERE bdo = ? AND month = ?');
       $q->execute(array($bdo, $month)); $c['reportsMonth'] = (int)$q->fetch()['c'];
@@ -1083,7 +1083,12 @@ try {
       $chk->execute(array($month, $agentId, $kpi));
       $row = $chk->fetch();
       if (!$row) fail('Nothing to reverse', 404);
-      if ($row['source'] !== 'bdo') fail('This status came from the uploaded file - re-upload to change it', 400);
+      /* BDOs can only touch their OWN live marks; the OM can overturn ANY tick,
+       * including ones the uploaded file gave (served/visit/apk/active). The
+       * overturn hits that BDO's performance and base immediately. */
+      if ($row['source'] !== 'bdo' && !$isOM) {
+        fail('This status came from the uploaded file - only the OM can overturn it', 400);
+      }
       if (!$isOM && $row['bdo'] !== $u['username']) fail('You can only reverse your own marks', 403);
       /* A BDO gets a 6-HOUR window to correct his own wrong tap. After that only
        * the OM can return the agent's status (no time limit for the OM - the
@@ -1094,7 +1099,13 @@ try {
 
       db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')->execute(array($month, $agentId, $kpi));
       if ($kpi === 'served') {
-        db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ? AND source = "bdo"')->execute(array($month, $agentId, $row['bdo']));
+        /* live serve: remove his bdo service row; file serve (OM overturn):
+         * remove the file's rows for this agent+bdo so his float drops too */
+        if ($row['source'] === 'bdo') {
+          db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ? AND source = "bdo"')->execute(array($month, $agentId, $row['bdo']));
+        } else {
+          db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ?')->execute(array($month, $agentId, $row['bdo']));
+        }
       }
       if ($kpi === 'active') {
         db()->prepare('UPDATE agents SET act_current = "INACTIVE" WHERE id = ? AND act_month = ?')->execute(array($agentId, $month));

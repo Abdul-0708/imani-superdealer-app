@@ -5,6 +5,32 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.14.1 — 2026-07-19 · "BDO erase = truly zero + OM overturns file ticks"
+
+### Release notes
+Two fixes from the field. **(1) Erasing a BDO now takes him to ZERO.** Before, the eraser removed
+only his live taps — the credits the uploaded Excel gave him (served/visit/apk/active by him, his
+float rows) and his saved base survived, so his dashboard still read numbers. Now `erase_bdo_data`
+removes **everything attributed to him**: all ledger marks regardless of source, all his service
+rows, his entire saved base, plus the previous items. Verified: upload gave Mary base 6 / score
+22% / float 150,000 → erase → base 0 / score 0 / float 0, and no chip anywhere still says "by
+mary". Office month totals (the dashboard snapshot) are separate and stay until uploads are erased
+in the Data Manager. **(2) OM overturns ANY tick** on the agent list — including served / visits /
+APK / activeness that came from the uploaded file (chips titled "from file" now show the × for the
+OM). Overturning a file-served also removes the file's service rows for that agent+BDO so his
+float drops (verified served 2→1, float 150,000→60,000). BDOs remain restricted to their own live
+marks within the 6-hour window.
+
+### Changes
+- `lib/helpers.php` `erase_bdo_data()`: deletes ledger marks (all sources), service_history (all
+  sources), `base` rows; proof cleanup covers upload-attributed marks
+- `api.php` `kpi_unmark`: OM may reverse `source='upload'`; file-served reversal deletes the
+  file's service rows for that agent+BDO; `bdo_data_summary` counts all attributed marks
+- `app.js`: × shown to OM on file-sourced chips; Data Manager notes updated. Assets `?v=19`,
+  SW `imani-v19`
+
+---
+
 ## v1.14.0 — 2026-07-19 · "Data Manager tab + upload registry" — schema v9
 
 ### Release notes
