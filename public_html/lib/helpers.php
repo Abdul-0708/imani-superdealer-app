@@ -3,6 +3,11 @@
 
 error_reporting(E_ALL & ~E_DEPRECATED);
 date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
+
+/* Bumped with every release. The browser compares it against its own copy and
+ * warns loudly if only SOME files were uploaded (the classic half-deploy that
+ * makes buttons mysteriously stop working). */
+define('APP_VERSION', '1.18.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {

@@ -491,3 +491,34 @@ body.light.pal-blue .nav-item{color:#41597a}
 body.light.pal-green .nav-item.active,body.light.pal-green .nav-item.active *,
 body.light.pal-blue .nav-item.active,body.light.pal-blue .nav-item.active *{color:#ffffff}
 body.light.pal-yellow .nav-item.active,body.light.pal-yellow .nav-item.active *{color:#2a2008}
+
+/* FIX: "mine" chips in the light palettes were getting the pale done-background
+ * (body.light .kchip.done wins on specificity) PLUS white text = invisible.
+ * Give them a SOLID accent fill so white text is always readable. */
+body.light.pal-green  .kchip.done.mine{background:#0b8043;color:#fff;border-color:transparent}
+body.light.pal-blue   .kchip.done.mine{background:#1557b0;color:#fff;border-color:transparent}
+body.light.pal-yellow .kchip.done.mine{background:#8a5a00;color:#fff;border-color:transparent}
+body.light.pal-green  .kchip.done.mine small,
+body.light.pal-blue   .kchip.done.mine small,
+body.light.pal-yellow .kchip.done.mine small{color:#fff;opacity:.9}
+body.light.pal-green  .kchip.done.mine .kchip-x,
+body.light.pal-blue   .kchip.done.mine .kchip-x,
+body.light.pal-yellow .kchip.done.mine .kchip-x{color:#fff;opacity:.9}
+/* same trap on the default light fire theme */
+body.light .kchip.done.mine{background:#b5450b;color:#fff;border-color:transparent}
+body.light .kchip.done.mine small,body.light .kchip.done.mine .kchip-x{color:#fff;opacity:.9}
+
+/* hovering an open chip fills it with the gradient - keep that text readable */
+body.light.pal-green .kchip.todo:hover,
+body.light.pal-blue  .kchip.todo:hover{color:#fff}
+body.light.pal-yellow .kchip.todo:hover{color:#2a2008}
+
+/* a colleague's (locked) chip was only ~3:1 on the white palettes - darken the
+ * text and firm up the tint so it clears WCAG AA in every theme */
+body.light .kchip.done{background:rgba(63,143,67,.20);color:#1b4d1f}
+body.light .kchip.done small{opacity:.95}
+body.light .kchip.off{color:#5c4a38;opacity:.9}
+body.light.pal-blue .kchip.done{background:rgba(21,87,176,.14);color:#123f7d}
+body.light.pal-blue .kchip.off{color:#41597a;opacity:.95}
+body.light.pal-green .kchip.off{color:#3d5c4b;opacity:.95}
+body.light.pal-yellow .kchip.off{color:#6b5a2e;opacity:.95}

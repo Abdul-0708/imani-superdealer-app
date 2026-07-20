@@ -5,6 +5,30 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.18.0 — 2026-07-20 · "Live work, Field Tasks tab, cleaner My Base + palette contrast"
+
+- **LIVE WORK TODAY** on the OM dashboard: every KPI a BDO tapped today with the exact time
+  (EAT), per-KPI totals, per-BDO leaderboard, today's new-agent forms and won't-return calls.
+  One tap → **Download day (Excel)**.
+- **New Field Tasks tab** for BDOs: partner-served agents (claim + capture location) and the
+  station-grouped inactive list (wake with receipt + location). These are things to CLAIM, so
+  they no longer clutter My Agent Base and only touch performance once acted on.
+- **My Agent Base cleaned up**: partner-served, inactive and the Recruit button are all gone;
+  a short hint sends BDOs to Field Tasks when partner work is waiting.
+- **Activeness section on Daily Report**: recruit-new-agent lives here now; note explains that
+  recruits AND wake-ups count in the same Activeness KPI this month.
+- **Palette contrast fixed**: "mine" chips (Served ✓ you) get solid accent + white text in every
+  palette; colleague chips darkened. Real-panel verify: mine 5–7:1, colleague 7–8:1 (WCAG AA/AAA).
+- **Deploy guard**: server + client stamp `APP_VERSION`; a mismatch shows a loud banner instead
+  of silent broken buttons, and explains WHY marking is off when the mybase-edit permission is
+  missing.
+
+Server: `api.php` `live_today`. Client: `viewField()`, `liveTodayLoad()`/`liveDownload()`,
+activenessPanel, `deployWarning()`/`markingOffNote()`. Assets `?v=28`, SW `imani-v28`,
+`APP_VERSION 1.18.0`.
+
+---
+
 ## v1.17.0 — 2026-07-20 · "Field users can never gain management powers + 4 colour themes"
 
 ### ROOT CAUSE of "BDOs can still overturn other BDOs"

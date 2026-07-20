@@ -53,6 +53,7 @@ try {
       respond(array(
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
+        'serverVersion' => APP_VERSION,
       ));
     }
 
@@ -82,6 +83,7 @@ try {
       respond(array(
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
+        'serverVersion' => APP_VERSION,
       ));
     }
 
@@ -98,6 +100,7 @@ try {
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'',
                         'totp_on' => (isset($u['totp_secret']) && $u['totp_secret'] !== '')),
         'perms' => perms_for_role($u['role']),
+        'serverVersion' => APP_VERSION,
       ));
     }
 
@@ -972,6 +975,67 @@ try {
       db()->exec("UPDATE agents SET act_current = '', act_prev = '', act_month = '', partner = 0");
       audit($u['id'], 'excel_erase_all', json_encode($n));
       respond(array('ok' => true, 'deleted' => $n));
+    }
+
+    /*
+     * LIVE WORK OF THE DAY (OM/management): every KPI a BDO ticked today with
+     * the exact TIME, plus the recruit forms, won't-return calls and typed
+     * reports of that day. This is the "what is my team doing right now" feed.
+     */
+    case 'live_today': {
+      $u = require_auth();
+      if (!can($u, 'targets', 'v') && !can($u, 'reports', 'e')) fail('No access', 403);
+      $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date'] ?? '')) ? $_GET['date'] : date('Y-m-d');
+
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
+
+      /* live agent ticks with their timestamps */
+      $q = db()->prepare('SELECT k.at, k.bdo, k.kpi, k.proof, k.proof_note,
+                                 a.acc, a.name AS agent, a.branch, a.station, a.physical_location
+                          FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                          WHERE DATE(k.at) = ? AND k.source = "bdo"
+                          ORDER BY k.at DESC');
+      $q->execute(array($date));
+      $marks = array(); $perBdo = array(); $perKpi = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
+      foreach ($q->fetchAll() as $r) {
+        $r['bdoName'] = isset($names[$r['bdo']]) ? $names[$r['bdo']] : $r['bdo'];
+        $r['time'] = substr((string)$r['at'], 11, 5);
+        $r['hasProof'] = ($r['proof'] !== '' || $r['proof_note'] !== '');
+        unset($r['proof'], $r['proof_note']);
+        $marks[] = $r;
+        if (!isset($perBdo[$r['bdo']])) $perBdo[$r['bdo']] = array('bdo'=>$r['bdo'], 'name'=>$r['bdoName'], 'served'=>0,'visit'=>0,'apk'=>0,'active'=>0,'total'=>0);
+        if (isset($perBdo[$r['bdo']][$r['kpi']])) { $perBdo[$r['bdo']][$r['kpi']]++; $perBdo[$r['bdo']]['total']++; }
+        if (isset($perKpi[$r['kpi']])) $perKpi[$r['kpi']]++;
+      }
+
+      /* new-agent forms opened today */
+      $rq = db()->prepare('SELECT bdo, name, branch, champion, stage, submitted_at FROM recruits
+                           WHERE DATE(submitted_at) = ? ORDER BY submitted_at DESC');
+      $rq->execute(array($date));
+      $recruits = $rq->fetchAll();
+      foreach ($recruits as &$rr) { $rr['time'] = substr((string)$rr['submitted_at'], 11, 5); $rr['bdoName'] = isset($names[$rr['bdo']]) ? $names[$rr['bdo']] : $rr['bdo']; }
+      unset($rr);
+
+      /* agents confirmed they will not return, today */
+      $wq = db()->prepare('SELECT w.bdo, w.note, w.at, a.acc, a.name AS agent, a.branch, a.station
+                           FROM wont_return w JOIN agents a ON a.id = w.agent_id
+                           WHERE DATE(w.at) = ? ORDER BY w.at DESC');
+      $wq->execute(array($date));
+      $wont = $wq->fetchAll();
+      foreach ($wont as &$ww) { $ww['time'] = substr((string)$ww['at'], 11, 5); $ww['bdoName'] = isset($names[$ww['bdo']]) ? $names[$ww['bdo']] : $ww['bdo']; }
+      unset($ww);
+
+      /* typed daily reports (float + APK numbers) for the day */
+      $dq = db()->prepare('SELECT bdo, float_served, apk, created_at FROM daily_reports WHERE report_date = ?');
+      $dq->execute(array($date));
+      $reports = $dq->fetchAll();
+      foreach ($reports as &$dd) { $dd['time'] = substr((string)$dd['created_at'], 11, 5); $dd['bdoName'] = isset($names[$dd['bdo']]) ? $names[$dd['bdo']] : $dd['bdo']; }
+      unset($dd);
+
+      usort($perBdo, function ($a, $b) { return $b['total'] - $a['total']; });
+      respond(array('date' => $date, 'now' => date('H:i'), 'marks' => $marks, 'perBdo' => array_values($perBdo),
+                    'perKpi' => $perKpi, 'recruits' => $recruits, 'wontReturn' => $wont, 'reports' => $reports));
     }
 
     /* ============ WON'T-RETURN list (deletion candidates) ============
