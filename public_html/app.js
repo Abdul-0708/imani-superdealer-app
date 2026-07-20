@@ -166,6 +166,17 @@
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
     'Status updated': 'Hali imesasishwa',
+    'Theme': 'Muonekano',
+    'Choose theme': 'Chagua muonekano',
+    'Pick the colours you like. Saved on this device.': 'Chagua rangi unazopenda. Zinahifadhiwa kwenye kifaa hiki.',
+    'Fire orange': 'Fire orange',
+    'Fire green & white': 'Fire green na nyeupe',
+    'Fire yellow & white': 'Fire yellow na nyeupe',
+    'Fire blue & white': 'Fire blue na nyeupe',
+    'the original': 'ya awali',
+    'light': 'nyeupe',
+    'Fire orange mode': 'Hali ya fire orange',
+    'Done': 'Nimemaliza',
     'Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.':
       'Waliokuwa ACTIVE mwezi uliopita kwanza: wamekaa kimya - waamshe kabla mwezi haujaisha. Kuamsha kunahitaji uthibitisho wa risiti na mahali alipo.',
     'My Dashboard': 'Dashibodi Yangu',
@@ -240,6 +251,18 @@
     if (state.user && state.user.role === 'superadmin') return true;
     var p = state.perms[mod]; return !!(p && p[lvl]);
   }
+  /* Mirrors the server: a FIELD user (a BDO who marks his own base) never gets
+   * management override powers, even if someone ticks "agents: Edit" for his
+   * role in Access Control. Managers = OM / super admin. */
+  function isFieldUser() {
+    if (state.user && state.user.role === 'superadmin') return false;
+    return can('mybase', 'e');
+  }
+  function isManager() {
+    if (state.user && state.user.role === 'superadmin') return true;
+    if (isFieldUser()) return false;
+    return can('agents', 'e');
+  }
   function initials(n) { var w = ('' + n).match(/[A-Za-z]+/g) || []; return ((w[0] ? w[0][0] : '') + (w[1] ? w[1][0] : '')).toUpperCase() || 'U'; }
   function curMonth() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
   function isoOf(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
@@ -251,13 +274,57 @@
     var d = new Date();
     return days[d.getDay()] + ', ' + d.getDate() + ' ' + mon[d.getMonth()] + ' ' + d.getFullYear();
   }
-  /* Theme: dark (default fire) or light. Persisted in localStorage. */
-  function applyTheme() { document.body.classList.toggle('light', localStorage.getItem('imani_theme') === 'light'); }
+  /* ---------------- themes: 4 colour palettes ----------------
+   * 'fire'   = the original look (dark by default, Light/Dark switch applies)
+   * the three "& white" palettes always ride on the light base. */
+  var PALETTES = [
+    { key: 'fire', label: 'Fire orange', sub: 'the original', dot: 'linear-gradient(135deg,#ff5400,#ff9a1f,#ffd84a)' },
+    { key: 'green', label: 'Fire green & white', sub: 'light', dot: 'linear-gradient(135deg,#0b8043,#0f9d58,#57c98a)' },
+    { key: 'yellow', label: 'Fire yellow & white', sub: 'light', dot: 'linear-gradient(135deg,#f9ab00,#ffc93c,#ffe08a)' },
+    { key: 'blue', label: 'Fire blue & white', sub: 'light', dot: 'linear-gradient(135deg,#1557b0,#1a73e8,#6fa8f5)' }
+  ];
+  function curPal() {
+    var p = localStorage.getItem('imani_pal') || 'fire';
+    return PALETTES.some(function (x) { return x.key === p; }) ? p : 'fire';
+  }
+  function applyTheme() {
+    var pal = curPal();
+    var light = localStorage.getItem('imani_theme') === 'light';
+    document.body.classList.remove('pal-green', 'pal-yellow', 'pal-blue');
+    if (pal !== 'fire') { document.body.classList.add('pal-' + pal); light = true; } // white palettes
+    document.body.classList.toggle('light', light);
+  }
+  function setPalette(p) {
+    localStorage.setItem('imani_pal', p);
+    if (p !== 'fire') localStorage.setItem('imani_theme', 'light');
+    applyTheme();
+  }
   function toggleTheme() {
     var light = !document.body.classList.contains('light');
-    document.body.classList.toggle('light', light);
     localStorage.setItem('imani_theme', light ? 'light' : 'dark');
-    var b = elById('themeBtn'); if (b) b.innerHTML = light ? (svg('flame') + ' ' + t('Dark')) : (svg('eye') + ' ' + t('Light'));
+    if (light === false) localStorage.setItem('imani_pal', 'fire'); // dark = fire only
+    applyTheme();
+    renderShell();
+  }
+  /* picker: 4 palettes + a Dark/Light switch for the fire palette */
+  function themePicker() {
+    var pal = curPal();
+    var opts = PALETTES.map(function (p) {
+      return '<button class="pal-opt' + (p.key === pal ? ' on' : '') + '" data-action="palSet" data-p="' + p.key + '">' +
+        '<span class="pal-dot" style="background:' + p.dot + '"></span>' +
+        '<span>' + esc(t(p.label)) + '<br><span class="note">' + esc(t(p.sub)) + '</span></span></button>';
+    }).join('');
+    var isLight = document.body.classList.contains('light');
+    openModal('<h2>' + svg('flame') + ' ' + t('Choose theme') + '</h2>' +
+      '<p class="note">' + t('Pick the colours you like. Saved on this device.') + '</p>' +
+      '<div class="pal-grid">' + opts + '</div>' +
+      (pal === 'fire'
+        ? '<div class="row" style="margin-top:12px;align-items:center"><span class="note">' + t('Fire orange mode') + '</span>' +
+          '<div class="spacer"></div><button class="ghost" data-action="toggleTheme">' +
+          (isLight ? svg('flame') + ' ' + t('Dark') : svg('eye') + ' ' + t('Light')) + '</button></div>'
+        : '') +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="btn" data-action="closeModal">' + t('Done') + '</button></div>');
   }
 
   /* ---------------- icons (inline SVG, stroke) ---------------- */
@@ -397,7 +464,7 @@
   function visibleModules() {
     return MODULES.filter(function (m) {
       if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
-      if (m.key === 'data') return can('agents', 'e'); // OM/superadmin data manager
+      if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
@@ -417,8 +484,8 @@
       nav +
       '<div class="sb-foot"><div class="sb-user"><span class="avatar">' + esc(initials(state.user.name)) + '</span>' +
       '<div><b>' + esc(state.user.name) + '</b><small>' + esc(roleLabel(state.user.role)) + '</small></div></div>' +
-      '<div class="sb-actions"><button class="ghost tiny" id="themeBtn" data-action="toggleTheme" title="Theme">' +
-      (document.body.classList.contains('light') ? svg('flame') + ' ' + t('Dark') : svg('eye') + ' ' + t('Light')) + '</button>' +
+      '<div class="sb-actions"><button class="ghost tiny" id="themeBtn" data-action="themePick" title="' + esc(t('Choose theme')) + '">' +
+      svg('flame') + ' ' + t('Theme') + '</button>' +
       '<button class="ghost tiny" data-action="toggleLang" title="Language">' + (LANG === 'sw' ? 'EN' : 'SW') + '</button>' +
       '<button class="ghost tiny" data-action="pwd">' + t('Password') + '</button>' +
       '<button class="ghost tiny" data-action="logout">' + t('Sign out') + '</button></div></div>' +
@@ -747,7 +814,7 @@
   /* the activeness specialist works ONLY on waking + recruiting */
   function isSpecial() { return state.user && state.user.specialty === 'activeness'; }
   function kpiChips(a, editable) {
-    var isOM = can('agents', 'e');
+    var isOM = isManager();
     var list = isSpecial() ? KPI_CHIPS.filter(function (c) { return c.key === 'active'; }) : KPI_CHIPS;
     return list.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('') + wontReturnBtn(a);
   }
@@ -1046,10 +1113,15 @@
    * the user's position - the row stays where it is with a fresh green chip. */
   function chipDoneHtml(kpiKey, owner, agentId) {
     var c = KPI_CHIPS.filter(function (x) { return x.key === kpiKey; })[0];
-    var lbl = kpiKey === 'active' ? 'Active' : (kpiKey === 'visit' ? 'Visit YES' : (c ? c.label : kpiKey));
-    /* a just-made mark is the current user's own bdo mark -> reversible */
-    var x = ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>';
-    return '<span class="kchip done mine" title="Done by you">' +
+    var lbl = kpiKey === 'active' ? 'Active' : (kpiKey === 'visit' ? 'Visit YES'
+            : (kpiKey === 'apk' ? 'APK YES' : (c ? c.label : kpiKey)));
+    /* Only MY own fresh mark (or a manager) gets the reverse ×. When the server
+     * said "already done by <colleague>" the chip belongs to HIM - show it
+     * locked, never as "done by you" with a working × . */
+    var mine = state.user && owner === state.user.username;
+    var reversible = mine || isManager();
+    var x = reversible ? ' <button class="kchip-x" title="Reverse this mark" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + agentId + '" data-kpi="' + kpiKey + '">&times;</button>' : '';
+    return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(owner) + '">' +
       esc(lbl) + ' &#10003; <small>' + esc(owner) + '</small>' + x + '</span>';
   }
   function swapChip(node, kpi, owner) {
@@ -1934,7 +2006,9 @@
       }
       state.tab = toTab; renderShell(); return;
     }
-    if (a === 'toggleTheme') { toggleTheme(); return; }
+    if (a === 'toggleTheme') { toggleTheme(); themePicker(); return; }
+    if (a === 'themePick') { themePicker(); return; }
+    if (a === 'palSet') { setPalette(node.getAttribute('data-p')); renderShell(); themePicker(); return; }
     if (a === 'toggleLang') { toggleLang(); return; }
     if (a === 'logout') { doLogout(); return; }
     if (a === 'backToLogin') { renderLogin(); return; }

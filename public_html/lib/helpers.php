@@ -116,6 +116,28 @@ function perms_for_role($role) {
   return $out;
 }
 
+/*
+ * FIELD user = someone who marks KPIs on his own agent base (a BDO).
+ * MANAGER = OM / super-admin level, the only ones who may overturn a colleague's
+ * work or reach the Data Manager erasers.
+ *
+ * These are deliberately NOT plain permission checks: if an admin ever ticks
+ * "agents: Edit" for the BDO role in Access Control, a BDO must still NOT gain
+ * management override powers. Being a field user always wins.
+ */
+function is_field_user($user) {
+  if ($user['role'] === 'superadmin') return false;
+  return can($user, 'mybase', 'e');
+}
+function is_manager($user) {
+  if ($user['role'] === 'superadmin') return true;
+  if (is_field_user($user)) return false;
+  return can($user, 'agents', 'e');
+}
+function require_manager($user) {
+  if (!is_manager($user)) fail('Management access only', 403);
+}
+
 function can($user, $module, $level) {
   if ($user['role'] === 'superadmin') return true;
   $p = perms_for_role($user['role']);

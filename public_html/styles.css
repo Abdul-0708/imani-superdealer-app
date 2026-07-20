@@ -401,3 +401,93 @@ a.tel:hover{color:var(--fire2);border-bottom-color:var(--fire2)}
 .msg-head{font-size:12px;margin-bottom:4px;color:var(--muted)}
 .msg-head b{color:var(--ink)}
 .msg-body{font-size:14px}
+
+/* ================= COLOUR PALETTES (4 themes) =================
+ * "fire" (default) = the original dark orange look.
+ * The three "& white" palettes ride on top of body.light and only re-point the
+ * accent variables, so every component keeps its shape and contrast rules.
+ * Specificity: body.light.pal-x (0,2,1) beats body.light (0,1,1). */
+
+/* ---- FIRE GREEN & WHITE ---- */
+body.light.pal-green{
+  --fire:#0f9d58; --fire2:#0b7a3d; --gold:#116633; --yellow:#0d652d;
+  --grad:linear-gradient(135deg,#0b8043 0%,#0f9d58 45%,#57c98a 100%);
+  --grad-soft:linear-gradient(135deg,rgba(15,157,88,.12),rgba(87,201,138,.10));
+  --glow:0 0 14px rgba(15,157,88,.20); --glow-strong:0 0 20px rgba(15,157,88,.34);
+  --line:#cfe8d8;
+}
+body.light.pal-green{background:radial-gradient(900px 500px at 85% -10%,rgba(15,157,88,.10),transparent 60%),var(--bg)}
+body.light.pal-green .sidebar{background:linear-gradient(180deg,#e9f7ef,#ffffff)}
+body.light.pal-green .pill.fire{background:rgba(15,157,88,.14);color:#0b7a3d}
+body.light.pal-green .kchip.todo{color:#0b7a3d}
+body.light.pal-green tbody tr:hover{background:rgba(15,157,88,.07)}
+
+/* ---- FIRE YELLOW & WHITE ---- */
+body.light.pal-yellow{
+  --fire:#f9ab00; --fire2:#8a5a00; --gold:#7a4f00; --yellow:#6d4600;
+  --grad:linear-gradient(135deg,#f9ab00 0%,#ffc93c 45%,#ffe08a 100%);
+  --grad-soft:linear-gradient(135deg,rgba(249,171,0,.14),rgba(255,224,138,.10));
+  --glow:0 0 14px rgba(249,171,0,.22); --glow-strong:0 0 20px rgba(249,171,0,.36);
+  --line:#f0e2bd;
+}
+body.light.pal-yellow{background:radial-gradient(900px 500px at 85% -10%,rgba(249,171,0,.12),transparent 60%),var(--bg)}
+body.light.pal-yellow .sidebar{background:linear-gradient(180deg,#fff8e1,#ffffff)}
+body.light.pal-yellow .pill.fire{background:rgba(249,171,0,.18);color:#8a5a00}
+body.light.pal-yellow .kchip.todo{color:#8a5a00}
+body.light.pal-yellow tbody tr:hover{background:rgba(249,171,0,.09)}
+
+/* ---- FIRE BLUE & WHITE ---- */
+body.light.pal-blue{
+  --fire:#1a73e8; --fire2:#1557b0; --gold:#0b57d0; --yellow:#174ea6;
+  --grad:linear-gradient(135deg,#1557b0 0%,#1a73e8 45%,#6fa8f5 100%);
+  --grad-soft:linear-gradient(135deg,rgba(26,115,232,.12),rgba(111,168,245,.10));
+  --glow:0 0 14px rgba(26,115,232,.20); --glow-strong:0 0 20px rgba(26,115,232,.34);
+  --line:#d3e3fd;
+}
+body.light.pal-blue{background:radial-gradient(900px 500px at 85% -10%,rgba(26,115,232,.10),transparent 60%),var(--bg)}
+body.light.pal-blue .sidebar{background:linear-gradient(180deg,#e8f0fe,#ffffff)}
+body.light.pal-blue .pill.fire{background:rgba(26,115,232,.14);color:#1557b0}
+body.light.pal-blue .kchip.todo{color:#1557b0}
+body.light.pal-blue tbody tr:hover{background:rgba(26,115,232,.07)}
+
+/* green + blue gradients are dark -> put WHITE text on anything gradient-filled */
+body.pal-green button.btn,body.pal-blue button.btn,
+body.pal-green .nav-item.active,body.pal-green .nav-item.active *,
+body.pal-blue .nav-item.active,body.pal-blue .nav-item.active *,
+body.pal-green .avatar,body.pal-green .sb-mark,body.pal-green .brandmark,
+body.pal-blue .avatar,body.pal-blue .sb-mark,body.pal-blue .brandmark,
+body.pal-green .kchip.done.mine,body.pal-blue .kchip.done.mine,
+body.pal-green .kchip.todo:hover,body.pal-blue .kchip.todo:hover{color:#ffffff}
+body.pal-green .sb-title,body.pal-blue .sb-title,body.pal-yellow .sb-title{-webkit-text-fill-color:transparent}
+
+/* theme picker swatches */
+.pal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:6px}
+.pal-opt{display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;
+  background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;color:var(--ink);text-align:left}
+.pal-opt:hover{border-color:var(--fire2);box-shadow:var(--glow)}
+.pal-opt.on{border-color:var(--fire2);box-shadow:var(--glow-strong)}
+.pal-dot{width:26px;height:26px;border-radius:8px;flex:none;box-shadow:var(--e1)}
+
+/* neutral white bases per palette (the shared light theme is warm cream) */
+body.light.pal-green{--bg:#f5faf7;--bg2:#ffffff;--panel:#ffffff;--panel2:#f2faf5;--ink:#10261a;--muted:#4a6b58}
+body.light.pal-green .card,body.light.pal-green .panel{background:linear-gradient(180deg,#ffffff,#f4fbf7)}
+body.light.pal-green input,body.light.pal-green select{background:#f8fdfa}
+body.light.pal-green th{background:#eef8f2}
+body.light.pal-green .nav-item{color:#3d5c4b}
+
+body.light.pal-yellow{--bg:#fffdf4;--bg2:#ffffff;--panel:#ffffff;--panel2:#fffaea;--ink:#2a2008;--muted:#6b5a2e}
+body.light.pal-yellow .card,body.light.pal-yellow .panel{background:linear-gradient(180deg,#ffffff,#fffbf0)}
+body.light.pal-yellow input,body.light.pal-yellow select{background:#fffdf6}
+body.light.pal-yellow th{background:#fff8e6}
+body.light.pal-yellow .nav-item{color:#6b5a2e}
+
+body.light.pal-blue{--bg:#f5f9ff;--bg2:#ffffff;--panel:#ffffff;--panel2:#f2f7ff;--ink:#0c1c33;--muted:#4a5f7c}
+body.light.pal-blue .card,body.light.pal-blue .panel{background:linear-gradient(180deg,#ffffff,#f4f9ff)}
+body.light.pal-blue input,body.light.pal-blue select{background:#f8fbff}
+body.light.pal-blue th{background:#eef4fe}
+body.light.pal-blue .nav-item{color:#41597a}
+
+/* keep gradient-filled surfaces readable (must come last to win) */
+body.light.pal-green .nav-item.active,body.light.pal-green .nav-item.active *,
+body.light.pal-blue .nav-item.active,body.light.pal-blue .nav-item.active *{color:#ffffff}
+body.light.pal-yellow .nav-item.active,body.light.pal-yellow .nav-item.active *{color:#2a2008}

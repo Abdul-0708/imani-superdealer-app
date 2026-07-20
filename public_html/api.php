@@ -846,7 +846,7 @@ try {
      * from these tables.
      */
     case 'bdo_data_summary': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
       if ($bdo === '') fail('Pick a BDO');
       $month = open_month();
@@ -873,7 +873,7 @@ try {
 
     /* OM/admin deletes ONE typed daily report - the day reads as missed again. */
     case 'daily_report_delete': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $id = (int)bval('id');
       $st = db()->prepare('SELECT bdo, report_date FROM daily_reports WHERE id = ?');
       $st->execute(array($id));
@@ -887,7 +887,7 @@ try {
     /* Bulk erase of what BDOs filled (their live work only - Excel data has its
      * own eraser below). Accepts one bdo, a ticked list, or "ALL". */
     case 'bdo_data_erase': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $scope = bval('scope') === 'all' ? 'all' : 'month';
       $list = bval('bdos');
       if (!is_array($list)) $list = array((string)bval('bdo'));
@@ -917,13 +917,13 @@ try {
     /* Every upload, newest first: date+time, label, who, how many rows. */
     case 'uploads_list': {
       $u = require_auth();
-      if (!can($u, 'upload', 'v') && !can($u, 'agents', 'e')) fail('No access', 403);
+      if (!can($u, 'upload', 'v') && !is_manager($u)) fail('No access', 403);
       $rows = db()->query('SELECT id, month, week, label, by_user, rows_count, at FROM uploads ORDER BY id DESC LIMIT 200')->fetchAll();
       respond(array('rows' => $rows));
     }
 
     case 'upload_label': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $id = (int)bval('id');
       $label = mb_substr(trim((string)bval('label')), 0, 160);
       if ($label === '') fail('Type a label');
@@ -937,7 +937,7 @@ try {
     /* Erase ONE upload: its history rows + the ledger credits it created. The
      * month's office snapshot falls back to the latest remaining upload. */
     case 'upload_erase': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $id = (int)bval('id');
       $st = db()->prepare('SELECT * FROM uploads WHERE id = ?');
       $st->execute(array($id));
@@ -963,7 +963,7 @@ try {
      * ledger credits, office snapshots, agent activeness statuses from files.
      * Agents themselves (the roster) and all BDO live work stay. */
     case 'excel_erase_all': {
-      $u = require_auth(); require_perm($u, 'agents', 'e');
+      $u = require_auth(); require_manager($u);
       $n = array();
       $n['services'] = db()->exec("DELETE FROM service_history WHERE source <> 'bdo'");
       $n['marks'] = db()->exec("DELETE FROM agent_month_kpi WHERE source = 'upload'");
@@ -1110,7 +1110,9 @@ try {
      */
     case 'kpi_unmark': {
       $u = require_auth();
-      $isOM = can($u, 'agents', 'e');
+      /* is_manager(), NOT can(agents,e): a BDO who was granted agents-edit in
+       * Access Control must still never overturn a colleague's work. */
+      $isOM = is_manager($u);
       if (!$isOM && !can($u, 'mybase', 'e')) fail('No access', 403);
       $agentId = (int)bval('agentId');
       $kpi = (string)bval('kpi');

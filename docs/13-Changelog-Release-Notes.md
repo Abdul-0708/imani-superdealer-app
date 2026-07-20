@@ -5,6 +5,43 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.17.0 — 2026-07-20 · "Field users can never gain management powers + 4 colour themes"
+
+### ROOT CAUSE of "BDOs can still overturn other BDOs"
+The BDO role in the live database had been granted **agents: Edit** in Access Control. Every
+management check in the app was a plain `can(agents,'e')`, so those BDOs were being treated as
+managers: they could overturn any mark **and** the Data Manager tab (erase-everything buttons) was
+visible to them. Permission toggles alone could silently hand out admin power.
+
+**Fix — a field user can never be a manager.** New `is_field_user()` / `is_manager()` /
+`require_manager()` (server) and `isFieldUser()` / `isManager()` (client): anyone who can mark his
+own base (a BDO) is a FIELD user, and a field user never gets management override — regardless of
+what permissions are ticked. Only OM / super-admin qualify. Verified with `bdo.agents.edit = 1`
+deliberately granted:
+- overturn a colleague's mark → **403** "That belongs to john"
+- `bdo_data_erase` / `excel_erase_all` → **403** "Management access only"
+- Data Manager tab **hidden** from the BDO sidebar
+
+Also fixed: after an "already done by <colleague>" error the chip was redrawn as **"Done by you"
+with a working ×**. It now renders locked with the real owner's name and no ×.
+
+### Four colour themes
+Theme button opens a picker with 4 palettes, saved per device: **Fire orange** (the original,
+with its Dark/Light switch), **Fire green & white**, **Fire yellow & white**, **Fire blue & white**.
+The three "& white" palettes ride on the light base with neutral white surfaces and accessible
+accent colours; gradient-filled surfaces keep readable text in every palette.
+
+### Changes
+- `lib/helpers.php`: `is_field_user()`, `is_manager()`, `require_manager()`
+- `api.php`: `kpi_unmark` uses `is_manager()`; all six Data Manager actions use `require_manager()`;
+  `uploads_list` tightened
+- `app.js`: `isFieldUser()`/`isManager()`, data tab + chip `isOM` routed through it, `chipDoneHtml`
+  ownership fix, palette system (`PALETTES`, `applyTheme`, `setPalette`, `themePicker`)
+- `styles.css`: `.pal-green` / `.pal-yellow` / `.pal-blue` palettes + picker swatches.
+  Assets `?v=25`, SW `imani-v25`
+
+---
+
 ## v1.16.2 — 2026-07-19 · "Unmark restricted to unassigned only"
 
 A BDO can now overturn ONLY his own live mark (within 6h) or an **unassigned** orphan mark. Marks
