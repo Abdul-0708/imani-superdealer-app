@@ -169,6 +169,48 @@
     'Search in': 'Tafuta kwenye',
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
+    'High-earner priority list': 'Orodha ya kipaumbele ya wanaoingiza zaidi',
+    'High earners - PRIORITY to serve': 'Wanaoingiza zaidi - KIPAUMBELE kuhudumia',
+    'The OM\'s commission list, matched live: only the NOT-served appear. Pick your SA station first.':
+      'Orodha ya kamisheni ya OM, inalinganishwa papo hapo: wasiohudumiwa tu ndio wanaonekana. Chagua SA station yako kwanza.',
+    'pick...': 'chagua...',
+    'Show list': 'Onyesha orodha',
+    'All stations': 'Station zote',
+    'Pick your SA station first': 'Chagua SA station yako kwanza',
+    'already served': 'wamehudumiwa tayari',
+    'showing the NOT-served only': 'inaonyesha wasiohudumiwa tu',
+    'LIST': 'ORODHA',
+    'above 2,000,000': 'zaidi ya 2,000,000',
+    'above 1,000,000': 'zaidi ya 1,000,000',
+    'above 500,000': 'zaidi ya 500,000',
+    'above 100,000': 'zaidi ya 100,000',
+    'above 50,000': 'zaidi ya 50,000',
+    'not in system yet': 'bado hayupo kwenye mfumo',
+    'Every high earner here is already served. Excellent.': 'Kila mwenye kuingiza zaidi hapa amehudumiwa. Vizuri sana.',
+    'The OM has not uploaded a high-earner list yet.': 'OM bado hajapakia orodha ya wanaoingiza zaidi.',
+    'Upload high earners': 'Pakia wanaoingiza zaidi',
+    'high earners saved': 'wanaoingiza zaidi wamehifadhiwa',
+    'Serve': 'Hudumia',
+    'Serving receipt': 'Risiti ya kuhudumia',
+    'Serving receipt photo': 'Picha ya risiti ya kuhudumia',
+    'Optional': 'Hiari',
+    'Compulsory': 'Lazima',
+    'COMPULSORY': 'LAZIMA',
+    'optional': 'hiari',
+    'Attach the serving receipt photo - the OM has made it compulsory': 'Ambatanisha picha ya risiti ya kuhudumia - OM ameifanya lazima',
+    'Confirm the agent\'s physical location - it becomes his known location and counts him into your base.':
+      'Thibitisha mahali alipo wakala - inakuwa mahali pake pa kujulikana na inamuingiza kwenye base yako.',
+    'Save & mark served': 'Hifadhi & weka amehudumiwa',
+    'Physical location': 'Mahali alipo',
+    'Type the physical location': 'Andika mahali alipo',
+    'My day so far': 'Siku yangu hadi sasa',
+    'done': 'zimekamilika',
+    'Served today': 'Waliohudumiwa leo',
+    'Visits today': 'Visits leo',
+    'today': 'leo',
+    'Activeness today': 'Activeness leo',
+    'Nothing yet today - your first tick will show here the moment you make it. Twende kazi! 💪':
+      'Bado hakuna kitu leo - alama yako ya kwanza itaonekana hapa mara tu utakapoiweka. Twende kazi! 💪',
     'From (EAT)': 'Kuanzia (EAT)',
     'To (EAT)': 'Hadi (EAT)',
     'All day': 'Siku nzima',
@@ -630,10 +672,30 @@
   }
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
   function personalDashboard(v) {
-    var calls = [api('base')];
+    var calls = [api('base'), api('my_live_today')];
     if (isSpecial()) calls.push(api('specialist_summary'));
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], sum = rr[1];
+      var d = rr[0], live = rr[1], sum = rr[2];
+      /* HIS day so far - read-only motivation feed, updates as he works */
+      var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+      var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
+        var pill = m.kpi === 'served' ? 'ok' : m.kpi === 'active' ? 'gold' : 'fire';
+        return '<div class="tg-row"><b style="min-width:44px">' + esc(m.time) + '</b>' +
+          '<span class="pill ' + pill + '">' + (KL[m.kpi] || m.kpi) + '</span>' +
+          '<span style="flex:1">' + esc(m.agent) + ' <span class="note">' + esc(m.acc) + '</span></span></div>';
+      }).join('');
+      var todayTotal = live.perKpi.served + live.perKpi.visit + live.perKpi.apk + live.perKpi.active;
+      var livePanel =
+        '<div class="panel"><h2>' + svg('zap') + t('My day so far') + ' <span class="pill fire">' + esc(live.now) + ' EAT</span>' +
+        (todayTotal ? ' <span class="pill ok">' + fmt(todayTotal) + ' ' + t('done') + '</span>' : '') + '</h2>' +
+        '<div class="grid cards" style="margin-bottom:10px">' +
+        card('check', t('Served today'), fmt(live.perKpi.served)) +
+        card('target', t('Visits today'), fmt(live.perKpi.visit)) +
+        card('rotate', 'APK ' + t('today'), fmt(live.perKpi.apk)) +
+        card('zap', t('Activeness today'), fmt(live.perKpi.active)) +
+        '</div>' +
+        (liveFeed || '<div class="note">' + t('Nothing yet today - your first tick will show here the moment you make it. Twende kazi! 💪') + '</div>') +
+        '</div>';
       var perf = d.performance;
       var cards;
       if (sum) {
@@ -651,6 +713,7 @@
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        livePanel +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         (perf
           ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
@@ -785,6 +848,7 @@
           }).join('') +
           '<div class="spacer"></div>' +
           '<div class="field"><label>Required APK version</label><input id="apkReq" style="width:100px" value="' + esc(d.apkRequired) + '"></div>' +
+          '<div class="field"><label>' + t('Serving receipt') + '</label><select id="srvRec"><option value="optional"' + (d.serveReceipt !== 'required' ? ' selected' : '') + '>' + t('Optional') + '</option><option value="required"' + (d.serveReceipt === 'required' ? ' selected' : '') + '>' + t('Compulsory') + '</option></select></div>' +
           '<button class="btn" data-action="dashSettingsSave">Save</button></div>' +
           '<p class="note" style="margin-top:6px">Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads version ' + esc(d.apkRequired) + ' or newer.</p></div>'
         : '';
@@ -824,7 +888,7 @@
   }
   function dashSettingsSave() {
     var kpis = Array.prototype.map.call(document.querySelectorAll('.kpivis:checked'), function (c) { return c.value; });
-    api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim() } })
+    api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim(), serveReceipt: elById('srvRec') ? elById('srvRec').value : '' } })
       .then(function () { toast('Dashboard settings saved', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
@@ -1051,8 +1115,8 @@
     var xTitle = orphan ? 'Take over / clear this unassigned mark' : 'Reverse this mark';
     var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
-    var pr = (c.key === 'active' && mark.proof)
-      ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
+    var pr = ((c.key === 'active' || c.key === 'served') && mark.proof)
+      ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
     return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
       esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + pr + x + '</span>';
   }
@@ -1149,10 +1213,62 @@
         card('users', t('New'), fmt(d.counts.newAgents)) +
         card('users', t('Total Base'), fmt(d.counts.total)) +
         card('check', t('My Served'), fmt(d.counts.served)) +
-        '</div>' + dailyPanel + perfPanel + prioPanel + fieldHint +
+        '</div>' + dailyPanel + perfPanel + prioPanel +
+        '<div class="panel"><h2>' + svg('dollar') + t('High earners - PRIORITY to serve') + '</h2>' +
+        '<p class="note">' + t('The OM\'s commission list, matched live: only the NOT-served appear. Pick your SA station first.') + '</p>' +
+        '<div class="row"><div class="field"><label>SA Station</label><select id="heStation"><option value="">' + t('pick...') + '</option></select></div>' +
+        '<button class="ghost" data-action="heLoad">' + t('Show list') + '</button></div>' +
+        '<div id="heBox" style="margin-top:10px"></div></div>' +
+        fieldHint +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('phone') + t('Agents - mark KPIs') + '</h2></div>' +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+      heStationsFill();
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* ---- high-earner priority list (bands A-E, live not-served match) ---- */
+  var BAND_META = { A: 'above 2,000,000', B: 'above 1,000,000', C: 'above 500,000', D: 'above 100,000', E: 'above 50,000' };
+  function heStationsFill() {
+    var sel = elById('heStation'); if (!sel) return;
+    api('high_earners_get').then(function (d) {
+      sel.innerHTML = '<option value="">' + t('pick...') + '</option><option value="ALL">' + t('All stations') + '</option>' +
+        (d.stations || []).map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('');
+      var box = elById('heBox');
+      if (box && !d.total) box.innerHTML = '<span class="note">' + t('The OM has not uploaded a high-earner list yet.') + '</span>';
+    }).catch(function () { /* panel stays quiet */ });
+  }
+  function heLoad() {
+    var sel = elById('heStation'), box = elById('heBox');
+    if (!sel || !box) return;
+    if (!sel.value) { toast(t('Pick your SA station first'), 'warn'); return; }
+    var qs = sel.value === 'ALL' ? '' : '&station=' + encodeURIComponent(sel.value);
+    box.innerHTML = '<div class="skel skel-line"></div><div class="skel skel-line"></div>';
+    api('high_earners_get', { qs: qs }).then(function (d) {
+      var editable = can('mybase', 'e') && !isSpecial();
+      var html = '<div class="row" style="margin-bottom:6px"><span class="note">' +
+        fmt(d.servedAlready) + ' ' + t('already served') + ' &middot; ' + t('showing the NOT-served only') + '</span></div>';
+      var any = false;
+      ['A', 'B', 'C', 'D', 'E'].forEach(function (b) {
+        var list = d.bands[b] || [];
+        if (!list.length) return;
+        any = true;
+        html += '<h3 style="margin:12px 0 6px;font-size:13px"><span class="pill fire">' + t('LIST') + ' ' + b + '</span> ' +
+          '<span class="note">' + t(BAND_META[b]) + ' &middot; ' + list.length + '</span></h3>' +
+          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Commission</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
+          list.map(function (a) {
+            var act = a.agentId
+              ? (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.agentId + '" data-kpi="served" data-name="' + esc(a.name) + '">' + t('Serve') + '</button>' : '-')
+              : '<span class="pill dim">' + t('not in system yet') + '</span>';
+            return '<tr><td class="c-name">' + esc(a.name || a.acc) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+              '<td class="c-meta" data-l="commission"><b>' + fmt(a.commission) + '</b></td>' +
+              '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
+              '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+              '<td class="c-meta" data-l="location">' + (a.location ? esc(a.location) : '<span class="pill bad">missing</span>') + '</td>' +
+              '<td class="c-kpis">' + act + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+      });
+      if (!any) html += '<div class="note">' + t('Every high earner here is already served. Excellent.') + '</div>';
+      box.innerHTML = html;
+    }).catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
   }
   /* New agent recruited in the field - counts as the BDO's activeness credit. */
   function recruitModal() {
@@ -1372,7 +1488,7 @@
         swapChip(node, kpi, state.user.username);
       })
       .catch(function (e) {
-        if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node); return; }
+        if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node, e.data.receiptRule || 'optional', e.data.agentLoc || ''); return; }
         if (e.data && e.data.needProof) { proofModal(id, name, node, e.data.agentLoc || ''); return; }
         toast(e.message, 'err');
         /* someone else already did it - show their name on the chip, in place */
@@ -1381,14 +1497,41 @@
       });
   }
   /* Forced physical-location entry before an agent can be marked served. */
-  function locationModal(id, kpi, name, node) {
-    openModal('<h2>' + svg('pin') + ' Where is ' + esc(name) + '?</h2>' +
-      '<p class="note">Type the agent\'s physical location before saving him as served. It becomes his known location for the coming months.</p>' +
-      '<div class="field"><label>Physical location</label><input id="locInput" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
+  /* Serving modal: physical location (required for the base count) + serving
+   * RECEIPT photo (optional or compulsory per the OM's setting). Separate from
+   * the wake-up receipt. */
+  function locationModal(id, kpi, name, node, receiptRule, knownLoc) {
+    var required = receiptRule === 'required';
+    openModal('<h2>' + svg('pin') + ' ' + t('Serve') + ' ' + esc(name) + '</h2>' +
+      '<p class="note">' + t('Confirm the agent\'s physical location - it becomes his known location and counts him into your base.') + '</p>' +
+      '<div class="field"><label>' + t('Physical location') + '</label><input id="locInput" value="' + esc(knownLoc || '') + '" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
+      '<div class="field" style="margin-top:8px"><label>' + t('Serving receipt photo') + ' ' +
+      (required ? '<span class="pill bad">' + t('COMPULSORY') + '</span>' : '<span class="pill dim">' + t('optional') + '</span>') + '</label>' +
+      '<input id="serveFile" type="file" accept="image/*" capture="environment"></div>' +
+      '<div id="servePrev" style="margin-top:8px;text-align:center"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
-      '<button class="ghost" data-action="closeModal">Cancel</button>' +
-      '<button class="btn" data-action="locConfirm" data-id="' + id + '" data-kpi="' + kpi + '" data-name="' + esc(name) + '">Save location &amp; mark served</button></div>');
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="locConfirm" data-id="' + id + '" data-kpi="' + kpi + '" data-name="' + esc(name) + '" data-req="' + (required ? '1' : '') + '">' + t('Save & mark served') + '</button></div>');
     state._locNode = node;
+    state._serveProof = '';
+    var inp = elById('serveFile');
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      var img = new Image();
+      img.onload = function () {
+        var max = 1280, w = img.width, h = img.height;
+        if (w > max || h > max) { var s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+        var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        state._serveProof = cv.toDataURL('image/jpeg', 0.72);
+        URL.revokeObjectURL(img.src);
+        var pv = elById('servePrev');
+        if (pv) pv.innerHTML = '<img src="' + state._serveProof + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
+      };
+      img.onerror = function () { toast(t('That file is not a photo'), 'err'); };
+      img.src = URL.createObjectURL(f);
+    });
   }
   /* Waking an INACTIVE agent needs a receipt photo. The photo is downscaled on
    * the phone (max 1280px JPEG) so it uploads fast even on slow networks. */
@@ -1454,7 +1597,24 @@
       '</div>' +
       '<label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="upPriority"> ' +
       'This is a <b>&nbsp;priority base list&nbsp;</b> (agents with physical locations + BDO names) - place agents into each BDO\'s priority base</label>' +
-      '<div id="upResult" class="note" style="margin-top:12px"></div></div>';
+      '<div id="upResult" class="note" style="margin-top:12px"></div></div>' +
+      (isManager()
+        ? '<div class="panel"><h2>' + svg('dollar') + t('High-earner priority list') + '</h2>' +
+          '<p class="note">' + t('Upload agents ranked by commission (columns: Agent Account, Agent Name, SA Commission, SA Station). Whoever is still NOT served shows on every BDO\'s priority list in bands: A >2M, B >1M, C >500k, D >100k, E >50k - matched live against every performance upload and every BDO tap. Uploading REPLACES the previous list.') + '</p>' +
+          '<div class="row"><div class="field"><label>Excel file (.xlsx)</label><input id="heFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
+          '<button class="btn" data-action="heUpload">' + svg('upload') + ' ' + t('Upload high earners') + '</button></div>' +
+          '<div id="heResult" class="note" style="margin-top:10px"></div></div>'
+        : '');
+  }
+  function heUpload() {
+    readExcel(elById('heFile'), function (rows) {
+      api('high_earners_upload', { body: { rows: rows } })
+        .then(function (d) {
+          elById('heResult').innerHTML = '<span class="pill ok">' + d.count + ' ' + t('high earners saved') + '</span> ' + t('BDOs now see the not-served ones on their priority list.');
+          toast(d.count + ' ' + t('high earners saved'), 'ok');
+        })
+        .catch(function (e) { elById('heResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+    });
   }
   function readExcel(fileInput, cb) {
     var f = fileInput.files && fileInput.files[0];
@@ -2342,6 +2502,8 @@
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }
+    if (a === 'heUpload') { heUpload(); return; }
+    if (a === 'heLoad') { heLoad(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flClear') {
       ['flSearch','flBdo','flKpi','flStatus'].forEach(function (id) { var el = elById(id); if (el) el.value = ''; });
@@ -2379,7 +2541,15 @@
       return;
     }
     if (a === 'kpiUnmark') { kpiUnmark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node); return; }
-    if (a === 'locConfirm') { var lv2 = elById('locInput').value.trim(); if (!lv2) { toast('Type the physical location', 'warn'); return; } var n2 = state._locNode; closeModal(); kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2); return; }
+    if (a === 'locConfirm') {
+      var lv2 = elById('locInput').value.trim();
+      if (!lv2) { toast(t('Type the physical location'), 'warn'); return; }
+      if (node.getAttribute('data-req') && !state._serveProof) { toast(t('Attach the serving receipt photo - the OM has made it compulsory'), 'warn'); return; }
+      var n2 = state._locNode, sp = state._serveProof; state._serveProof = '';
+      closeModal();
+      kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2, sp);
+      return;
+    }
     if (a === 'proofConfirm') {
       var pNoteV = (elById('proofNote') ? elById('proofNote').value.trim() : '');
       var pLocV = (elById('proofLoc') ? elById('proofLoc').value.trim() : '');
@@ -2393,7 +2563,7 @@
       var pNote = node.getAttribute('data-note') || '';
       openModal('<h2>' + svg('eye') + ' ' + t('Receipt proof') + ' &mdash; ' + esc(node.getAttribute('data-name') || '') + '</h2>' +
         (pNote ? '<p class="note" style="border:1px dashed var(--line);border-radius:10px;padding:10px">&ldquo;' + esc(pNote) + '&rdquo;</p>' : '') +
-        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px" onerror="this.style.display=\'none\'">' +
+        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '&kpi=' + (node.getAttribute('data-kpi') || 'active') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px" onerror="this.style.display=\'none\'">' +
         '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
       return;
     }

@@ -167,6 +167,7 @@ function ensure_schema($pdo) {
   schema_v8_apply($pdo);
   schema_v9_apply($pdo);
   schema_v10_apply($pdo);
+  schema_v11_apply($pdo);
   seed($pdo);
 }
 
@@ -352,7 +353,32 @@ function upgrade_schema($pdo) {
   if ($ver < 10) {
     schema_v10_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "10" WHERE name = "schema_version"')->execute();
+    $ver = 10;
   }
+  if ($ver < 11) {
+    schema_v11_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "11" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v11: HIGH-EARNER priority list. The OM uploads agents ranked by commission;
+ * whoever is still NOT served shows on every BDO's priority list in bands
+ * A >2M, B >1M, C >500k, D >100k, E >50k - matched live against the ledger.
+ */
+function schema_v11_apply($pdo) {
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS high_earners (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    acc VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(191) NOT NULL DEFAULT "",
+    commission BIGINT NOT NULL DEFAULT 0,
+    station VARCHAR(64) NOT NULL DEFAULT "",
+    by_user VARCHAR(64) NOT NULL DEFAULT "",
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_he_station (station)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
 }
 
 /*
@@ -501,5 +527,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","10")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","11")')->execute();
 }

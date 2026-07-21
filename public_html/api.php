@@ -354,6 +354,7 @@ try {
         'waked' => $oa['waked'], 'lost' => $oa['lost'],
         'stations' => $stations, 'station' => $station, 'stationStats' => $stationStats,
         'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
+        'serveReceipt' => setting_get('serve_receipt', 'optional'),
       ));
     }
 
@@ -371,7 +372,11 @@ try {
         if (!preg_match('/^\d+(\.\d+)?$/', $apkV)) fail('APK version must be a number like 2.0');
         setting_set('apk_required_version', $apkV);
       }
-      audit($u['id'], 'dashboard_settings', implode(',', $chosen) . ' apk>=' . $apkV);
+      /* Serving receipts: 'required' = a BDO cannot mark SERVED without a
+       * receipt photo; 'optional' = he may attach one. */
+      $sr = (string)bval('serveReceipt');
+      if ($sr === 'required' || $sr === 'optional') setting_set('serve_receipt', $sr);
+      audit($u['id'], 'dashboard_settings', implode(',', $chosen) . ' apk>=' . $apkV . ' receipt=' . $sr);
       respond(array('ok' => true));
     }
 
@@ -605,13 +610,23 @@ try {
       if (!$agent) fail('Agent not found', 404);
       $bdo = $u['username'];
 
-      /* Serving requires the agent's physical location (typed now or already known). */
+      /* Serving requires the agent's physical location (typed now or already
+       * known). A serving RECEIPT photo is optional or required per the OM's
+       * setting - separate from the wake-up receipt. */
+      $proofFile = ''; $proofNote = '';
       if ($kpi === 'served') {
         $loc = trim((string)bval('location'));
         if ($loc !== '') {
           db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?')->execute(array($loc, $agentId));
         } elseif (trim((string)$agent['physical_location']) === '') {
-          fail('Physical location required before marking served', 400, array('needLocation' => true));
+          fail('Physical location required before marking served', 400,
+               array('needLocation' => true, 'receiptRule' => setting_get('serve_receipt', 'optional')));
+        }
+        $img = (string)bval('proof');
+        if ($img !== '') $proofFile = save_proof_image($img);
+        elseif (setting_get('serve_receipt', 'optional') === 'required') {
+          fail('Attach the serving receipt photo - the OM has made it compulsory', 400,
+               array('needLocation' => true, 'receiptRule' => 'required', 'agentLoc' => (string)$agent['physical_location']));
         }
       }
 
@@ -625,7 +640,6 @@ try {
        * receipts, OR a typed commitment that the BDO is sure the agent
        * transacted. He must also CONFIRM the agent's physical location so the
        * follow-up team knows where to find him. */
-      $proofFile = ''; $proofNote = '';
       if ($kpi === 'active' && strtoupper((string)$agent['act_current']) === 'INACTIVE') {
         $img = (string)bval('proof');
         $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
@@ -674,7 +688,8 @@ try {
       if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
       $agentId = (int)($_GET['agent'] ?? 0);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $st = db()->prepare('SELECT proof FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "active"');
+      $pk = ($_GET['kpi'] ?? 'active') === 'served' ? 'served' : 'active';
+      $st = db()->prepare('SELECT proof FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "' . $pk . '"');
       $st->execute(array($month, $agentId));
       $r = $st->fetch();
       /* filename came from bin2hex() - sanitize anyway so no path can sneak in */
@@ -1069,6 +1084,95 @@ try {
       specialist_touch_report($u);
       audit($u['id'], 'wont_return_mark', $agent['name'] . ($note !== '' ? ' - ' . $note : ''));
       respond(array('ok' => true, 'marked' => true));
+    }
+
+    /* ============ HIGH-EARNER PRIORITY LIST ============
+     * The OM uploads agents ranked by commission. Whoever is still NOT served
+     * this month (checked LIVE against the ledger, so every weekly upload or
+     * BDO tap updates it) shows on the BDOs' priority list in bands:
+     *   A >2,000,000 | B >1,000,000 | C >500,000 | D >100,000 | E >50,000
+     */
+    case 'high_earners_upload': {
+      $u = require_auth(); require_manager($u);
+      $rows = bval('rows', array());
+      if (!is_array($rows) || !count($rows)) fail('No rows provided');
+      db()->exec('DELETE FROM high_earners'); /* replace-all: the list IS the upload */
+      $ins = db()->prepare('INSERT INTO high_earners (acc, name, commission, station, by_user) VALUES (?,?,?,?,?)
+                            ON DUPLICATE KEY UPDATE name=VALUES(name), commission=VALUES(commission), station=VALUES(station), by_user=VALUES(by_user)');
+      $n = 0;
+      foreach ($rows as $raw) {
+        $idx = row_index($raw);
+        $acc = trim((string)pick($idx, array('AGENT ACC','Agent Account','account','acc','agentacc')));
+        if ($acc === '') continue;
+        $com = (int)num(pick($idx, array('SA Commission','commission','sacommission','Commission Amount','amount')));
+        if ($com <= 50000) continue; /* below band E - not a priority */
+        $ins->execute(array($acc,
+          trim((string)pick($idx, array('AgentName','Agent Name','name'))),
+          $com,
+          strtoupper(trim((string)pick($idx, array('SA STATION','Station','sastation','kituo','region')))),
+          $u['username']));
+        $n++;
+      }
+      if (!$n) fail('No usable rows (need Agent Account + Commission above 50,000)');
+      audit($u['id'], 'high_earners_upload', $n . ' agents');
+      respond(array('ok' => true, 'count' => $n));
+    }
+
+    case 'high_earners_get': {
+      $u = require_auth();
+      if (!can($u, 'mybase', 'v') && !can($u, 'agents', 'v')) fail('No access', 403);
+      $month = open_month();
+      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+      $stations = array();
+      foreach (db()->query('SELECT DISTINCT station FROM high_earners ORDER BY station')->fetchAll() as $r) {
+        if ($r['station'] !== '') $stations[] = $r['station'];
+      }
+      $sql = 'SELECT h.acc, h.name AS he_name, h.commission, h.station,
+                     a.id AS agent_id, a.name AS agent_name, a.phone, a.branch, a.physical_location,
+                     (k.agent_id IS NOT NULL) AS served
+              FROM high_earners h
+              LEFT JOIN agents a ON a.acc = h.acc
+              LEFT JOIN agent_month_kpi k ON k.agent_id = a.id AND k.month = ? AND k.kpi = "served"';
+      $vals = array($month);
+      if ($station !== '') { $sql .= ' WHERE h.station = ?'; $vals[] = $station; }
+      $sql .= ' ORDER BY h.commission DESC';
+      $q = db()->prepare($sql);
+      $q->execute($vals);
+      $bands = array('A' => array(), 'B' => array(), 'C' => array(), 'D' => array(), 'E' => array());
+      $servedCount = 0; $total = 0;
+      foreach ($q->fetchAll() as $r) {
+        $total++;
+        if ((int)$r['served']) { $servedCount++; continue; } /* only the NOT-served show */
+        $c = (float)$r['commission'];
+        $band = $c > 2000000 ? 'A' : ($c > 1000000 ? 'B' : ($c > 500000 ? 'C' : ($c > 100000 ? 'D' : 'E')));
+        $bands[$band][] = array(
+          'acc' => $r['acc'], 'name' => ($r['agent_name'] !== null && $r['agent_name'] !== '') ? $r['agent_name'] : $r['he_name'],
+          'commission' => (float)$r['commission'], 'station' => $r['station'],
+          'agentId' => $r['agent_id'] !== null ? (int)$r['agent_id'] : 0,
+          'phone' => (string)$r['phone'], 'branch' => (string)$r['branch'],
+          'location' => (string)$r['physical_location'],
+        );
+      }
+      respond(array('month' => $month, 'station' => $station, 'stations' => $stations,
+                    'bands' => $bands, 'total' => $total, 'servedAlready' => $servedCount));
+    }
+
+    /* A BDO's OWN live day - read-only motivation feed on his dashboard. */
+    case 'my_live_today': {
+      $u = require_auth(); require_perm($u, 'mybase', 'v');
+      $q = db()->prepare('SELECT k.at, k.kpi, a.name AS agent, a.acc
+                          FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                          WHERE DATE(k.at) = CURDATE() AND k.source = "bdo" AND k.bdo = ?
+                          ORDER BY k.at DESC LIMIT 100');
+      $q->execute(array($u['username']));
+      $marks = array(); $per = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
+      foreach ($q->fetchAll() as $r) {
+        $r['time'] = substr((string)$r['at'], 11, 5);
+        unset($r['at']);
+        $marks[] = $r;
+        if (isset($per[$r['kpi']])) $per[$r['kpi']]++;
+      }
+      respond(array('date' => date('Y-m-d'), 'now' => date('H:i'), 'marks' => $marks, 'perKpi' => $per));
     }
 
     case 'wont_return_list': {

@@ -5,6 +5,38 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.20.0 — 2026-07-21 · "High-earner priority bands, serving receipts, BDO day feed" — schema v11
+
+### Release notes
+**High-earner priority list.** The OM uploads a commission-ranked agent list (Weekly Upload tab →
+"High-earner priority list"; columns Agent Account, Agent Name, SA Commission, SA Station;
+uploading replaces the previous list; rows ≤50,000 are skipped). Every BDO's My Base gained a
+**"High earners — PRIORITY to serve"** panel: he picks his **SA station first**, then sees ONLY the
+**not-served** high earners in bands **A >2M · B >1M · C >500k · D >100k · E >50k**, each with
+commission, tap-to-call phone, branch, location and a **Serve** chip. The match is **live** against
+the ledger: every weekly upload and every BDO tap updates it (verified: serving an agent removed
+him from LIST A instantly; agents not in the roster yet show "not in system"). 
+
+**Serving receipts.** Dashboard settings gained **Serving receipt: Optional / Compulsory**. When
+compulsory, marking SERVED without a receipt photo is rejected server-side; the serve modal now
+collects location + receipt photo (downscaled on the phone). Receipts open from the eye icon on the
+served chip — completely separate from the wake-up receipt.
+
+**BDO's day feed.** His dashboard now opens with **"My day so far"** — read-only: today's
+Served / Visits / APK / Activeness counts plus a timestamped feed of every tick he made
+(no edit controls, pure motivation).
+
+### Changes
+- **Schema v11** (self-upgrading): `high_earners` table
+- `api.php`: `high_earners_upload` (manager, replace-all), `high_earners_get` (station filter,
+  live not-served bands), `my_live_today`; kpi_mark served accepts receipt photo + enforces the
+  `serve_receipt` setting; `wake_proof` takes `&kpi=served|active`; dashboard echoes the setting
+- `app.js`: OM upload panel + settings select; My Base bands panel (station-gated); serve modal
+  with receipt field; served-chip proof eye; "My day so far" panel; EN/SW strings.
+  Assets `?v=31`, SW `imani-v31`
+
+---
+
 ## v1.18.0 — 2026-07-20 · "Live work, Field Tasks tab, cleaner My Base + palette contrast"
 
 - **LIVE WORK TODAY** on the OM dashboard: every KPI a BDO tapped today with the exact time
