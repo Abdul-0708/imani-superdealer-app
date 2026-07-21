@@ -66,6 +66,35 @@ accent colours; gradient-filled surfaces keep readable text in every palette.
 
 ---
 
+## v1.19.0 — 2026-07-21 · "Flags — dedicated tab, all KPI, all BDO, live search"
+
+The old Reports "Flagged BDOs" list is replaced by a proper **Flags** tab (OM / super admin only)
+that shows the complete cross-check between BDO live marks and the uploaded performance file for
+every KPI:
+
+- **Per BDO x KPI grid**: for each BDO, green pill = matched claims, red pill = flagged claims,
+  per KPI (Served / Visit / APK / Active) plus row totals.
+- **Every claim table**: one row per live mark with `MATCHED` or `MISMATCH` status. Instant
+  client-side filtering by search (BDO / agent name / acc / branch / station), by BDO, by KPI, and
+  by status. A running "shown" counter shows the current selection size.
+
+Server side: `flags_get` now also returns the `matched` list + a per-BDO×KPI grid and is
+locked to `is_manager()` (BDOs get 403 — they should not see who else was flagged). Reports keeps
+its ranking; the old flags panel is gone with a small pointer button "Open Flags" instead.
+
+### Changes
+- `api.php` `flags_get`: `is_manager()` gate; response now includes `matched` (bdo marks the file
+  confirmed) and `grid` (per-BDO×KPI matched vs flagged tallies)
+- `app.js`: new module `flags` + `viewFlags()` (grid + filterable table), `flApply()` live filter,
+  `flLoad/flClear` handlers, `flBdo/flKpi/flStatus` change handlers; `viewReports` no longer
+  renders the flags list and only calls `flags_get` for managers. Assets `?v=30`, SW `imani-v30`
+
+Verified live with 1 seeded mismatch + 2 seeded matches: grid tallies exact
+(john served 0/1, mary served 1/0), status filter narrows to 1, KPI "visit" filter → 0,
+search "mismatch agent" → 1, Clear → 3. BDO sees no tab; `flags_get` returns 403 for a BDO.
+
+---
+
 ## v1.18.0 — 2026-07-21 · "Live Work — pick any EAT time window"
 
 The OM dashboard's Live Work panel gained an **EAT time window**: two time inputs (From / To,

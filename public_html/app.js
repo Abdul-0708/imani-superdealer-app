@@ -178,6 +178,32 @@
     'Download window': 'Pakua kipindi',
     'Every KPI your BDOs ticked inside the chosen time window (EAT).': 'Kila KPI ambayo BDO wako waliweka ndani ya kipindi ulichochagua (EAT).',
     'Showing': 'Inaonyesha',
+    'Flags': 'Alama',
+    'Every BDO live mark cross-checked against the uploaded performance file. Matched = both agree, Mismatch = the file said NOT.':
+      'Kila alama ya BDO inalinganishwa na faili la utendaji lililopakiwa. Zimelingana = zote zinakubaliana, Hazikulingana = faili linasema SIVYO.',
+    'Per BDO x KPI': 'Kwa BDO x KPI',
+    'matched vs mismatch': 'zimelingana dhidi ya hazikulingana',
+    'Green = matched, red = mismatch. Bigger red = more suspicious claims.': 'Kijani = zimelingana, nyekundu = hazikulingana. Nyekundu kubwa = madai mengi ya shaka.',
+    'Every claim': 'Kila madai',
+    'BDO, agent name, acc, branch, station': 'BDO, jina la wakala, acc, tawi, kituo',
+    'Matched': 'Zimelingana',
+    'Flagged': 'Zenye alama',
+    'MISMATCH': 'HAZIKULINGANA',
+    'MATCHED': 'ZIMELINGANA',
+    'mismatch': 'hazikulingana',
+    'matched': 'zimelingana',
+    'shown': 'zinaonyeshwa',
+    'No live BDO marks in this month yet.': 'Hakuna alama za moja kwa moja za BDO mwezi huu bado.',
+    'Flag details moved to their own tab.': 'Maelezo ya alama yamehamishiwa kwenye tabu yao.',
+    'Open Flags': 'Fungua Alama',
+    'All BDOs': 'BDO wote',
+    'All': 'Zote',
+    'Load': 'Pakia',
+    'Detail': 'Maelezo',
+    'Branch': 'Tawi',
+    'Station': 'Kituo',
+    'When': 'Wakati',
+    'Agent': 'Wakala',
     'Status updated': 'Hali imesasishwa',
     'Field Tasks': 'Kazi za Uwandani',
     'Agents you can CLAIM. They join your base only once you act on them - they do not touch your performance until then.':
@@ -416,6 +442,7 @@
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
+    { key: 'flags', label: 'Flags', icon: 'alert' },
     { key: 'field', label: 'Field Tasks', icon: 'pin' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
     { key: 'data', label: 'Data Manager', icon: 'alert' },
@@ -522,6 +549,7 @@
       if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
       if (m.key === 'field') return can('mybase', 'v'); // BDO take-over + wake list
+      if (m.key === 'flags') return isManager(); // OM / super admin only
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -558,6 +586,7 @@
     else if (state.tab === 'data') viewData(v);
     else if (state.tab === 'inbox') viewInbox(v);
     else if (state.tab === 'field') viewField(v);
+    else if (state.tab === 'flags') viewFlags(v);
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
@@ -1746,7 +1775,8 @@
     state._repMonth = m;
     var period = state._rankPeriod || 'daily';
     var isMgmt = can('reports', 'e') || can('targets', 'v');
-    var calls = [api('daily_reports_get', { qs: '&month=' + m }), api('flags_get', { qs: '&month=' + m }),
+    var calls = [api('daily_reports_get', { qs: '&month=' + m }),
+                 isManager() ? api('flags_get', { qs: '&month=' + m }) : Promise.resolve({ rank: [], flags: [], matched: [], grid: [] }),
                  api('rank_get', { qs: '&period=' + period + '&date=' + (state._rankDate || new Date().toISOString().slice(0, 10)) }),
                  api('messages_get'), api('bdo_rank_public')];
     calls.push(isMgmt ? api('shortages_get', { qs: '&month=' + m }) : Promise.resolve(null));
@@ -1793,13 +1823,8 @@
         return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + fmt(r.served) + '</td><td>' + fmt(r.visit) + '</td><td>' + fmt(r.active) + '</td>' + (rk.hasApk ? '<td>' + fmt(r.apk) + '</td>' : '') + '</tr>';
       }).join('') || '<tr><td colspan="6" class="note">No KPI activity in this period.</td></tr>';
 
-      /* --- flags ranking --- */
-      var flagRank = (fl.rank || []).map(function (r, i) {
-        return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.bdo) + '</td><td><span class="pill bad">' + r.n + ' flag' + (r.n > 1 ? 's' : '') + '</span></td></tr>';
-      }).join('') || '<tr><td colspan="3" class="note">No flags this month. Clean.</td></tr>';
-      var flagDetails = (fl.flags || []).slice(0, 20).map(function (f) {
-        return '<tr><td>' + esc(f.bdo) + '</td><td>' + esc(f.agent_name || f.acc || '') + '</td><td class="note">' + esc(f.detail) + '</td></tr>';
-      }).join('');
+      /* Flag details moved to their own tab (viewFlags) - keep the response
+       * loaded so `fl` is still valid, but don't render anything here. */
 
       /* --- management extras --- */
       var omTools = can('reports', 'e')
@@ -1883,11 +1908,11 @@
         '<button class="ghost" data-action="rankLoad">Load</button>' +
         '<div class="spacer"></div><span class="note">' + esc(rk.from) + (rk.from !== rk.to ? ' to ' + esc(rk.to) : '') + '</span></div>' +
         '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Unique Served</th><th>Visits (ODK)</th><th>Activeness</th>' + (rk.hasApk ? '<th>APK</th>' : '') + '</tr></thead><tbody>' + rankRows + '</tbody></table></div></div>' +
-        '<div class="panel"><h2>' + svg('alert') + 'Flagged BDOs - ' + esc(fl.month) + ' (most to fewest)</h2>' +
-        '<p class="note">A flag = claimed served, but the released performance file said NOT served.</p>' +
-        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Flags</th></tr></thead><tbody>' + flagRank + '</tbody></table></div>' +
-        (flagDetails ? '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>BDO</th><th>Agent</th><th>Detail</th></tr></thead><tbody>' + flagDetails + '</tbody></table></div>' : '') +
-        '</div>' + weightRank + routePanel + shortPanel;
+        (isManager()
+          ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">' + svg('alert') + ' ' + t('Flag details moved to their own tab.') + '</span>' +
+            '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open Flags') + '</button></div></div>'
+          : '') +
+        weightRank + routePanel + shortPanel;
       msgMgrLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -1955,6 +1980,86 @@
    * it stays out of My Agent Base and out of his performance until he acts:
    *   1. partner-served agents - capture the location and adopt them
    *   2. inactive agents by SA station - wake them (receipt + location) */
+  /* ---------------- Flags (OM / management): all KPI, all BDO, live search ----- */
+  function viewFlags(v) {
+    var m = state._flagsMonth || state.openMonth || curMonth();
+    state._flagsMonth = m;
+    api('flags_get', { qs: '&month=' + m }).then(function (d) {
+      var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Active' };
+      /* per-BDO x per-KPI grid: matched (both agree) vs flagged (mismatch) */
+      var gridRows = (d.grid || []).map(function (g) {
+        function cell(k) { return '<td><span class="pill ok">' + g[k].m + '</span> <span class="pill bad">' + g[k].f + '</span></td>'; }
+        return '<tr><td><b>' + esc(g.bdo) + '</b></td>' +
+          cell('served') + cell('visit') + cell('apk') + cell('active') +
+          '<td><b>' + g.matched + '</b></td><td><b>' + g.flagged + '</b></td></tr>';
+      }).join('') || '<tr><td colspan="7" class="note">' + t('No live BDO marks in this month yet.') + '</td></tr>';
+
+      function detailRow(r, isFlag) {
+        return '<tr class="fl-row" data-bdo="' + esc(r.bdo).toLowerCase() + '" data-kpi="' + esc(r.kpi || '') + '" data-search="' +
+          esc((r.bdo + ' ' + (r.agent_name || '') + ' ' + (r.acc || '') + ' ' + (r.branch || '') + ' ' + (r.station || '')).toLowerCase()) + '">' +
+          '<td><span class="pill ' + (isFlag ? 'bad' : 'ok') + '">' + (isFlag ? t('MISMATCH') : t('MATCHED')) + '</span></td>' +
+          '<td>' + esc(r.bdo) + '</td><td>' + esc(KL[r.kpi] || r.kpi) + '</td>' +
+          '<td class="c-name">' + esc(r.agent_name || '') + '<div class="note">' + esc(r.acc || '') + '</div></td>' +
+          '<td>' + esc(r.branch || '-') + '</td><td>' + esc(r.station || '-') + '</td>' +
+          '<td class="note">' + esc(r.detail || '') + '</td>' +
+          '<td class="note">' + esc((r.at || '').slice(0, 16)) + '</td></tr>';
+      }
+      var mmRows = (d.flags || []).map(function (r) { return detailRow(r, true); }).join('');
+      var okRows = (d.matched || []).map(function (r) { return detailRow(r, false); }).join('');
+
+      /* filter chips (KPI + BDO) rendered as data-attribute filters so search
+       * stays entirely client-side and instant */
+      var bdoOpts = '<option value="">' + t('All BDOs') + '</option>' + (d.grid || []).map(function (g) {
+        return '<option value="' + esc(g.bdo).toLowerCase() + '">' + esc(g.bdo) + '</option>';
+      }).join('');
+
+      v.innerHTML =
+        greetingLine() +
+        '<h1 class="page-title">' + t('Flags') + '</h1>' +
+        '<p class="page-sub">' + t('Every BDO live mark cross-checked against the uploaded performance file. Matched = both agree, Mismatch = the file said NOT.') + '</p>' +
+        '<div class="panel"><div class="row"><div class="field"><label>' + t('Month') + '</label><input id="flMonth" type="month" value="' + esc(m) + '"></div>' +
+        '<button class="btn" data-action="flLoad">' + t('Load') + '</button></div></div>' +
+        '<div class="panel"><h2>' + svg('percent') + t('Per BDO x KPI') + ' &mdash; ' + t('matched vs mismatch') + '</h2>' +
+        '<p class="note">' + t('Green = matched, red = mismatch. Bigger red = more suspicious claims.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>' + t('Matched') + '</th><th>' + t('Flagged') + '</th></tr></thead><tbody>' + gridRows + '</tbody></table></div></div>' +
+        '<div class="panel"><h2>' + svg('users') + t('Every claim') + '</h2>' +
+        '<div class="row" style="margin-bottom:8px">' +
+        '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label><input id="flSearch" placeholder="' + esc(t('BDO, agent name, acc, branch, station')) + '"></div>' +
+        '<div class="field"><label>' + t('BDO') + '</label><select id="flBdo">' + bdoOpts + '</select></div>' +
+        '<div class="field"><label>KPI</label><select id="flKpi"><option value="">' + t('Any') + '</option>' +
+        ['served','visit','apk','active'].map(function (k) { return '<option value="' + k + '">' + KL[k] + '</option>'; }).join('') + '</select></div>' +
+        '<div class="field"><label>' + t('Status') + '</label><select id="flStatus"><option value="">' + t('All') + '</option><option value="ok">' + t('Matched') + '</option><option value="bad">' + t('Mismatch') + '</option></select></div>' +
+        '<button class="ghost" data-action="flClear">' + t('Clear') + '</button></div>' +
+        '<div class="tablewrap tall"><table><thead><tr><th>' + t('Status') + '</th><th>BDO</th><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Branch') + '</th><th>' + t('Station') + '</th><th>' + t('Detail') + '</th><th>' + t('When') + '</th></tr></thead><tbody id="flBody">' + mmRows + okRows + '</tbody></table></div>' +
+        '<div class="note" style="margin-top:6px"><b>' + (d.flags || []).length + '</b> ' + t('mismatch') + ' &middot; <b>' + (d.matched || []).length + '</b> ' + t('matched') + ' &middot; <span id="flShown">' + ((d.flags || []).length + (d.matched || []).length) + '</span> ' + t('shown') + '</div>' +
+        '</div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* live client-side filter over the flags list */
+  function flApply() {
+    var q = (elById('flSearch') ? elById('flSearch').value.trim().toLowerCase() : '');
+    var b = (elById('flBdo') ? elById('flBdo').value : '');
+    var k = (elById('flKpi') ? elById('flKpi').value : '');
+    var s = (elById('flStatus') ? elById('flStatus').value : '');
+    var rows = document.querySelectorAll('#flBody tr.fl-row');
+    var shown = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var ok = true;
+      if (q && (r.getAttribute('data-search') || '').indexOf(q) < 0) ok = false;
+      if (ok && b && r.getAttribute('data-bdo') !== b) ok = false;
+      if (ok && k && r.getAttribute('data-kpi') !== k) ok = false;
+      if (ok && s) {
+        var isMismatch = r.querySelector('.pill.bad') !== null;
+        if (s === 'ok' && isMismatch) ok = false;
+        if (s === 'bad' && !isMismatch) ok = false;
+      }
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    }
+    var t2 = elById('flShown'); if (t2) t2.textContent = shown;
+  }
+
   function viewField(v) {
     api('base', { qs: state.month ? '&month=' + state.month : '' }).then(function (d) {
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
@@ -2237,6 +2342,11 @@
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }
+    if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
+    if (a === 'flClear') {
+      ['flSearch','flBdo','flKpi','flStatus'].forEach(function (id) { var el = elById(id); if (el) el.value = ''; });
+      flApply(); return;
+    }
     if (a === 'liveWinAll' || a === 'liveWinMorning' || a === 'liveWinAfternoon' || a === 'liveWinEvening') {
       var win = a === 'liveWinAll' ? ['00:00', '23:59']
               : a === 'liveWinMorning' ? ['06:00', '12:00']
@@ -2583,12 +2693,14 @@
     }
     if (n && n.id === 'btBdo') { state._btBdo = n.value; renderTab(); return; }
     if (n && n.id === 'agentPer') { state.agentPer = Number(n.value); state.agentPage = 1; agentsBodyLoad(); return; }
+    if (n && n.id && ['flBdo','flKpi','flStatus'].indexOf(n.id) >= 0) { flApply(); return; }
     if (n && n.classList && n.classList.contains('kpivis')) { var lbl = n.closest('label'); if (lbl) lbl.classList.toggle('on', n.checked); return; }
   }
   var _searchTimer = null;
   function onInput(e) {
     if (e.target && e.target.classList && e.target.classList.contains('bt-w')) { btUpdateSum(); return; }
     if (e.target && e.target.classList && e.target.classList.contains('tg-w')) { tgUpdateSum(); return; }
+    if (e.target && ['flSearch','flBdo','flKpi','flStatus'].indexOf(e.target.id) >= 0) { flApply(); return; }
     if (e.target && e.target.id === 'agentSearch') {
       /* live search from the first letter, tight debounce for speed */
       clearTimeout(_searchTimer);

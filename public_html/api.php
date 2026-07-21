@@ -1825,14 +1825,60 @@ try {
     /* Visible to ALL members; ranked most-flagged first. */
     case 'flags_get': {
       $u = require_auth();
+      /* flags detail is management-only: it names other BDOs and their misses */
+      if (!is_manager($u)) fail('Management access only', 403);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $st = db()->prepare('SELECT f.bdo, COUNT(*) n FROM flags f WHERE f.month = ? GROUP BY f.bdo ORDER BY n DESC');
       $st->execute(array($month));
       $rank = $st->fetchAll();
-      $det = db()->prepare('SELECT f.bdo, f.detail, f.at, a.name agent_name, a.acc FROM flags f
-                            LEFT JOIN agents a ON a.id = f.agent_id WHERE f.month = ? ORDER BY f.id DESC LIMIT 100');
+      /* NOT_MATCHED rows: BDO claim vs uploaded file said NOT_SERVED. */
+      $det = db()->prepare('SELECT f.bdo, f.kpi, f.detail, f.at, a.name agent_name, a.acc, a.branch, a.station
+                            FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
+                            WHERE f.month = ? ORDER BY f.id DESC');
       $det->execute(array($month));
-      respond(array('month' => $month, 'rank' => $rank, 'flags' => $det->fetchAll()));
+      $mismatched = $det->fetchAll();
+
+      /* MATCHED rows: every BDO live mark that the uploaded file confirmed.
+       * The rule mirrors what flags check: a bdo mark is "matched" when the
+       * uploaded file's own row for that agent/month agrees (served=SERVED for
+       * served KPI, apk YES for apk, visit YES for visit, activeness ACTIVE
+       * for active). */
+      $mq = db()->prepare("SELECT k.bdo, k.kpi, k.at, a.name agent_name, a.acc, a.branch, a.station
+                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                           JOIN service_history s ON s.agent_id = k.agent_id AND s.month = k.month AND s.source = 'weekly'
+                           WHERE k.month = ? AND k.source = 'bdo'
+                             AND ( (k.kpi = 'served' AND s.served_status = 'SERVED')
+                                OR (k.kpi = 'visit'  AND s.odk = 'YES')
+                                OR (k.kpi = 'apk'    AND s.apk = 'YES')
+                                OR (k.kpi = 'active' AND s.activeness LIKE 'Active%') )
+                           GROUP BY k.bdo, k.kpi, k.agent_id
+                           ORDER BY k.at DESC");
+      $mq->execute(array($month));
+      $matched = $mq->fetchAll();
+
+      /* Per-BDO x per-KPI grid: how many claims matched vs how many flagged. */
+      $grid = array();
+      foreach ($matched as $r) {
+        $b = $r['bdo']; $k = $r['kpi'];
+        if (!isset($grid[$b])) $grid[$b] = array('bdo' => $b, 'matched' => 0, 'flagged' => 0,
+          'served' => array('m'=>0,'f'=>0), 'visit' => array('m'=>0,'f'=>0),
+          'apk' => array('m'=>0,'f'=>0), 'active' => array('m'=>0,'f'=>0));
+        $grid[$b]['matched']++;
+        if (isset($grid[$b][$k])) $grid[$b][$k]['m']++;
+      }
+      foreach ($mismatched as $r) {
+        $b = $r['bdo']; $k = $r['kpi'];
+        if (!isset($grid[$b])) $grid[$b] = array('bdo' => $b, 'matched' => 0, 'flagged' => 0,
+          'served' => array('m'=>0,'f'=>0), 'visit' => array('m'=>0,'f'=>0),
+          'apk' => array('m'=>0,'f'=>0), 'active' => array('m'=>0,'f'=>0));
+        $grid[$b]['flagged']++;
+        if (isset($grid[$b][$k])) $grid[$b][$k]['f']++;
+      }
+      $grid = array_values($grid);
+      usort($grid, function ($a, $b) { return $b['flagged'] - $a['flagged']; });
+
+      respond(array('month' => $month, 'rank' => $rank, 'flags' => $mismatched,
+                    'matched' => $matched, 'grid' => $grid));
     }
 
     /* BDO ranking for a day / ISO week / month: unique served, visits, activeness, APK. */
