@@ -66,6 +66,26 @@ accent colours; gradient-filled surfaces keep readable text in every palette.
 
 ---
 
+## v1.18.0 — 2026-07-21 · "Live Work — pick any EAT time window"
+
+The OM dashboard's Live Work panel gained an **EAT time window**: two time inputs (From / To,
+defaulting to 00:00 – 23:59) plus four one-tap presets — **All day / Morning (06:00–12:00) /
+Afternoon (12:00–17:00) / Evening (17:00–23:59)**. Pick any custom range and the KPI-tick feed,
+per-BDO totals, top-line cards, new-agent forms and won't-return calls all narrow to that slice.
+The Excel download becomes **"Download window"** and its filename encodes the window
+(`live_work_2026-07-21_0800-1200.xlsx`). The typed daily reports stream stays full-day (those land
+once per day). Verified live with three ticks seeded at 08:15 / 14:30 / 20:05:
+Morning → 08:15 only, Afternoon → 14:30 only, Evening → 20:05 only, custom 14:00–15:00 → 14:30
+only. Reversed ranges self-correct on the server; garbage times fall back to defaults.
+
+### Changes
+- `api.php` `live_today`: accepts `from` + `to` (HH:MM regex-validated), uses `at BETWEEN ? AND ?`
+  on ticks/recruits/won't-return, echoes the window back for the UI
+- `app.js`: liveFrom/liveTo inputs, four preset buttons, window pill in the results header,
+  filename carries the window. EN/SW strings. Assets `?v=29`, SW `imani-v29`
+
+---
+
 ## v1.16.2 — 2026-07-19 · "Unmark restricted to unassigned only"
 
 A BDO can now overturn ONLY his own live mark (within 6h) or an **unassigned** orphan mark. Marks

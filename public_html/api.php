@@ -986,17 +986,23 @@ try {
       $u = require_auth();
       if (!can($u, 'targets', 'v') && !can($u, 'reports', 'e')) fail('No access', 403);
       $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date'] ?? '')) ? $_GET['date'] : date('Y-m-d');
+      /* optional EAT time window within the day - defaults to full day 00:00-23:59 */
+      $from = preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)($_GET['from'] ?? '')) ? $_GET['from'] : '00:00';
+      $to = preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)($_GET['to'] ?? '')) ? $_GET['to'] : '23:59';
+      if ($from > $to) { $tmp = $from; $from = $to; $to = $tmp; } /* be forgiving */
+      $tsFrom = $date . ' ' . $from . ':00';
+      $tsTo = $date . ' ' . $to . ':59';
 
       $names = array();
       foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
 
-      /* live agent ticks with their timestamps */
+      /* live agent ticks with their timestamps (inside the chosen EAT window) */
       $q = db()->prepare('SELECT k.at, k.bdo, k.kpi, k.proof, k.proof_note,
                                  a.acc, a.name AS agent, a.branch, a.station, a.physical_location
                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
-                          WHERE DATE(k.at) = ? AND k.source = "bdo"
+                          WHERE k.at BETWEEN ? AND ? AND k.source = "bdo"
                           ORDER BY k.at DESC');
-      $q->execute(array($date));
+      $q->execute(array($tsFrom, $tsTo));
       $marks = array(); $perBdo = array(); $perKpi = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
       foreach ($q->fetchAll() as $r) {
         $r['bdoName'] = isset($names[$r['bdo']]) ? $names[$r['bdo']] : $r['bdo'];
@@ -1009,24 +1015,24 @@ try {
         if (isset($perKpi[$r['kpi']])) $perKpi[$r['kpi']]++;
       }
 
-      /* new-agent forms opened today */
+      /* new-agent forms opened inside the window */
       $rq = db()->prepare('SELECT bdo, name, branch, champion, stage, submitted_at FROM recruits
-                           WHERE DATE(submitted_at) = ? ORDER BY submitted_at DESC');
-      $rq->execute(array($date));
+                           WHERE submitted_at BETWEEN ? AND ? ORDER BY submitted_at DESC');
+      $rq->execute(array($tsFrom, $tsTo));
       $recruits = $rq->fetchAll();
       foreach ($recruits as &$rr) { $rr['time'] = substr((string)$rr['submitted_at'], 11, 5); $rr['bdoName'] = isset($names[$rr['bdo']]) ? $names[$rr['bdo']] : $rr['bdo']; }
       unset($rr);
 
-      /* agents confirmed they will not return, today */
+      /* agents confirmed they will not return, inside the window */
       $wq = db()->prepare('SELECT w.bdo, w.note, w.at, a.acc, a.name AS agent, a.branch, a.station
                            FROM wont_return w JOIN agents a ON a.id = w.agent_id
-                           WHERE DATE(w.at) = ? ORDER BY w.at DESC');
-      $wq->execute(array($date));
+                           WHERE w.at BETWEEN ? AND ? ORDER BY w.at DESC');
+      $wq->execute(array($tsFrom, $tsTo));
       $wont = $wq->fetchAll();
       foreach ($wont as &$ww) { $ww['time'] = substr((string)$ww['at'], 11, 5); $ww['bdoName'] = isset($names[$ww['bdo']]) ? $names[$ww['bdo']] : $ww['bdo']; }
       unset($ww);
 
-      /* typed daily reports (float + APK numbers) for the day */
+      /* typed daily reports keep the full-day view (they land once per day) */
       $dq = db()->prepare('SELECT bdo, float_served, apk, created_at FROM daily_reports WHERE report_date = ?');
       $dq->execute(array($date));
       $reports = $dq->fetchAll();
@@ -1034,8 +1040,9 @@ try {
       unset($dd);
 
       usort($perBdo, function ($a, $b) { return $b['total'] - $a['total']; });
-      respond(array('date' => $date, 'now' => date('H:i'), 'marks' => $marks, 'perBdo' => array_values($perBdo),
-                    'perKpi' => $perKpi, 'recruits' => $recruits, 'wontReturn' => $wont, 'reports' => $reports));
+      respond(array('date' => $date, 'from' => $from, 'to' => $to, 'now' => date('H:i'),
+                    'marks' => $marks, 'perBdo' => array_values($perBdo), 'perKpi' => $perKpi,
+                    'recruits' => $recruits, 'wontReturn' => $wont, 'reports' => $reports));
     }
 
     /* ============ WON'T-RETURN list (deletion candidates) ============

@@ -169,6 +169,15 @@
     'Search in': 'Tafuta kwenye',
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
+    'From (EAT)': 'Kuanzia (EAT)',
+    'To (EAT)': 'Hadi (EAT)',
+    'All day': 'Siku nzima',
+    'Morning': 'Asubuhi',
+    'Afternoon': 'Mchana',
+    'Evening': 'Jioni',
+    'Download window': 'Pakua kipindi',
+    'Every KPI your BDOs ticked inside the chosen time window (EAT).': 'Kila KPI ambayo BDO wako waliweka ndani ya kipindi ulichochagua (EAT).',
+    'Showing': 'Inaonyesha',
     'Status updated': 'Hali imesasishwa',
     'Field Tasks': 'Kazi za Uwandani',
     'Agents you can CLAIM. They join your base only once you act on them - they do not touch your performance until then.':
@@ -627,8 +636,10 @@
   function liveTodayLoad() {
     var box = elById('liveBox'); if (!box) return;
     var date = (elById('liveDate') && elById('liveDate').value) || isoToday();
+    var from = (elById('liveFrom') && elById('liveFrom').value) || '00:00';
+    var to = (elById('liveTo') && elById('liveTo').value) || '23:59';
     box.innerHTML = '<div class="skel skel-line"></div><div class="skel skel-line"></div>';
-    api('live_today', { qs: '&date=' + date }).then(function (d) {
+    api('live_today', { qs: '&date=' + date + '&from=' + from + '&to=' + to }).then(function (d) {
       state._live = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var cards = card('check', t('Served'), fmt(d.perKpi.served)) +
@@ -662,10 +673,12 @@
             return '<tr><td><b>' + esc(r.time) + '</b></td><td>' + esc(r.bdoName) + '</td><td>' + esc(r.agent) + '</td><td class="note">' + esc(r.note || '') + '</td></tr>';
           }).join('') + '</tbody></table></div>';
       }
+      var winTag = '<span class="pill dim">' + esc(d.from || '00:00') + ' &ndash; ' + esc(d.to || '23:59') + ' EAT</span>';
       box.innerHTML =
+        '<div class="row" style="margin-bottom:8px"><span class="note">' + t('Showing') + ' ' + winTag + ' &middot; ' + esc(d.date) + '</span></div>' +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>Total</th></tr></thead><tbody>' + byBdo + '</tbody></table></div>' +
-        '<h3 style="font-size:13px;margin:14px 0 6px">' + t('Every tick, newest first') + ' (' + (d.marks || []).length + ')</h3>' +
+        '<h3 style="font-size:13px;margin:14px 0 6px">' + t('Every tick, newest first') + ' (' + (d.marks || []).length + ') ' + winTag + '</h3>' +
         '<div class="tablewrap tall"><table><thead><tr><th>Time</th><th>BDO</th><th>Agent</th><th>Branch</th><th>Station</th><th>KPI</th></tr></thead><tbody>' + feed + '</tbody></table></div>' +
         extras;
     }).catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
@@ -691,7 +704,8 @@
         return { 'Time': r.time, 'BDO': r.bdoName, 'Agent': r.name, 'Branch': r.branch, 'Bank champion': r.champion, 'Stage': r.stage };
       })), 'New agent forms');
     }
-    XLSX.writeFile(wb, 'live_work_' + d.date + '.xlsx');
+    var winTag = (d.from || '0000').replace(':', '') + '-' + (d.to || '2359').replace(':', '');
+    XLSX.writeFile(wb, 'live_work_' + d.date + '_' + winTag + '.xlsx');
     toast(rows.length + ' ' + t('ticks exported'), 'ok');
   }
   function viewDashboard(v) {
@@ -763,9 +777,15 @@
         '<h2 style="margin:0">' + svg('zap') + t('Live work today') + '</h2>' +
         '<span class="pill fire">' + esc(d.month) + '</span><div class="spacer"></div>' +
         '<div class="field"><label>' + t('Day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('From (EAT)') + '</label><input id="liveFrom" type="time" value="00:00"></div>' +
+        '<div class="field"><label>' + t('To (EAT)') + '</label><input id="liveTo" type="time" value="23:59"></div>' +
+        '<button class="ghost mini" data-action="liveWinAll" title="' + esc(t('All day')) + '">' + t('All day') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinMorning" title="06:00-12:00">' + t('Morning') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinAfternoon" title="12:00-17:00">' + t('Afternoon') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinEvening" title="17:00-23:59">' + t('Evening') + '</button>' +
         '<button class="ghost" data-action="liveLoad">' + svg('rotate') + ' ' + t('Refresh') + '</button>' +
-        '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download day') + '</button></div>' +
-        '<p class="note">' + t('Every KPI your BDOs tick today, with the exact time (EAT).') + '</p>' +
+        '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download window') + '</button></div>' +
+        '<p class="note">' + t('Every KPI your BDOs ticked inside the chosen time window (EAT).') + '</p>' +
         '<div id="liveBox"></div></div>' +
         settings +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
@@ -2217,6 +2237,16 @@
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }
+    if (a === 'liveWinAll' || a === 'liveWinMorning' || a === 'liveWinAfternoon' || a === 'liveWinEvening') {
+      var win = a === 'liveWinAll' ? ['00:00', '23:59']
+              : a === 'liveWinMorning' ? ['06:00', '12:00']
+              : a === 'liveWinAfternoon' ? ['12:00', '17:00']
+              : ['17:00', '23:59'];
+      if (elById('liveFrom')) elById('liveFrom').value = win[0];
+      if (elById('liveTo')) elById('liveTo').value = win[1];
+      liveTodayLoad();
+      return;
+    }
     if (a === 'liveDownload') { liveDownload(); return; }
     if (a === 'agentClear') { state._agentSearch = ''; state.agentPage = 1; var si = elById('agentSearch'); if (si) si.value = ''; agentsBodyLoad(); return; }
     if (a === 'prevPage') { state.agentPage = Math.max(1, (state.agentPage || 1) - 1); agentsBodyLoad(); return; }
