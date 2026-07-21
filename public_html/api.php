@@ -1138,6 +1138,10 @@ try {
       $sql .= ' ORDER BY h.commission DESC';
       $q = db()->prepare($sql);
       $q->execute($vals);
+      /* Commission amounts are for MANAGEMENT eyes only. A field user (BDO)
+       * gets the band letter (LIST A/B/C/D/E) and nothing else - the exact
+       * figure never leaves the server for him. */
+      $showMoney = is_manager($u);
       $bands = array('A' => array(), 'B' => array(), 'C' => array(), 'D' => array(), 'E' => array());
       $servedCount = 0; $total = 0;
       foreach ($q->fetchAll() as $r) {
@@ -1145,16 +1149,19 @@ try {
         if ((int)$r['served']) { $servedCount++; continue; } /* only the NOT-served show */
         $c = (float)$r['commission'];
         $band = $c > 2000000 ? 'A' : ($c > 1000000 ? 'B' : ($c > 500000 ? 'C' : ($c > 100000 ? 'D' : 'E')));
-        $bands[$band][] = array(
+        $row = array(
           'acc' => $r['acc'], 'name' => ($r['agent_name'] !== null && $r['agent_name'] !== '') ? $r['agent_name'] : $r['he_name'],
-          'commission' => (float)$r['commission'], 'station' => $r['station'],
+          'station' => $r['station'],
           'agentId' => $r['agent_id'] !== null ? (int)$r['agent_id'] : 0,
           'phone' => (string)$r['phone'], 'branch' => (string)$r['branch'],
           'location' => (string)$r['physical_location'],
         );
+        if ($showMoney) $row['commission'] = (float)$r['commission'];
+        $bands[$band][] = $row;
       }
       respond(array('month' => $month, 'station' => $station, 'stations' => $stations,
-                    'bands' => $bands, 'total' => $total, 'servedAlready' => $servedCount));
+                    'bands' => $bands, 'total' => $total, 'servedAlready' => $servedCount,
+                    'showMoney' => $showMoney));
     }
 
     /* A BDO's OWN live day - read-only motivation feed on his dashboard. */

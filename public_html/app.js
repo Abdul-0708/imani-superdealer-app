@@ -1251,15 +1251,18 @@
         var list = d.bands[b] || [];
         if (!list.length) return;
         any = true;
+        /* commission figures are management-only: BDOs get the band letter,
+         * the server never sends them the amount */
+        var money = !!d.showMoney;
         html += '<h3 style="margin:12px 0 6px;font-size:13px"><span class="pill fire">' + t('LIST') + ' ' + b + '</span> ' +
-          '<span class="note">' + t(BAND_META[b]) + ' &middot; ' + list.length + '</span></h3>' +
-          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Commission</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
+          '<span class="note">' + (money ? t(BAND_META[b]) + ' &middot; ' : '') + list.length + '</span></h3>' +
+          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th>' + (money ? '<th>Commission</th>' : '') + '<th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
           list.map(function (a) {
             var act = a.agentId
               ? (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.agentId + '" data-kpi="served" data-name="' + esc(a.name) + '">' + t('Serve') + '</button>' : '-')
               : '<span class="pill dim">' + t('not in system yet') + '</span>';
             return '<tr><td class="c-name">' + esc(a.name || a.acc) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-              '<td class="c-meta" data-l="commission"><b>' + fmt(a.commission) + '</b></td>' +
+              (money ? '<td class="c-meta" data-l="commission"><b>' + fmt(a.commission) + '</b></td>' : '') +
               '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
               '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
               '<td class="c-meta" data-l="location">' + (a.location ? esc(a.location) : '<span class="pill bad">missing</span>') + '</td>' +
@@ -2145,6 +2148,7 @@
     var m = state._flagsMonth || state.openMonth || curMonth();
     state._flagsMonth = m;
     api('flags_get', { qs: '&month=' + m }).then(function (d) {
+      state._flags = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Active' };
       /* per-BDO x per-KPI grid: matched (both agree) vs flagged (mismatch) */
       var gridRows = (d.grid || []).map(function (g) {
@@ -2178,7 +2182,8 @@
         '<h1 class="page-title">' + t('Flags') + '</h1>' +
         '<p class="page-sub">' + t('Every BDO live mark cross-checked against the uploaded performance file. Matched = both agree, Mismatch = the file said NOT.') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>' + t('Month') + '</label><input id="flMonth" type="month" value="' + esc(m) + '"></div>' +
-        '<button class="btn" data-action="flLoad">' + t('Load') + '</button></div></div>' +
+        '<button class="btn" data-action="flLoad">' + t('Load') + '</button>' +
+        '<button class="ghost" data-action="flDownload">' + svg('download') + ' ' + t('Download Excel - one sheet per BDO') + '</button></div></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('Per BDO x KPI') + ' &mdash; ' + t('matched vs mismatch') + '</h2>' +
         '<p class="note">' + t('Green = matched, red = mismatch. Bigger red = more suspicious claims.') + '</p>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>' + t('Matched') + '</th><th>' + t('Flagged') + '</th></tr></thead><tbody>' + gridRows + '</tbody></table></div></div>' +
@@ -2194,6 +2199,45 @@
         '<div class="note" style="margin-top:6px"><b>' + (d.flags || []).length + '</b> ' + t('mismatch') + ' &middot; <b>' + (d.matched || []).length + '</b> ' + t('matched') + ' &middot; <span id="flShown">' + ((d.flags || []).length + (d.matched || []).length) + '</span> ' + t('shown') + '</div>' +
         '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* Flags workbook: Summary grid first, then ONE SHEET PER BDO listing every
+   * flag he collected across all KPIs (plus his matched claims underneath). */
+  function flagsDownload() {
+    var d = state._flags;
+    if (!d) { toast(t('Load a month first'), 'warn'); return; }
+    var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.grid || []).map(function (g) {
+      return { 'BDO': g.bdo,
+               'Served OK': g.served.m, 'Served FLAG': g.served.f,
+               'Visit OK': g.visit.m, 'Visit FLAG': g.visit.f,
+               'APK OK': g.apk.m, 'APK FLAG': g.apk.f,
+               'Active OK': g.active.m, 'Active FLAG': g.active.f,
+               'Total matched': g.matched, 'Total flagged': g.flagged };
+    })), 'Summary');
+    /* group rows per BDO */
+    var perBdo = {};
+    (d.flags || []).forEach(function (r) { (perBdo[r.bdo] = perBdo[r.bdo] || { f: [], m: [] }).f.push(r); });
+    (d.matched || []).forEach(function (r) { (perBdo[r.bdo] = perBdo[r.bdo] || { f: [], m: [] }).m.push(r); });
+    var used = { 'summary': true };
+    Object.keys(perBdo).sort().forEach(function (b) {
+      var rows = perBdo[b].f.map(function (r) {
+        return { 'Status': 'FLAG', 'KPI': KL[r.kpi] || r.kpi, 'Agent': r.agent_name || '', 'Acc': r.acc || '',
+                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': r.detail || '', 'When': (r.at || '').slice(0, 16) };
+      }).concat(perBdo[b].m.map(function (r) {
+        return { 'Status': 'MATCHED', 'KPI': KL[r.kpi] || r.kpi, 'Agent': r.agent_name || '', 'Acc': r.acc || '',
+                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': '', 'When': (r.at || '').slice(0, 16) };
+      }));
+      if (!rows.length) return;
+      /* sheet names: <=31 chars, no []:*?/\ and unique */
+      var name = String(b).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 28) || 'bdo';
+      var base = name, i = 2;
+      while (used[name.toLowerCase()]) name = base.slice(0, 25) + ' ' + (i++);
+      used[name.toLowerCase()] = true;
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name);
+    });
+    XLSX.writeFile(wb, 'flags_' + (d.month || '') + '.xlsx');
+    toast(t('Flags workbook downloaded - one sheet per BDO'), 'ok');
   }
   /* live client-side filter over the flags list */
   function flApply() {
@@ -2505,6 +2549,7 @@
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
+    if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {
       ['flSearch','flBdo','flKpi','flStatus'].forEach(function (id) { var el = elById(id); if (el) el.value = ''; });
       flApply(); return;

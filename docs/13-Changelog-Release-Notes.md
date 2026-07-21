@@ -5,6 +5,20 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.20.1 — 2026-07-21 · "Flags workbook + commission hidden from BDOs"
+
+- **Flags Excel, one sheet per BDO**: the Flags tab gained a Download button. The workbook opens
+  with a **Summary** sheet (per-BDO matched/flagged counts for every KPI), then **one sheet per
+  BDO** listing each flag he collected across all KPIs (agent, acc, branch, station, detail, when),
+  with his matched claims underneath for context. Sheet names are sanitised + deduplicated.
+- **Commission is management-only**: `high_earners_get` now strips the commission figure
+  server-side for field users — the amount never leaves the server for a BDO (verified: no
+  `commission` key in his payload). He sees just LIST A/B/C/D/E; the OM keeps full figures and
+  the band ranges.
+- Assets `?v=32`, SW `imani-v32`
+
+---
+
 ## v1.20.0 — 2026-07-21 · "High-earner priority bands, serving receipts, BDO day feed" — schema v11
 
 ### Release notes
