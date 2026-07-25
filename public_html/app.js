@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.22.0';
+  var APP_VERSION = '1.22.1';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -233,6 +233,11 @@
     'BDO disputes': 'BDO amepinga',
     'no answer yet': 'bado hajajibu',
     'BDO answer': 'Jibu la BDO',
+    'Flags need your decision': 'Alama zinahitaji uamuzi wako',
+    'answered by BDOs': 'zimejibiwa na BDO',
+    'Open Flags': 'Fungua Alama',
+    'No flags this month': 'Hakuna alama mwezi huu',
+    'Every BDO claim matches the performance file.': 'Kila dai la BDO linalingana na faili la utendaji.',
     'Waking proof': 'Uthibitisho wa kuamsha',
     'Photo only': 'Picha tu',
     'Photo or typed note': 'Picha au maandishi',
@@ -938,6 +943,38 @@
         msgPanel + daysPanel + rankPanel;
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* OM dashboard alert: unmatched claims waiting for his decision, broken down
+   * by KPI so he sees at a glance whether it is serving, visits, APK or
+   * activeness that is drifting from the file. */
+  function flagAlertLoad() {
+    var box = elById('flagAlert'); if (!box) return;
+    api('flags_get').then(function (d) {
+      var f = d.flags || [];
+      if (!f.length) {
+        box.innerHTML = '<div class="panel"><div class="row" style="align-items:center">' +
+          '<span class="pill ok">' + t('No flags this month') + '</span>' +
+          '<span class="note">' + t('Every BDO claim matches the performance file.') + '</span></div></div>';
+        return;
+      }
+      var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+      var byKpi = {}, answered = 0;
+      f.forEach(function (r) {
+        byKpi[r.kpi] = (byKpi[r.kpi] || 0) + 1;
+        if (r.bdo_response) answered++;
+      });
+      var chips = Object.keys(byKpi).map(function (k) {
+        return '<span class="pill bad">' + (KL[k] || k) + ' <b>' + byKpi[k] + '</b></span>';
+      }).join(' ');
+      box.innerHTML =
+        '<div class="panel" style="border-color:var(--bad)"><div class="row" style="align-items:center;margin-bottom:6px">' +
+        '<h2 style="margin:0">' + svg('alert') + t('Flags need your decision') + '</h2>' +
+        '<span class="pill bad">' + f.length + '</span>' +
+        (answered ? '<span class="pill gold">' + answered + ' ' + t('answered by BDOs') + '</span>' : '') +
+        '<div class="spacer"></div>' +
+        '<button class="btn" data-action="tab" data-tab="flags">' + t('Open Flags') + '</button></div>' +
+        '<div class="row">' + chips + '</div></div>';
+    }).catch(function () { box.innerHTML = ''; });
+  }
   /* ---------------- LIVE WORK OF THE DAY (management) ----------------
    * Every KPI a BDO ticked today with the exact time - "Calvin served X at
    * 09:42". Refreshes on demand and downloads to Excel. */
@@ -1103,6 +1140,7 @@
         '<button class="btn" data-action="dashLoad">Load</button>' +
         (ss ? '<span class="note">cards show ' + esc(d.station) + ' only &middot; target attainment stays office-wide</span>' : '') +
         '</div></div>' +
+        '<div id="flagAlert"></div>' +
         /* LIVE: what the team is doing today, with times */
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today') + '</h2>' +
@@ -1123,6 +1161,7 @@
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         '<div class="panel"><h2>' + svg('target') + t('Target Attainment') + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
       liveTodayLoad();
+      flagAlertLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function dashSettingsSave() {

@@ -1560,11 +1560,20 @@ try {
       $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
-      $getKpiOwner = db()->prepare('SELECT bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "served"');
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
       $flagged = 0;
       $seenIds = array(); /* every agent this file mentions - drives the absent-agent flag */
+      /* Every LIVE (BDO-tapped) KPI mark of the WHOLE month, from day 1 - the
+       * new file is judged against all of them, not just recent ones. Loaded
+       * before any row is written so the upload's own credits never self-flag. */
+      $liveMarks = array();
+      if (!$priorityMode) {
+        $lm = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi
+                             WHERE month = ? AND source = 'bdo' AND bdo NOT IN ('partners','unassigned')");
+        $lm->execute(array($month));
+        foreach ($lm->fetchAll() as $r0) $liveMarks[(int)$r0['agent_id']][$r0['kpi']] = $r0['bdo'];
+      }
       /* A fresh performance file is the new truth: wipe this month's flags so
        * old accusations from a superseded file never linger. A priority seed
        * touches nothing. */
@@ -1679,33 +1688,50 @@ try {
         if ($r['apk_up']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
         if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key, $uploadId));
 
-        /* Cross-check: claimed served but the released file says NOT_SERVED. */
-        if ($r['served'] === 'NOT_SERVED') {
-          $getKpiOwner->execute(array($month, $id));
-          $owner = $getKpiOwner->fetch();
-          if ($owner && $owner['bdo'] !== 'partners' && $owner['bdo'] !== 'unassigned') {
-            $insFlag->execute(array($month, $id, $owner['bdo'], 'served',
-              'Marked served by ' . $owner['bdo'] . ' but performance file says NOT_SERVED (' . $r['acc'] . ')'));
+        /* CROSS-CHECK EVERY KPI, not just serving. For each KPI the BDO ticked
+         * live this month, compare it with what the released file says about
+         * that same agent. Any disagreement is a flag. */
+        if (isset($liveMarks[$id])) {
+          $fileSays = array(
+            'served' => ($r['served'] === 'SERVED'),
+            'visit'  => ($r['visit'] === 'YES'),
+            'apk'    => (bool)$r['apk_yes'],
+            'active' => ($r['act_cur'] === 'ACTIVE'),
+          );
+          $saidWhat = array(
+            'served' => 'says NOT_SERVED',
+            'visit'  => 'shows no agent visit',
+            'apk'    => 'shows APK below ' . $apkRequired,
+            'active' => 'still shows the agent INACTIVE',
+          );
+          foreach ($fileSays as $kk => $ok) {
+            if ($ok) continue;                        /* file agrees - no flag */
+            if (!isset($liveMarks[$id][$kk])) continue; /* nobody claimed it */
+            $who = $liveMarks[$id][$kk];
+            $insFlag->execute(array($month, $id, $who, $kk,
+              'Marked ' . strtoupper($kk) . ' by ' . $who . ' but the performance file ' .
+              $saidWhat[$kk] . ' (' . $r['acc'] . ')'));
             $flagged++;
           }
         }
       }
 
       /* SECOND cross-check - the one that used to be missed entirely:
-       * a BDO claimed SERVED but the agent is ABSENT from the performance file
-       * altogether (not even listed as NOT_SERVED). The file is the complete
-       * truth, so an absent agent means the claim is unsupported. */
+       * the agent is ABSENT from the performance file altogether (not even
+       * listed as NOT_SERVED). The file is the complete truth for the month,
+       * so EVERY KPI claimed on that agent is unsupported. */
       if (!$priorityMode && $seenIds) {
         $in = implode(',', array_fill(0, count($seenIds), '?'));
-        $mq = db()->prepare("SELECT k.agent_id, k.bdo, a.acc, a.name
+        $mq = db()->prepare("SELECT k.agent_id, k.bdo, k.kpi, a.acc
                              FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
-                             WHERE k.month = ? AND k.kpi = 'served' AND k.source = 'bdo'
+                             WHERE k.month = ? AND k.source = 'bdo'
                                AND k.bdo NOT IN ('partners','unassigned')
                                AND k.agent_id NOT IN ($in)");
         $mq->execute(array_merge(array($month), $seenIds));
         foreach ($mq->fetchAll() as $miss) {
-          $insFlag->execute(array($month, (int)$miss['agent_id'], $miss['bdo'], 'served',
-            'Marked served by ' . $miss['bdo'] . ' but the agent is NOT in the performance file at all (' . $miss['acc'] . ')'));
+          $insFlag->execute(array($month, (int)$miss['agent_id'], $miss['bdo'], $miss['kpi'],
+            'Marked ' . strtoupper($miss['kpi']) . ' by ' . $miss['bdo'] .
+            ' but the agent is NOT in the performance file at all (' . $miss['acc'] . ')'));
           $flagged++;
         }
       }
