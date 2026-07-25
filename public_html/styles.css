@@ -527,3 +527,20 @@ body.light.pal-yellow .kchip.off{color:#6b5a2e;opacity:.95}
 .bar.neg{border-color:var(--bad);background:rgba(255,107,94,.12)}
 .tg-pct.bad{color:var(--bad)}
 .tg-pct .pill{margin-left:6px}
+
+/* ================= LOADING FEEDBACK =================
+ * A thin progress bar rides the top of the screen whenever a request is in
+ * flight, and the button you pressed shows its own spinner - so a slow network
+ * never looks like a frozen app. */
+#netbar{position:fixed;top:0;left:0;height:3px;width:0;z-index:200;background:var(--grad);
+  box-shadow:0 0 10px rgba(255,140,26,.6);transition:width .25s var(--ease),opacity .3s var(--ease);opacity:0}
+#netbar.on{opacity:1}
+button.loading{position:relative;color:transparent!important;pointer-events:none}
+button.loading svg{visibility:hidden}
+button.loading::after{
+  content:"";position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;
+  border:2px solid currentColor;border-top-color:transparent;border-radius:50%;
+  color:#2b1000;animation:spin .6s linear infinite}
+button.ghost.loading::after,button.danger.loading::after{color:var(--ink)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.busy{opacity:.55;pointer-events:none;transition:opacity .2s var(--ease)}

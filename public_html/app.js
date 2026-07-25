@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.21.1';
+  var APP_VERSION = '1.22.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -211,6 +211,44 @@
     'Every agent, one sheet per BDO': 'Kila wakala, ukurasa mmoja kwa kila BDO',
     'agents exported - one sheet per BDO': 'mawakala wamepakuliwa - ukurasa mmoja kwa kila BDO',
     'No agents to export': 'Hakuna mawakala wa kupakua',
+    'Flags against me': 'Alama dhidi yangu',
+    'need your answer': 'zinahitaji jibu lako',
+    'all answered': 'zote zimejibiwa',
+    'The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.':
+      'Faili la utendaji halikuunga mkono madai haya. Sema kama kila moja ni kweli - jibu lako linaenda kwa OM.',
+    'Your answer': 'Jibu lako',
+    'I confirm': 'Nakubali',
+    'I dispute': 'Napinga',
+    'True': 'Ni kweli',
+    'Not true': 'Si kweli',
+    'Why is this flag wrong?': 'Kwa nini alama hii si sahihi?',
+    'Explain what really happened - the OM reads this before deciding.':
+      'Eleza kilichotokea hasa - OM atasoma kabla ya kuamua.',
+    'Your explanation': 'Maelezo yako',
+    'e.g. I served him on the 22nd, receipt attached': 'mf. Nilimhudumia tarehe 22, risiti imeambatanishwa',
+    'Send answer': 'Tuma jibu',
+    'Answer sent to the OM': 'Jibu limetumwa kwa OM',
+    'Write why you disagree - the OM reads this': 'Andika kwa nini hukubaliani - OM atasoma hii',
+    'BDO confirms': 'BDO amekubali',
+    'BDO disputes': 'BDO amepinga',
+    'no answer yet': 'bado hajajibu',
+    'BDO answer': 'Jibu la BDO',
+    'Waking proof': 'Uthibitisho wa kuamsha',
+    'Photo only': 'Picha tu',
+    'Photo or typed note': 'Picha au maandishi',
+    'Attach the receipt photo - a typed note is not accepted for waking':
+      'Ambatanisha picha ya risiti - maandishi hayakubaliki kwa kuamsha',
+    'KPI still to do': 'KPI iliyobaki',
+    'Visit not done': 'Visit haijafanyika',
+    'APK not done': 'APK haijafanyika',
+    'Not active': 'Si active',
+    'Visit done': 'Visit imefanyika',
+    'APK done': 'APK imefanyika',
+    'Preparing the photo...': 'Inaandaa picha...',
+    'This photo format is not supported. Take the picture with the camera instead.':
+      'Muundo huu wa picha haukubaliki. Piga picha kwa kamera badala yake.',
+    'Photo too large - take a smaller picture.': 'Picha ni kubwa mno - piga picha ndogo zaidi.',
+    'Could not read the photo - try again.': 'Imeshindwa kusoma picha - jaribu tena.',
     'All': 'Zote',
     'No report days yet.': 'Bado hakuna siku za ripoti.',
     'working day without a report': 'siku ya kazi bila ripoti',
@@ -398,6 +436,34 @@
     elById('toasts').appendChild(t);
     setTimeout(function () { t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 400); }, 3400);
   }
+  /* Top progress bar: any request in flight keeps it visible, so a slow phone
+   * network reads as "working" instead of "frozen". */
+  var netCount = 0;
+  function netBar() {
+    var b = elById('netbar');
+    if (!b) { b = document.createElement('div'); b.id = 'netbar'; document.body.appendChild(b); }
+    return b;
+  }
+  function netStart() {
+    netCount++;
+    var b = netBar();
+    b.classList.add('on');
+    b.style.width = (netCount === 1 ? 12 : 60) + '%';
+    clearTimeout(state._netCreep);
+    state._netCreep = setTimeout(function () { if (netCount > 0) b.style.width = '82%'; }, 400);
+  }
+  function netEnd() {
+    netCount = Math.max(0, netCount - 1);
+    if (netCount) return;
+    var b = netBar();
+    clearTimeout(state._netCreep);
+    b.style.width = '100%';
+    setTimeout(function () {
+      if (netCount) return;
+      b.classList.remove('on');
+      setTimeout(function () { if (!netCount) b.style.width = '0'; }, 300);
+    }, 180);
+  }
   function api(action, opts) {
     opts = opts || {};
     var url = 'api.php?action=' + action + (opts.qs || '');
@@ -405,6 +471,7 @@
      * POST without it, and no cross-site page can attach it. */
     var init = { method: opts.body ? 'POST' : 'GET', credentials: 'same-origin', headers: { 'X-Requested-With': 'imani' } };
     if (opts.body) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
+    netStart();
     return fetch(url, init).catch(function () {
       throw new Error(t('No connection - check your internet and try again'));
     }).then(function (r) {
@@ -413,7 +480,7 @@
         if (!r.ok) { var err = new Error(d.error || ('Error ' + r.status)); err.data = d; throw err; }
         return d;
       });
-    });
+    }).then(function (d) { netEnd(); return d; }, function (e) { netEnd(); throw e; });
   }
   function can(mod, lvl) {
     if (state.user && state.user.role === 'superadmin') return true;
@@ -752,10 +819,10 @@
   }
   function personalDashboard(v) {
     var calls = [api('base'), api('my_live_today'), api('messages_get'), api('bdo_rank_public'),
-                 api('daily_reports_get'),
+                 api('daily_reports_get'), api('my_flags'),
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], dr = rr[4], sum = rr[5];
+      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], dr = rr[4], myfl = rr[5], sum = rr[6];
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -807,6 +874,27 @@
           '<div class="row" style="margin-top:8px"><button class="ghost mini" data-action="tab" data-tab="inbox">' + t('Open Messages') + '</button></div></div>'
         : '';
 
+      /* FLAGS AGAINST HIM - he answers for himself before the OM decides. */
+      var KLF = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+      var flagPanel = ((myfl && myfl.rows) || []).length
+        ? '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
+          '<h2>' + svg('alert') + t('Flags against me') +
+          (myfl.pending ? ' <span class="pill bad">' + myfl.pending + ' ' + t('need your answer') + '</span>' : ' <span class="pill ok">' + t('all answered') + '</span>') + '</h2>' +
+          '<p class="note">' + t('The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.') + '</p>' +
+          '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
+          myfl.rows.map(function (f) {
+            var ans = f.bdo_response === 'CONFIRMED'
+                ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
+              : f.bdo_response === 'DISPUTED'
+                ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
+                : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
+                  '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
+            return '<tr><td>' + (KLF[f.kpi] || f.kpi) + '</td>' +
+              '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
+              '<td class="note">' + esc(f.detail || '') + '</td><td>' + ans + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>'
+        : '';
+
       /* HIS report days - merged in from the old Reports & Ranks tab */
       var mx = reportDaysMatrix(dr, d.month || curMonth());
       var daysPanel = '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(d.month || '') + '</h2>' +
@@ -840,7 +928,7 @@
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
-        livePanel + heScorePanel +
+        livePanel + flagPanel + heScorePanel +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         (perf
           ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
@@ -998,6 +1086,7 @@
           '<div class="spacer"></div>' +
           '<div class="field"><label>Required APK version</label><input id="apkReq" style="width:100px" value="' + esc(d.apkRequired) + '"></div>' +
           '<div class="field"><label>' + t('Serving receipt') + '</label><select id="srvRec"><option value="optional"' + (d.serveReceipt !== 'required' ? ' selected' : '') + '>' + t('Optional') + '</option><option value="required"' + (d.serveReceipt === 'required' ? ' selected' : '') + '>' + t('Compulsory') + '</option></select></div>' +
+          '<div class="field"><label>' + t('Waking proof') + '</label><select id="wakeRec"><option value="photo"' + (d.wakeReceipt !== 'photo_or_note' ? ' selected' : '') + '>' + t('Photo only') + '</option><option value="photo_or_note"' + (d.wakeReceipt === 'photo_or_note' ? ' selected' : '') + '>' + t('Photo or typed note') + '</option></select></div>' +
           '<button class="btn" data-action="dashSettingsSave">Save</button></div>' +
           '<p class="note" style="margin-top:6px">Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads version ' + esc(d.apkRequired) + ' or newer.</p></div>'
         : '';
@@ -1038,7 +1127,7 @@
   }
   function dashSettingsSave() {
     var kpis = Array.prototype.map.call(document.querySelectorAll('.kpivis:checked'), function (c) { return c.value; });
-    api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim(), serveReceipt: elById('srvRec') ? elById('srvRec').value : '' } })
+    api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim(), serveReceipt: elById('srvRec') ? elById('srvRec').value : '', wakeReceipt: elById('wakeRec') ? elById('wakeRec').value : '' } })
       .then(function () { toast('Dashboard settings saved', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
@@ -1354,8 +1443,19 @@
       var all = d.agents || [];
       var q = (state._baseSearch || '').toLowerCase();
       var fb = state._baseBand || '';
+      /* KPI filters: "who still needs a visit?" is one tap */
+      var fk = state._baseKpi || '';
+      function kpiDone(a, key) {
+        if (key === 'active') return a.actStatus === 'ACTIVE' || !!(a.kpi && a.kpi.active);
+        return !!(a.kpi && a.kpi[key]);
+      }
       var list = all.filter(function (a) {
         if (fb && (a.band || 'F') !== fb) return false;
+        if (fk) {
+          var parts = fk.split(':');           /* e.g. "visit:no" */
+          var want = parts[1] === 'yes';
+          if (kpiDone(a, parts[0]) !== want) return false;
+        }
         if (!q) return true;
         return ((a.name || '') + ' ' + (a.acc || '') + ' ' + (a.branch || '') + ' ' +
                 (a.physical_location || '') + ' LIST' + (a.band || 'F')).toLowerCase().indexOf(q) >= 0;
@@ -1394,7 +1494,15 @@
         '<h2 style="margin:0">' + svg('phone') + t('My agents') + ' (' + list.length + ')</h2></div>' +
         '<div class="row" style="margin-bottom:8px">' +
         '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label>' +
-        '<input id="baseSearch" placeholder="' + esc(t('name, acc, branch, location, LIST A...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div></div>' +
+        '<input id="baseSearch" placeholder="' + esc(t('name, acc, branch, location, LIST A...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
+        '<div class="field"><label>' + t('KPI still to do') + '</label><select data-change="baseKpi">' +
+        [['', t('Any')], ['visit:no', t('Visit not done')], ['apk:no', t('APK not done')],
+         ['active:no', t('Not active')], ['visit:yes', t('Visit done')], ['apk:yes', t('APK done')],
+         ['active:yes', t('Active')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (fk === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
+        (fk || fb || q ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
+        '</div>' +
         (bandChips ? '<div class="row" style="margin-bottom:10px">' + bandChips + '</div>' : '') +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
       var sb = elById('baseSearch');
@@ -1716,22 +1824,74 @@
     state._serveProof = '';
     var inp = elById('serveFile');
     inp.addEventListener('change', function () {
-      var f = inp.files && inp.files[0];
-      if (!f) return;
-      var img = new Image();
-      img.onload = function () {
-        var max = 1280, w = img.width, h = img.height;
+      readPhoto(inp.files && inp.files[0], elById('servePrev'), function (dataUrl) {
+        state._serveProof = dataUrl;
+      });
+    });
+  }
+  /* ---------------- photo picker (shared, resilient) ----------------
+   * Phones hand us formats a plain <img> cannot decode (iPhone HEIC above all).
+   * The old code just fired onerror and left the Save button dead, which is the
+   * "it gets stuck" the field reported. Now: try createImageBitmap (widest
+   * format support), fall back to Image, and if BOTH fail send the original
+   * file untouched as long as the server will accept it. The user always gets
+   * either a preview or a real explanation - never a frozen button. */
+  function readPhoto(file, box, done) {
+    if (!file) return;
+    var MAXB = 4 * 1024 * 1024;
+    function show(msg, cls) { if (box) box.innerHTML = '<span class="' + (cls || 'note') + '">' + esc(msg) + '</span>'; }
+    function preview(dataUrl) {
+      if (box) box.innerHTML = '<img src="' + dataUrl + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
+      done(dataUrl);
+    }
+    show(t('Preparing the photo...'));
+    function shrink(src, w0, h0, cleanup) {
+      try {
+        var max = 1280, w = w0, h = h0;
         if (w > max || h > max) { var s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
         var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-        cv.getContext('2d').drawImage(img, 0, 0, w, h);
-        state._serveProof = cv.toDataURL('image/jpeg', 0.72);
-        URL.revokeObjectURL(img.src);
-        var pv = elById('servePrev');
-        if (pv) pv.innerHTML = '<img src="' + state._serveProof + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
+        cv.getContext('2d').drawImage(src, 0, 0, w, h);
+        var out = cv.toDataURL('image/jpeg', 0.72);
+        if (cleanup) cleanup();
+        preview(out);
+        return true;
+      } catch (e) { if (cleanup) cleanup(); return false; }
+    }
+    function rawFallback() {
+      /* no decode possible - ship the original bytes if the server takes them */
+      if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '')) {
+        show(t('This photo format is not supported. Take the picture with the camera instead.'), 'err');
+        return;
+      }
+      if (file.size > MAXB) { show(t('Photo too large - take a smaller picture.'), 'err'); return; }
+      var fr = new FileReader();
+      fr.onload = function () { preview(String(fr.result)); };
+      fr.onerror = function () { show(t('Could not read the photo - try again.'), 'err'); };
+      fr.readAsDataURL(file);
+    }
+    function viaImage() {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      var settled = false;
+      var guard = setTimeout(function () {
+        if (settled) return; settled = true;
+        URL.revokeObjectURL(url); rawFallback();
+      }, 12000); /* never hang forever */
+      img.onload = function () {
+        if (settled) return; settled = true; clearTimeout(guard);
+        if (!shrink(img, img.width, img.height, function () { URL.revokeObjectURL(url); })) rawFallback();
       };
-      img.onerror = function () { toast(t('That file is not a photo'), 'err'); };
-      img.src = URL.createObjectURL(f);
-    });
+      img.onerror = function () {
+        if (settled) return; settled = true; clearTimeout(guard);
+        URL.revokeObjectURL(url); rawFallback();
+      };
+      img.src = url;
+    }
+    if (window.createImageBitmap) {
+      createImageBitmap(file).then(function (bmp) {
+        if (!shrink(bmp, bmp.width, bmp.height, function () { if (bmp.close) bmp.close(); })) viaImage();
+      }).catch(viaImage);
+    } else viaImage();
   }
   /* Waking an INACTIVE agent needs a receipt photo. The photo is downscaled on
    * the phone (max 1280px JPEG) so it uploads fast even on slow networks. */
@@ -1762,22 +1922,10 @@
     elById('proofLoc').addEventListener('input', proofReady);
     var inp = elById('proofFile');
     inp.addEventListener('change', function () {
-      var f = inp.files && inp.files[0];
-      if (!f) return;
-      var img = new Image();
-      img.onload = function () {
-        var max = 1280, w = img.width, h = img.height;
-        if (w > max || h > max) { var s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
-        var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-        cv.getContext('2d').drawImage(img, 0, 0, w, h);
-        state._proofData = cv.toDataURL('image/jpeg', 0.72);
-        URL.revokeObjectURL(img.src);
-        var pv = elById('proofPrev');
-        if (pv) pv.innerHTML = '<img src="' + state._proofData + '" alt="receipt preview" style="max-width:100%;max-height:140px;border-radius:10px">';
+      readPhoto(inp.files && inp.files[0], elById('proofPrev'), function (dataUrl) {
+        state._proofData = dataUrl;
         if (state._proofReady) state._proofReady();
-      };
-      img.onerror = function () { toast(t('That file is not a photo'), 'err'); };
-      img.src = URL.createObjectURL(f);
+      });
     });
   }
 
@@ -2330,6 +2478,11 @@
           '<td class="c-name">' + esc(r.agent_name || '') + '<div class="note">' + esc(r.acc || '') + '</div></td>' +
           '<td>' + esc(r.branch || '-') + '</td><td>' + esc(r.station || '-') + '</td>' +
           '<td class="note">' + esc(r.detail || '') + '</td>' +
+          '<td>' + (r.bdo_response === 'CONFIRMED'
+              ? '<span class="pill gold">' + t('BDO confirms') + '</span>'
+            : r.bdo_response === 'DISPUTED'
+              ? '<span class="pill ok">' + t('BDO disputes') + '</span><div class="note">' + esc(r.bdo_note || '') + '</div>'
+            : (isFlag ? '<span class="pill dim">' + t('no answer yet') + '</span>' : '')) + '</td>' +
           '<td class="note">' + esc((r.at || '').slice(0, 16)) + '</td></tr>';
       }
       var mmRows = (d.flags || []).map(function (r) { return detailRow(r, true); }).join('');
@@ -2359,7 +2512,7 @@
         ['served','visit','apk','active'].map(function (k) { return '<option value="' + k + '">' + KL[k] + '</option>'; }).join('') + '</select></div>' +
         '<div class="field"><label>' + t('Status') + '</label><select id="flStatus"><option value="">' + t('All') + '</option><option value="ok">' + t('Matched') + '</option><option value="bad">' + t('Mismatch') + '</option></select></div>' +
         '<button class="ghost" data-action="flClear">' + t('Clear') + '</button></div>' +
-        '<div class="tablewrap tall"><table><thead><tr><th>' + t('Status') + '</th><th>BDO</th><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Branch') + '</th><th>' + t('Station') + '</th><th>' + t('Detail') + '</th><th>' + t('When') + '</th></tr></thead><tbody id="flBody">' + mmRows + okRows + '</tbody></table></div>' +
+        '<div class="tablewrap tall"><table><thead><tr><th>' + t('Status') + '</th><th>BDO</th><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Branch') + '</th><th>' + t('Station') + '</th><th>' + t('Detail') + '</th><th>' + t('BDO answer') + '</th><th>' + t('When') + '</th></tr></thead><tbody id="flBody">' + mmRows + okRows + '</tbody></table></div>' +
         '<div class="note" style="margin-top:6px"><b>' + (d.flags || []).length + '</b> ' + t('mismatch') + ' &middot; <b>' + (d.matched || []).length + '</b> ' + t('matched') + ' &middot; <span id="flShown">' + ((d.flags || []).length + (d.matched || []).length) + '</span> ' + t('shown') + '</div>' +
         '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -2671,10 +2824,30 @@
   function closeModal() { var m = elById('modalback'); if (m) m.remove(); }
 
   /* ---------------- events ---------------- */
+  /* Buttons that fire a request show their own spinner until the network
+   * settles, so nobody taps twice wondering whether it registered. */
+  var NO_SPIN = { tab: 1, closeModal: 1, toggleTheme: 1, themePick: 1, palSet: 1, toggleLang: 1,
+                  togglePw: 1, backToLogin: 1, agentClear: 1, flClear: 1, inactMode: 1,
+                  rankPeriod: 1, baseBand: 1, kpiMark: 1 };
+  function spinWhileBusy(node) {
+    if (!node || node.tagName !== 'BUTTON' || node.classList.contains('loading')) return;
+    var before = netCount;
+    setTimeout(function () {
+      if (netCount <= before) return;      /* no request started - nothing to show */
+      node.classList.add('loading');
+      var stop = setInterval(function () {
+        if (netCount > before) return;
+        clearInterval(stop);
+        node.classList.remove('loading');
+      }, 120);
+      setTimeout(function () { clearInterval(stop); node.classList.remove('loading'); }, 20000);
+    }, 0);
+  }
   function onClick(e) {
     var node = e.target.closest ? e.target.closest('[data-action]') : null;
     if (!node) return;
     var a = node.getAttribute('data-action');
+    if (!NO_SPIN[a]) spinWhileBusy(node);
     if (a === 'tab') {
       var toTab = node.getAttribute('data-tab');
       /* fresh visit to the agent list starts clean - a stale search/filter left
@@ -2710,7 +2883,33 @@
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }
     if (a === 'agentsExport') { agentsExportAll(); return; }
+    if (a === 'flagAnswer') {
+      var fid = node.getAttribute('data-id'), fr = node.getAttribute('data-r');
+      if (fr === 'CONFIRMED') {
+        api('flag_respond', { body: { id: Number(fid), response: 'CONFIRMED' } })
+          .then(function () { toast(t('Answer sent to the OM'), 'ok'); renderTab(); })
+          .catch(function (e2) { toast(e2.message, 'err'); });
+        return;
+      }
+      openModal('<h2>' + svg('alert') + ' ' + t('Why is this flag wrong?') + '</h2>' +
+        '<p class="note">' + esc(node.getAttribute('data-agent') || '') + ' &middot; ' +
+        t('Explain what really happened - the OM reads this before deciding.') + '</p>' +
+        '<div class="field"><label>' + t('Your explanation') + '</label><input id="flNote" maxlength="255" placeholder="' + esc(t('e.g. I served him on the 22nd, receipt attached')) + '"></div>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+        '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+        '<button class="btn" data-action="flagDisputeGo" data-id="' + fid + '">' + t('Send answer') + '</button></div>');
+      return;
+    }
+    if (a === 'flagDisputeGo') {
+      var fnote = elById('flNote').value.trim();
+      if (!fnote) { toast(t('Write why you disagree - the OM reads this'), 'warn'); return; }
+      api('flag_respond', { body: { id: Number(node.getAttribute('data-id')), response: 'DISPUTED', note: fnote } })
+        .then(function () { closeModal(); toast(t('Answer sent to the OM'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
+    if (a === 'baseClear') { state._baseBand = ''; state._baseKpi = ''; state._baseSearch = ''; renderTab(); return; }
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
@@ -3083,6 +3282,7 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }
     if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
       state.agentPage = 1; agentsBodyLoad(); return;

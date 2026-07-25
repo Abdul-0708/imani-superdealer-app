@@ -355,6 +355,7 @@ try {
         'stations' => $stations, 'station' => $station, 'stationStats' => $stationStats,
         'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
         'serveReceipt' => setting_get('serve_receipt', 'optional'),
+        'wakeReceipt' => setting_get('wake_receipt', 'photo'),
       ));
     }
 
@@ -376,6 +377,8 @@ try {
        * receipt photo; 'optional' = he may attach one. */
       $sr = (string)bval('serveReceipt');
       if ($sr === 'required' || $sr === 'optional') setting_set('serve_receipt', $sr);
+      $wr = (string)bval('wakeReceipt');
+      if ($wr === 'photo' || $wr === 'photo_or_note') setting_set('wake_receipt', $wr);
       audit($u['id'], 'dashboard_settings', implode(',', $chosen) . ' apk>=' . $apkV . ' receipt=' . $sr);
       respond(array('ok' => true));
     }
@@ -681,6 +684,12 @@ try {
         $img = (string)bval('proof');
         $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
         $wakeLoc = trim((string)bval('location'));
+        /* the OM decides whether a typed commitment is still acceptable */
+        $wakeMode = setting_get('wake_receipt', 'photo');
+        if ($img === '' && $wakeMode === 'photo') {
+          fail('Attach the receipt photo - a typed note is not accepted for waking', 400,
+               array('needProof' => true, 'photoOnly' => true, 'agentLoc' => (string)$agent['physical_location']));
+        }
         if ($img === '' && mb_strlen($proofNote) < 10) {
           fail('Attach a receipt photo OR write how you are sure the agent transacted (at least 10 characters)', 400,
                array('needProof' => true, 'agentLoc' => (string)$agent['physical_location']));
@@ -1281,6 +1290,42 @@ try {
       respond(array('month' => $month, 'rows' => $rows));
     }
 
+    /* ============ FLAG REVIEW ============
+     * A flagged BDO answers for himself: he CONFIRMS the flag or DISPUTES it
+     * with a reason. His answer rides along in the OM's flag report. The KPI
+     * credit is never changed by his answer - only the OM decides. */
+    case 'my_flags': {
+      $u = require_auth(); require_perm($u, 'mybase', 'v');
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $st = db()->prepare('SELECT f.id, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
+                                  a.acc, a.name AS agent, a.branch
+                           FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
+                           WHERE f.month = ? AND f.bdo = ?
+                           ORDER BY (f.bdo_response = "") DESC, f.id DESC');
+      $st->execute(array($month, $u['username']));
+      $rows = $st->fetchAll();
+      $pending = 0;
+      foreach ($rows as $r) if ($r['bdo_response'] === '') $pending++;
+      respond(array('month' => $month, 'rows' => $rows, 'pending' => $pending));
+    }
+
+    case 'flag_respond': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $id = (int)bval('id');
+      $resp = bval('response') === 'DISPUTED' ? 'DISPUTED' : 'CONFIRMED';
+      $note = mb_substr(trim((string)bval('note')), 0, 255);
+      if ($resp === 'DISPUTED' && $note === '') fail('Write why you disagree - the OM reads this');
+      $st = db()->prepare('SELECT bdo FROM flags WHERE id = ?');
+      $st->execute(array($id));
+      $f = $st->fetch();
+      if (!$f) fail('Flag not found', 404);
+      if ($f['bdo'] !== $u['username']) fail('That flag is not yours', 403);
+      db()->prepare('UPDATE flags SET bdo_response = ?, bdo_note = ?, responded_at = NOW() WHERE id = ?')
+          ->execute(array($resp, $note, $id));
+      audit($u['id'], 'flag_respond', 'id=' . $id . ' ' . $resp);
+      respond(array('ok' => true, 'response' => $resp));
+    }
+
     /* A BDO's OWN live day - read-only motivation feed on his dashboard. */
     case 'my_live_today': {
       $u = require_auth(); require_perm($u, 'mybase', 'v');
@@ -1519,6 +1564,7 @@ try {
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
       $flagged = 0;
+      $seenIds = array(); /* every agent this file mentions - drives the absent-agent flag */
       /* A fresh performance file is the new truth: wipe this month's flags so
        * old accusations from a superseded file never linger. A priority seed
        * touches nothing. */
@@ -1612,6 +1658,7 @@ try {
         if ($r['act_cur'] !== '' || $r['act_prev'] !== '') $updAct->execute(array($r['act_cur'], $r['act_prev'], $month, $id));
 
         $agents++;
+        $seenIds[] = $id;
         /* PRIORITY MODE is a DATABASE SEED, not performance: it only creates or
          * updates the agent record and drops him into a BDO's priority base. It
          * writes NO service history, NO ledger credits, NO flags and never
@@ -1641,6 +1688,25 @@ try {
               'Marked served by ' . $owner['bdo'] . ' but performance file says NOT_SERVED (' . $r['acc'] . ')'));
             $flagged++;
           }
+        }
+      }
+
+      /* SECOND cross-check - the one that used to be missed entirely:
+       * a BDO claimed SERVED but the agent is ABSENT from the performance file
+       * altogether (not even listed as NOT_SERVED). The file is the complete
+       * truth, so an absent agent means the claim is unsupported. */
+      if (!$priorityMode && $seenIds) {
+        $in = implode(',', array_fill(0, count($seenIds), '?'));
+        $mq = db()->prepare("SELECT k.agent_id, k.bdo, a.acc, a.name
+                             FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                             WHERE k.month = ? AND k.kpi = 'served' AND k.source = 'bdo'
+                               AND k.bdo NOT IN ('partners','unassigned')
+                               AND k.agent_id NOT IN ($in)");
+        $mq->execute(array_merge(array($month), $seenIds));
+        foreach ($mq->fetchAll() as $miss) {
+          $insFlag->execute(array($month, (int)$miss['agent_id'], $miss['bdo'], 'served',
+            'Marked served by ' . $miss['bdo'] . ' but the agent is NOT in the performance file at all (' . $miss['acc'] . ')'));
+          $flagged++;
         }
       }
 
@@ -2102,7 +2168,8 @@ try {
       $st->execute(array($month));
       $rank = $st->fetchAll();
       /* NOT_MATCHED rows: BDO claim vs uploaded file said NOT_SERVED. */
-      $det = db()->prepare('SELECT f.bdo, f.kpi, f.detail, f.at, a.name agent_name, a.acc, a.branch, a.station
+      $det = db()->prepare('SELECT f.id, f.bdo, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
+                                   a.name agent_name, a.acc, a.branch, a.station
                             FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
                             WHERE f.month = ? ORDER BY f.id DESC');
       $det->execute(array($month));

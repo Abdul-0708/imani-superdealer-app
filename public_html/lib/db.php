@@ -169,6 +169,7 @@ function ensure_schema($pdo) {
   schema_v10_apply($pdo);
   schema_v11_apply($pdo);
   schema_v12_apply($pdo);
+  schema_v13_apply($pdo);
   seed($pdo);
 }
 
@@ -364,7 +365,27 @@ function upgrade_schema($pdo) {
   if ($ver < 12) {
     schema_v12_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "12" WHERE name = "schema_version"')->execute();
+    $ver = 12;
   }
+  if ($ver < 13) {
+    schema_v13_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "13" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v13: a flagged BDO answers for himself. He confirms the flag or disputes it
+ * with a reason, and the OM sees that answer next to the flag.
+ */
+function schema_v13_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE flags ADD COLUMN bdo_response VARCHAR(12) NOT NULL DEFAULT ""',
+    'ALTER TABLE flags ADD COLUMN bdo_note VARCHAR(255) NOT NULL DEFAULT ""',
+    'ALTER TABLE flags ADD COLUMN responded_at DATETIME NULL',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  /* waking demands a real PHOTO by default - no typed excuse */
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("wake_receipt","photo")')->execute();
 }
 
 /*
@@ -550,5 +571,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","12")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","13")')->execute();
 }
