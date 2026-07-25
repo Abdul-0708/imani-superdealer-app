@@ -449,6 +449,28 @@ try {
       if ($fa === 'active') { $conds[] = '(act_month = ? AND act_current = "ACTIVE")'; $vals[] = $month; }
       elseif ($fa === 'inactive') { $conds[] = '(act_month = ? AND act_current = "INACTIVE")'; $vals[] = $month; }
 
+      /* Region: a field user only ever sees his home station. The OM may pass
+       * &station= to inspect any region (empty = everything). */
+      $scope = station_scope($u);
+      if ($scope !== '') { $conds[] = '(station = ? OR station = "")'; $vals[] = $scope; }
+      else {
+        $omStation = strtoupper(trim((string)($_GET['station'] ?? '')));
+        if ($omStation !== '') { $conds[] = 'station = ?'; $vals[] = $omStation; }
+      }
+
+      /* High-earner band filter (A..E, or F = not on the commission list). */
+      $fband = strtoupper(trim((string)($_GET['fband'] ?? '')));
+      if (preg_match('/^[A-E]$/', $fband)) {
+        $lo = array('A' => 2000000, 'B' => 1000000, 'C' => 500000, 'D' => 100000, 'E' => 50000);
+        $hi = array('A' => null, 'B' => 2000000, 'C' => 1000000, 'D' => 500000, 'E' => 100000);
+        $c = 'EXISTS (SELECT 1 FROM high_earners h WHERE h.acc = agents.acc AND h.commission > ?';
+        $vals[] = $lo[$fband];
+        if ($hi[$fband] !== null) { $c .= ' AND h.commission <= ?'; $vals[] = $hi[$fband]; }
+        $conds[] = $c . ')';
+      } elseif ($fband === 'F') {
+        $conds[] = 'NOT EXISTS (SELECT 1 FROM high_earners h WHERE h.acc = agents.acc)';
+      }
+
       $where = count($conds) ? 'WHERE ' . implode(' AND ', $conds) : '';
       $tot = db()->prepare("SELECT COUNT(*) c FROM agents $where");
       $tot->execute($vals);
@@ -484,13 +506,16 @@ try {
           'actPrev' => strtoupper((string)$r['act_prev']),
           'lastTx' => isset($lastTx[$id]) ? $lastTx[$id] : '',
           'wontReturn' => isset($wr[$id]),
+          'band' => he_band($r['acc']), /* LIST A..E, or F when not on the list */
+          'station' => (string)$r['station'],
         );
         if ($full) $base['partner'] = (int)$r['partner'];
         $items[] = $base;
       }
       respond(array('items' => $items, 'total' => $total, 'page' => $page,
                     'pages' => max(1, (int)ceil($total / $limit)),
-                    'restricted' => !$full, 'month' => $month, 'monthStatus' => month_status($month)));
+                    'restricted' => !$full, 'month' => $month, 'monthStatus' => month_status($month),
+                    'scope' => $scope));
     }
 
     /* ================= BDO BASE + SERVE ================= */
@@ -507,11 +532,21 @@ try {
       $st->execute(array($month, $bdo));
       $prio = array(); $uploaded = array();
       foreach ($st->fetchAll() as $r) { if ($r['kind'] === 'priority') $prio[$r['agent_id']] = true; else $uploaded[$r['agent_id']] = true; }
-      $ids = array_keys($prio + $uploaded);
+
+      /* MY AGENT BASE = the agents HE actually served this month (and whose
+       * physical location is therefore captured). Everything he has not served
+       * yet lives on the Agents tab; this list is "these are mine now", where he
+       * finishes the remaining KPIs (visit / APK / activeness). */
+      $mineQ = db()->prepare('SELECT agent_id FROM agent_month_kpi WHERE month = ? AND bdo = ? AND kpi = "served"');
+      $mineQ->execute(array($month, $bdo));
+      $ids = array();
+      foreach ($mineQ->fetchAll() as $r) $ids[] = (int)$r['agent_id'];
+      $ids = array_values(array_unique($ids));
+
       $agents = array();
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $q = db()->prepare("SELECT id, acc, name, phone, branch, physical_location, act_current, act_month FROM agents WHERE id IN ($in)");
+        $q = db()->prepare("SELECT id, acc, name, phone, branch, station, physical_location, act_current, act_prev, act_month FROM agents WHERE id IN ($in)");
         $q->execute($ids);
         $agents = $q->fetchAll();
       }
@@ -556,12 +591,14 @@ try {
         $a['actPrev'] = strtoupper((string)$a['act_prev']);
         $a['lastTx'] = isset($lastTx[$id]) ? $lastTx[$id] : '';
         $a['wontReturn'] = isset($wr[$id]);
+        $a['band'] = he_band($a['acc']); /* LIST A..E, or F */
         unset($a['act_current'], $a['act_month'], $a['act_prev']);
       }
       unset($a);
-      $order = array('priority'=>0,'new'=>1,'never'=>2);
-      usort($agents, function ($x, $y) use ($order) {
-        if ($order[$x['level']] !== $order[$y['level']]) return $order[$x['level']] - $order[$y['level']];
+      /* highest-value agents first, then alphabetical */
+      $bandOrder = array('A'=>0,'B'=>1,'C'=>2,'D'=>3,'E'=>4,'F'=>5);
+      usort($agents, function ($x, $y) use ($bandOrder) {
+        if ($bandOrder[$x['band']] !== $bandOrder[$y['band']]) return $bandOrder[$x['band']] - $bandOrder[$y['band']];
         return strcmp($x['name'], $y['name']);
       });
 
@@ -1001,12 +1038,20 @@ try {
       $u = require_auth();
       if (!can($u, 'targets', 'v') && !can($u, 'reports', 'e')) fail('No access', 403);
       $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date'] ?? '')) ? $_GET['date'] : date('Y-m-d');
+      /* DATE RANGE: dateFrom/dateTo span several days (defaults to the one day),
+       * and the EAT hour window applies inside each day of that span. */
+      $dFrom = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['dateFrom'] ?? '')) ? $_GET['dateFrom'] : $date;
+      $dTo = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['dateTo'] ?? '')) ? $_GET['dateTo'] : $date;
+      if ($dFrom > $dTo) { $tmp = $dFrom; $dFrom = $dTo; $dTo = $tmp; }
       /* optional EAT time window within the day - defaults to full day 00:00-23:59 */
       $from = preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)($_GET['from'] ?? '')) ? $_GET['from'] : '00:00';
       $to = preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', (string)($_GET['to'] ?? '')) ? $_GET['to'] : '23:59';
       if ($from > $to) { $tmp = $from; $from = $to; $to = $tmp; } /* be forgiving */
-      $tsFrom = $date . ' ' . $from . ':00';
-      $tsTo = $date . ' ' . $to . ':59';
+      $tsFrom = $dFrom . ' ' . $from . ':00';
+      $tsTo = $dTo . ' ' . $to . ':59';
+      /* when the span covers several days, also keep each day inside the window */
+      $hourClause = ($dFrom === $dTo) ? '' : ' AND TIME(%s) BETWEEN ? AND ?';
+      $hourVals = ($dFrom === $dTo) ? array() : array($from . ':00', $to . ':59');
 
       $names = array();
       foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
@@ -1015,25 +1060,35 @@ try {
       $q = db()->prepare('SELECT k.at, k.bdo, k.kpi, k.proof, k.proof_note,
                                  a.acc, a.name AS agent, a.branch, a.station, a.physical_location
                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
-                          WHERE k.at BETWEEN ? AND ? AND k.source = "bdo"
+                          WHERE k.at BETWEEN ? AND ? AND k.source = "bdo"' .
+                          sprintf($hourClause, 'k.at') . '
                           ORDER BY k.at DESC');
-      $q->execute(array($tsFrom, $tsTo));
+      $q->execute(array_merge(array($tsFrom, $tsTo), $hourVals));
       $marks = array(); $perBdo = array(); $perKpi = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
+      /* how many HIGH EARNERS were served, per band - the money view of the day */
+      $bandServed = array('A'=>0,'B'=>0,'C'=>0,'D'=>0,'E'=>0,'F'=>0);
       foreach ($q->fetchAll() as $r) {
         $r['bdoName'] = isset($names[$r['bdo']]) ? $names[$r['bdo']] : $r['bdo'];
         $r['time'] = substr((string)$r['at'], 11, 5);
+        $r['date'] = substr((string)$r['at'], 0, 10);
         $r['hasProof'] = ($r['proof'] !== '' || $r['proof_note'] !== '');
+        $r['band'] = he_band($r['acc']);
         unset($r['proof'], $r['proof_note']);
         $marks[] = $r;
-        if (!isset($perBdo[$r['bdo']])) $perBdo[$r['bdo']] = array('bdo'=>$r['bdo'], 'name'=>$r['bdoName'], 'served'=>0,'visit'=>0,'apk'=>0,'active'=>0,'total'=>0);
+        if (!isset($perBdo[$r['bdo']])) $perBdo[$r['bdo']] = array('bdo'=>$r['bdo'], 'name'=>$r['bdoName'], 'served'=>0,'visit'=>0,'apk'=>0,'active'=>0,'total'=>0,
+                                                                   'bandA'=>0,'bandB'=>0,'bandC'=>0,'bandD'=>0,'bandE'=>0);
         if (isset($perBdo[$r['bdo']][$r['kpi']])) { $perBdo[$r['bdo']][$r['kpi']]++; $perBdo[$r['bdo']]['total']++; }
         if (isset($perKpi[$r['kpi']])) $perKpi[$r['kpi']]++;
+        if ($r['kpi'] === 'served') {
+          $bandServed[$r['band']]++;
+          if ($r['band'] !== 'F') $perBdo[$r['bdo']]['band' . $r['band']]++;
+        }
       }
 
       /* new-agent forms opened inside the window */
       $rq = db()->prepare('SELECT bdo, name, branch, champion, stage, submitted_at FROM recruits
-                           WHERE submitted_at BETWEEN ? AND ? ORDER BY submitted_at DESC');
-      $rq->execute(array($tsFrom, $tsTo));
+                           WHERE submitted_at BETWEEN ? AND ?' . sprintf($hourClause, 'submitted_at') . ' ORDER BY submitted_at DESC');
+      $rq->execute(array_merge(array($tsFrom, $tsTo), $hourVals));
       $recruits = $rq->fetchAll();
       foreach ($recruits as &$rr) { $rr['time'] = substr((string)$rr['submitted_at'], 11, 5); $rr['bdoName'] = isset($names[$rr['bdo']]) ? $names[$rr['bdo']] : $rr['bdo']; }
       unset($rr);
@@ -1041,22 +1096,24 @@ try {
       /* agents confirmed they will not return, inside the window */
       $wq = db()->prepare('SELECT w.bdo, w.note, w.at, a.acc, a.name AS agent, a.branch, a.station
                            FROM wont_return w JOIN agents a ON a.id = w.agent_id
-                           WHERE w.at BETWEEN ? AND ? ORDER BY w.at DESC');
-      $wq->execute(array($tsFrom, $tsTo));
+                           WHERE w.at BETWEEN ? AND ?' . sprintf($hourClause, 'w.at') . ' ORDER BY w.at DESC');
+      $wq->execute(array_merge(array($tsFrom, $tsTo), $hourVals));
       $wont = $wq->fetchAll();
       foreach ($wont as &$ww) { $ww['time'] = substr((string)$ww['at'], 11, 5); $ww['bdoName'] = isset($names[$ww['bdo']]) ? $names[$ww['bdo']] : $ww['bdo']; }
       unset($ww);
 
       /* typed daily reports keep the full-day view (they land once per day) */
-      $dq = db()->prepare('SELECT bdo, float_served, apk, created_at FROM daily_reports WHERE report_date = ?');
-      $dq->execute(array($date));
+      $dq = db()->prepare('SELECT bdo, float_served, apk, created_at FROM daily_reports WHERE report_date BETWEEN ? AND ?');
+      $dq->execute(array($dFrom, $dTo));
       $reports = $dq->fetchAll();
       foreach ($reports as &$dd) { $dd['time'] = substr((string)$dd['created_at'], 11, 5); $dd['bdoName'] = isset($names[$dd['bdo']]) ? $names[$dd['bdo']] : $dd['bdo']; }
       unset($dd);
 
       usort($perBdo, function ($a, $b) { return $b['total'] - $a['total']; });
-      respond(array('date' => $date, 'from' => $from, 'to' => $to, 'now' => date('H:i'),
+      respond(array('date' => $date, 'dateFrom' => $dFrom, 'dateTo' => $dTo,
+                    'from' => $from, 'to' => $to, 'now' => date('H:i'),
                     'marks' => $marks, 'perBdo' => array_values($perBdo), 'perKpi' => $perKpi,
+                    'bandServed' => $bandServed,
                     'recruits' => $recruits, 'wontReturn' => $wont, 'reports' => $reports));
     }
 
@@ -1164,6 +1221,66 @@ try {
                     'showMoney' => $showMoney));
     }
 
+    /* ============ BDO SAVED PLACES (route dropdown) ============ */
+    case 'places_get': {
+      $u = require_auth(); require_perm($u, 'mybase', 'v');
+      $st = db()->prepare('SELECT id, place FROM bdo_places WHERE bdo = ? ORDER BY place');
+      $st->execute(array($u['username']));
+      respond(array('rows' => $st->fetchAll()));
+    }
+
+    case 'place_save': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $p = mb_substr(trim((string)bval('place')), 0, 160);
+      if ($p === '') fail('Type the place name');
+      db()->prepare('INSERT IGNORE INTO bdo_places (bdo, place) VALUES (?,?)')->execute(array($u['username'], $p));
+      respond(array('ok' => true));
+    }
+
+    case 'place_delete': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      db()->prepare('DELETE FROM bdo_places WHERE id = ? AND bdo = ?')->execute(array((int)bval('id'), $u['username']));
+      respond(array('ok' => true));
+    }
+
+    /* OM: every agent in one workbook, ONE SHEET PER BDO (who serves him). */
+    case 'agents_export_all': {
+      $u = require_auth(); require_manager($u);
+      $month = open_month();
+      /* who "owns" each agent: the BDO who served him this month, else his base row */
+      $own = array();
+      $bq = db()->prepare('SELECT agent_id, bdo FROM base WHERE month = ?');
+      $bq->execute(array($month));
+      foreach ($bq->fetchAll() as $r) $own[(int)$r['agent_id']] = $r['bdo'];
+      $sq = db()->prepare('SELECT agent_id, bdo FROM agent_month_kpi WHERE month = ? AND kpi = "served"');
+      $sq->execute(array($month));
+      foreach ($sq->fetchAll() as $r) $own[(int)$r['agent_id']] = $r['bdo'];
+
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
+
+      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+      $sql = 'SELECT id, acc, name, phone, branch, station, physical_location FROM agents';
+      $vals = array();
+      if ($station !== '') { $sql .= ' WHERE station = ?'; $vals[] = $station; }
+      $sql .= ' ORDER BY name';
+      $q = db()->prepare($sql);
+      $q->execute($vals);
+      $rows = array();
+      foreach ($q->fetchAll() as $r) {
+        $id = (int)$r['id'];
+        $b = isset($own[$id]) ? $own[$id] : 'unassigned';
+        $rows[] = array(
+          'bdo' => $b, 'bdoName' => isset($names[$b]) ? $names[$b] : $b,
+          'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
+          'branch' => $r['branch'], 'station' => $r['station'],
+          'location' => $r['physical_location'], 'band' => he_band($r['acc']),
+        );
+      }
+      audit($u['id'], 'agents_export', count($rows) . ' agents');
+      respond(array('month' => $month, 'rows' => $rows));
+    }
+
     /* A BDO's OWN live day - read-only motivation feed on his dashboard. */
     case 'my_live_today': {
       $u = require_auth(); require_perm($u, 'mybase', 'v');
@@ -1175,11 +1292,33 @@ try {
       $marks = array(); $per = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
       foreach ($q->fetchAll() as $r) {
         $r['time'] = substr((string)$r['at'], 11, 5);
+        $r['band'] = he_band($r['acc']);
         unset($r['at']);
         $marks[] = $r;
         if (isset($per[$r['kpi']])) $per[$r['kpi']]++;
       }
-      respond(array('date' => date('Y-m-d'), 'now' => date('H:i'), 'marks' => $marks, 'perKpi' => $per));
+      /* HIGH EARNERS he served today / this week / this month, per band - the
+       * scoreboard that actually reflects the value of his day. */
+      $spans = array(
+        'day' => array(date('Y-m-d'), date('Y-m-d')),
+        'week' => array(date('Y-m-d', strtotime('monday this week')), date('Y-m-d', strtotime('sunday this week'))),
+        'month' => array(date('Y-m') . '-01', date('Y-m-t')),
+      );
+      $bands = array();
+      $bq = db()->prepare('SELECT a.acc FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                           WHERE k.source = "bdo" AND k.bdo = ? AND k.kpi = "served" AND DATE(k.at) BETWEEN ? AND ?');
+      foreach ($spans as $key => $sp) {
+        $bq->execute(array($u['username'], $sp[0], $sp[1]));
+        $b = array('A'=>0,'B'=>0,'C'=>0,'D'=>0,'E'=>0,'F'=>0,'total'=>0,'highTotal'=>0);
+        foreach ($bq->fetchAll() as $r) {
+          $bd = he_band($r['acc']);
+          $b[$bd]++; $b['total']++;
+          if ($bd !== 'F') $b['highTotal']++;
+        }
+        $bands[$key] = $b;
+      }
+      respond(array('date' => date('Y-m-d'), 'now' => date('H:i'), 'marks' => $marks,
+                    'perKpi' => $per, 'bands' => $bands));
     }
 
     case 'wont_return_list': {
@@ -1380,6 +1519,15 @@ try {
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
       $flagged = 0;
+      /* A fresh performance file is the new truth: wipe this month's flags so
+       * old accusations from a superseded file never linger. A priority seed
+       * touches nothing. */
+      $cleared = 0;
+      if (!$priorityMode) {
+        $del = db()->prepare('DELETE FROM flags WHERE month = ?');
+        $del->execute(array($month));
+        $cleared = $del->rowCount();
+      }
 
       /* PASS 1: parse everything (needed for office snapshot totals). */
       $apkRequired = setting_get('apk_required_version', '2.0');
@@ -1464,6 +1612,16 @@ try {
         if ($r['act_cur'] !== '' || $r['act_prev'] !== '') $updAct->execute(array($r['act_cur'], $r['act_prev'], $month, $id));
 
         $agents++;
+        /* PRIORITY MODE is a DATABASE SEED, not performance: it only creates or
+         * updates the agent record and drops him into a BDO's priority base. It
+         * writes NO service history, NO ledger credits, NO flags and never
+         * touches the office snapshot - those agents are last months' known
+         * base, not this month's claims. */
+        if ($priorityMode) {
+          $insBase->execute(array($month, $key, $id, $kind));
+          continue;
+        }
+
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'], $uploadId));
@@ -1487,13 +1645,14 @@ try {
       }
 
       /* OFFICE snapshot for the dashboard: main KPIs come from this file, not
-       * from BDO manual marks. Re-uploading replaces the month's snapshot. */
-      setting_set('month_stats_' . $month, json_encode($stats));
+       * from BDO manual marks. Re-uploading replaces the month's snapshot.
+       * A priority seed never writes it. */
+      if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
       audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged);
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
-                    'priorityMode' => $priorityMode, 'stats' => $stats));
+                    'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats));
     }
 
     /* ================= TARGETS (typed by OM) ================= */

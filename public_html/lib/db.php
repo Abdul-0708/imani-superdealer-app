@@ -168,6 +168,7 @@ function ensure_schema($pdo) {
   schema_v9_apply($pdo);
   schema_v10_apply($pdo);
   schema_v11_apply($pdo);
+  schema_v12_apply($pdo);
   seed($pdo);
 }
 
@@ -358,7 +359,29 @@ function upgrade_schema($pdo) {
   if ($ver < 11) {
     schema_v11_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "11" WHERE name = "schema_version"')->execute();
+    $ver = 11;
   }
+  if ($ver < 12) {
+    schema_v12_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "12" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v12: a BDO's re-usable VISIT PLACES. He saves the spots he works, then picks
+ * one or several from a dropdown when writing the day's route - no retyping.
+ */
+function schema_v12_apply($pdo) {
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS bdo_places (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bdo VARCHAR(64) NOT NULL,
+    place VARCHAR(160) NOT NULL,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_place (bdo, place)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("home_station","ARUSHA")')->execute();
 }
 
 /*
@@ -527,5 +550,5 @@ function seed($pdo) {
   // Current calendar month starts OPEN.
   $pdo->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array(date('Y-m')));
   $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("working_days","1,2,3,4,5,6")')->execute();
-  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","11")')->execute();
+  $pdo->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES ("schema_version","12")')->execute();
 }

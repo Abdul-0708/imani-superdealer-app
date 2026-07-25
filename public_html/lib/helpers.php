@@ -618,3 +618,30 @@ function erase_bdo_data($bdo, $scope) {
   }
   return $n;
 }
+
+/* ---------- high-earner bands (A..E, else F) ----------
+ * The OM's commission list drives priority. Every agent list shows which band
+ * an agent belongs to so a BDO instantly sees who is worth the trip. Agents
+ * that are not on the list at all read LIST F. */
+function he_band_map() {
+  static $map = null;
+  if ($map !== null) return $map;
+  $map = array();
+  try {
+    foreach (db()->query('SELECT acc, commission FROM high_earners')->fetchAll() as $r) {
+      $c = (float)$r['commission'];
+      $map[$r['acc']] = $c > 2000000 ? 'A' : ($c > 1000000 ? 'B' : ($c > 500000 ? 'C' : ($c > 100000 ? 'D' : 'E')));
+    }
+  } catch (Exception $e) { /* table not created yet */ }
+  return $map;
+}
+function he_band($acc) {
+  $m = he_band_map();
+  return isset($m[$acc]) ? $m[$acc] : 'F';
+}
+
+/* Field users (BDOs) work ONE region. The OM may still inspect any station. */
+function station_scope($user) {
+  if (is_manager($user)) return ''; /* no forced filter for management */
+  return setting_get('home_station', 'ARUSHA');
+}
