@@ -522,3 +522,8 @@ body.light.pal-blue .kchip.done{background:rgba(21,87,176,.14);color:#123f7d}
 body.light.pal-blue .kchip.off{color:#41597a;opacity:.95}
 body.light.pal-green .kchip.off{color:#3d5c4b;opacity:.95}
 body.light.pal-yellow .kchip.off{color:#6b5a2e;opacity:.95}
+
+/* a KPI going BACKWARDS (e.g. more agents lost than waked) - empty red track */
+.bar.neg{border-color:var(--bad);background:rgba(255,107,94,.12)}
+.tg-pct.bad{color:var(--bad)}
+.tg-pct .pill{margin-left:6px}

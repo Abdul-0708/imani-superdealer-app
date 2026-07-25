@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.18.0';
+  var APP_VERSION = '1.21.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -169,6 +169,49 @@
     'Search in': 'Tafuta kwenye',
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
+    'High-earner list': 'Orodha ya mapato',
+    'Field Activity': 'Shughuli za uwandani',
+    'Wake sleeping agents and recruit new ones - both build the SAME Activeness KPI this month.':
+      'Amsha mawakala waliolala na sajili wapya - vyote vinajenga KPI ILE ILE ya Activeness mwezi huu.',
+    'Recruit a new agent': 'Sajili wakala mpya',
+    'A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.':
+      'Wakala mpya unayemleta anahesabika kwenye Activeness yako sawa kabisa na kumuamsha aliyelala.',
+    'the agents you served - finish their other KPIs right here':
+      'mawakala uliowahudumia - maliza KPI zao nyingine hapa hapa',
+    'My agents': 'Mawakala wangu',
+    'High earners': 'Wenye mapato makubwa',
+    'Nothing here yet': 'Bado hakuna kitu hapa',
+    'Agents join this list the moment you serve them on the Agents tab.':
+      'Mawakala wanaingia kwenye orodha hii mara tu unapowahudumia kwenye kichupo cha Mawakala.',
+    'name, acc, branch, location, LIST A...': 'jina, acc, tawi, mahali, ORODHA A...',
+    'High earners I served': 'Wenye mapato makubwa niliowahudumia',
+    'How valuable your serving was - by high-earner list.': 'Thamani ya kuhudumia kwako - kwa orodha ya mapato.',
+    'High total': 'Jumla kubwa',
+    'Today': 'Leo',
+    'This week': 'Wiki hii',
+    'This month': 'Mwezi huu',
+    'Messages from administration': 'Ujumbe kutoka utawalani',
+    'Open Messages': 'Fungua Ujumbe',
+    'No targets set yet.': 'Bado hakuna malengo yaliyowekwa.',
+    'GOING BACKWARDS': 'INARUDI NYUMA',
+    'Type only FLOAT here. Every other KPI is ticked on the agent itself, so we always know which agent was handled by whom.':
+      'Andika FLOAT tu hapa. KPI nyingine zote zinawekwa kwa wakala mwenyewe, ili tujue nani alishughulikiwa na nani.',
+    'Serving, visits, APK and activeness: tick them on the agent, not here.':
+      'Kuhudumia, visits, APK na activeness: ziweke kwa wakala, si hapa.',
+    'Tick the places you will visit - they fill the route below.':
+      'Chagua sehemu utakazotembelea - zitajaza njia hapa chini.',
+    'Save a place for next time': 'Hifadhi sehemu kwa mara nyingine',
+    'Save place': 'Hifadhi sehemu',
+    'Place saved': 'Sehemu imehifadhiwa',
+    'Type the place name': 'Andika jina la sehemu',
+    'e.g. Kaloleni': 'mf. Kaloleni',
+    'From day': 'Kuanzia siku',
+    'To day': 'Hadi siku',
+    'All agents': 'Mawakala wote',
+    'Every agent, one sheet per BDO': 'Kila wakala, ukurasa mmoja kwa kila BDO',
+    'agents exported - one sheet per BDO': 'mawakala wamepakuliwa - ukurasa mmoja kwa kila BDO',
+    'No agents to export': 'Hakuna mawakala wa kupakua',
+    'All': 'Zote',
     'High-earner priority list': 'Orodha ya kipaumbele ya wanaoingiza zaidi',
     'High earners - PRIORITY to serve': 'Wanaoingiza zaidi - KIPAUMBELE kuhudumia',
     'The OM\'s commission list, matched live: only the NOT-served appear. Pick your SA station first.':
@@ -485,7 +528,7 @@
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
-    { key: 'field', label: 'Field Tasks', icon: 'pin' },
+    { key: 'field', label: 'Field Activity', icon: 'pin' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
     { key: 'data', label: 'Data Manager', icon: 'alert' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
@@ -672,10 +715,10 @@
   }
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
   function personalDashboard(v) {
-    var calls = [api('base'), api('my_live_today')];
-    if (isSpecial()) calls.push(api('specialist_summary'));
+    var calls = [api('base'), api('my_live_today'), api('messages_get'), api('bdo_rank_public'),
+                 isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], live = rr[1], sum = rr[2];
+      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], sum = rr[4];
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -696,6 +739,46 @@
         '</div>' +
         (liveFeed || '<div class="note">' + t('Nothing yet today - your first tick will show here the moment you make it. Twende kazi! 💪') + '</div>') +
         '</div>';
+
+      /* HIGH EARNERS he served - day / week / month, per list. The money view
+       * of his effort: not just "how many", but "how valuable". */
+      var B = live.bands || {};
+      function bandCells(sp) {
+        var b = B[sp] || {};
+        return ['A', 'B', 'C', 'D', 'E'].map(function (k) {
+          return '<td>' + ((b[k] || 0) ? '<b>' + b[k] + '</b>' : '<span class="note">0</span>') + '</td>';
+        }).join('') + '<td class="note">' + (b.F || 0) + '</td><td><b>' + (b.highTotal || 0) + '</b></td>';
+      }
+      var heScorePanel =
+        '<div class="panel"><h2>' + svg('dollar') + t('High earners I served') + '</h2>' +
+        '<p class="note">' + t('How valuable your serving was - by high-earner list.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th></th>' +
+        ['A', 'B', 'C', 'D', 'E'].map(function (k) { return '<th>' + t('LIST') + ' ' + k + '</th>'; }).join('') +
+        '<th>' + t('LIST') + ' F</th><th>' + t('High total') + '</th></tr></thead><tbody>' +
+        '<tr><td><b>' + t('Today') + '</b></td>' + bandCells('day') + '</tr>' +
+        '<tr><td><b>' + t('This week') + '</b></td>' + bandCells('week') + '</tr>' +
+        '<tr><td><b>' + t('This month') + '</b></td>' + bandCells('month') + '</tr>' +
+        '</tbody></table></div></div>';
+
+      /* messages from administration */
+      var msgPanel = (msgs && msgs.length)
+        ? '<div class="panel"><h2>' + svg('mail') + t('Messages from administration') + '</h2>' +
+          msgs.slice(0, 5).map(function (m) {
+            return '<div class="tg-row"><span class="tg-ic">' + svg('mail') + '</span><div style="flex:1">' + esc(m.body) +
+              '<div class="note">' + esc(m.from_user) + ' &middot; ' + esc((m.at || '').slice(0, 16)) + '</div></div></div>';
+          }).join('') +
+          '<div class="row" style="margin-top:8px"><button class="ghost mini" data-action="tab" data-tab="inbox">' + t('Open Messages') + '</button></div></div>'
+        : '';
+
+      /* everyone sees who is on top this month */
+      var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
+        (((wrk && wrk.rows) || []).map(function (r, i) {
+          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '>' +
+            '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
+        }).join('') || '<tr><td colspan="3" class="note">' + t('No targets set yet.') + '</td></tr>') +
+        '</tbody></table></div></div>';
+
       var perf = d.performance;
       var cards;
       if (sum) {
@@ -713,13 +796,14 @@
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
-        livePanel +
+        livePanel + heScorePanel +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         (perf
           ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
             (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
             perfBars(perf.kpis) + '</div>'
-          : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>');
+          : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>') +
+        msgPanel + rankPanel;
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* ---------------- LIVE WORK OF THE DAY (management) ----------------
@@ -728,10 +812,11 @@
   function liveTodayLoad() {
     var box = elById('liveBox'); if (!box) return;
     var date = (elById('liveDate') && elById('liveDate').value) || isoToday();
+    var dTo = (elById('liveDateTo') && elById('liveDateTo').value) || date;
     var from = (elById('liveFrom') && elById('liveFrom').value) || '00:00';
     var to = (elById('liveTo') && elById('liveTo').value) || '23:59';
     box.innerHTML = '<div class="skel skel-line"></div><div class="skel skel-line"></div>';
-    api('live_today', { qs: '&date=' + date + '&from=' + from + '&to=' + to }).then(function (d) {
+    api('live_today', { qs: '&date=' + date + '&dateFrom=' + date + '&dateTo=' + dTo + '&from=' + from + '&to=' + to }).then(function (d) {
       state._live = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var cards = card('check', t('Served'), fmt(d.perKpi.served)) +
@@ -766,8 +851,18 @@
           }).join('') + '</tbody></table></div>';
       }
       var winTag = '<span class="pill dim">' + esc(d.from || '00:00') + ' &ndash; ' + esc(d.to || '23:59') + ' EAT</span>';
+      var dayTag = (d.dateFrom && d.dateTo && d.dateFrom !== d.dateTo)
+        ? '<span class="pill fire">' + esc(d.dateFrom) + ' &rarr; ' + esc(d.dateTo) + '</span>'
+        : '<span class="pill fire">' + esc(d.date) + '</span>';
+      /* how much VALUE was served in this window, by high-earner list */
+      var bs = d.bandServed || {};
+      var bandRow = ['A', 'B', 'C', 'D', 'E'].map(function (k) {
+        return '<span class="pill ' + ((k === 'A' || k === 'B') ? 'fire' : (k === 'E' ? 'ok' : 'gold')) + '">' +
+          t('LIST') + ' ' + k + ' <b>' + (bs[k] || 0) + '</b></span>';
+      }).join(' ') + ' <span class="pill dim">' + t('LIST') + ' F <b>' + (bs.F || 0) + '</b></span>';
       box.innerHTML =
-        '<div class="row" style="margin-bottom:8px"><span class="note">' + t('Showing') + ' ' + winTag + ' &middot; ' + esc(d.date) + '</span></div>' +
+        '<div class="row" style="margin-bottom:8px"><span class="note">' + t('Showing') + ' ' + dayTag + ' ' + winTag + '</span></div>' +
+        '<div class="row" style="margin-bottom:10px">' + bandRow + '</div>' +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>Total</th></tr></thead><tbody>' + byBdo + '</tbody></table></div>' +
         '<h3 style="font-size:13px;margin:14px 0 6px">' + t('Every tick, newest first') + ' (' + (d.marks || []).length + ') ' + winTag + '</h3>' +
@@ -780,7 +875,8 @@
     if (!d || !(d.marks || []).length) { toast(t('Nothing to download for this day'), 'warn'); return; }
     var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
     var rows = d.marks.map(function (m) {
-      return { 'Time': m.time, 'BDO': m.bdoName, 'Username': m.bdo, 'KPI': KL[m.kpi] || m.kpi,
+      return { 'Date': m.date || d.date, 'Time': m.time, 'BDO': m.bdoName, 'Username': m.bdo,
+               'KPI': KL[m.kpi] || m.kpi, 'High-earner list': m.band || 'F',
                'Agent': m.agent, 'Acc': m.acc, 'Branch': m.branch, 'SA Station': m.station,
                'Location': m.physical_location, 'Proof': m.hasProof ? 'YES' : '' };
     });
@@ -797,7 +893,8 @@
       })), 'New agent forms');
     }
     var winTag = (d.from || '0000').replace(':', '') + '-' + (d.to || '2359').replace(':', '');
-    XLSX.writeFile(wb, 'live_work_' + d.date + '_' + winTag + '.xlsx');
+    var span = (d.dateFrom && d.dateTo && d.dateFrom !== d.dateTo) ? d.dateFrom + '_to_' + d.dateTo : d.date;
+    XLSX.writeFile(wb, 'live_work_' + span + '_' + winTag + '.xlsx');
     toast(rows.length + ' ' + t('ticks exported'), 'ok');
   }
   function viewDashboard(v) {
@@ -815,16 +912,24 @@
       function shown(k) { return visible.indexOf(k) >= 0; }
       var defs = OFFICE_DEFS.filter(function (t) { return shown(t.key) && att[t.key]; });
 
-      var bars = defs.map(function (t) {
-        var a = att[t.key];
-        var pct = a.pct == null ? 0 : a.pct;
+      /* NB: the loop variable must NOT be called `t` - that shadows the t()
+       * translation helper used inside the body. */
+      var bars = defs.map(function (def) {
+        var a = att[def.key];
+        /* A NEGATIVE result (e.g. activeness -11: more agents lost than waked)
+         * must never draw a bar - a raw negative width is invalid CSS and the
+         * browser used to paint it FULL. Clamp to 0 and flag the retardation. */
+        var raw = a.pct == null ? null : a.pct;
+        var neg = raw !== null && raw < 0;
+        var pct = raw == null ? 0 : Math.max(0, Math.min(100, raw));
         var meta = a.target > 0 ? fmt(a.actual) + ' / ' + fmt(a.target) : fmt(a.actual) + ' (no target)';
         var wtag = a.weight > 0 ? ' <span class="note">(' + a.weight + '%)</span>' : '';
-        return '<div class="tg-row"><span class="tg-ic">' + svg(t.icon) + '</span>' +
-          '<span class="tg-name">' + esc(t.label) + wtag + '</span>' +
-          '<div class="bar" style="flex:1"><i style="width:' + pct + '%"></i></div>' +
+        return '<div class="tg-row"><span class="tg-ic">' + svg(def.icon) + '</span>' +
+          '<span class="tg-name">' + esc(def.label) + wtag + '</span>' +
+          '<div class="bar' + (neg ? ' neg' : '') + '" style="flex:1"><i class="' + (neg ? 'red' : '') + '" style="width:' + pct + '%"></i></div>' +
           '<span class="tg-meta">' + meta + '</span>' +
-          '<span class="tg-pct">' + (a.pct == null ? '-' : a.pct + '%') + '</span></div>';
+          '<span class="tg-pct' + (neg ? ' bad' : '') + '">' + (raw == null ? '-' : raw + '%') +
+          (neg ? ' <span class="pill bad">' + t('GOING BACKWARDS') + '</span>' : '') + '</span></div>';
       }).join('');
 
       var cards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents));
@@ -869,7 +974,8 @@
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today') + '</h2>' +
         '<span class="pill fire">' + esc(d.month) + '</span><div class="spacer"></div>' +
-        '<div class="field"><label>' + t('Day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('From day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('To day') + '</label><input id="liveDateTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
         '<div class="field"><label>' + t('From (EAT)') + '</label><input id="liveFrom" type="time" value="00:00"></div>' +
         '<div class="field"><label>' + t('To (EAT)') + '</label><input id="liveTo" type="time" value="23:59"></div>' +
         '<button class="ghost mini" data-action="liveWinAll" title="' + esc(t('All day')) + '">' + t('All day') + '</button>' +
@@ -901,10 +1007,19 @@
   /* ---------------- agents (all roles; BDOs get restricted columns) ---------------- */
   /* phone renders as a tap-to-call link - field BDOs dial the agent in one tap */
   function telHtml(p) { return p ? '<a class="tel" href="tel:' + esc(p) + '">' + esc(p) + '</a>' : '-'; }
+  /* Which high-earner list an agent belongs to. A..E are the OM's commission
+   * bands; F means he is not on the list at all. Shown on EVERY agent list so a
+   * BDO instantly sees who is worth the trip. */
+  function bandPill(band) {
+    var b = band || 'F';
+    var cls = (b === 'A' || b === 'B') ? 'fire' : (b === 'C' || b === 'D') ? 'gold' : (b === 'E' ? 'ok' : 'dim');
+    return '<span class="pill ' + cls + '" title="' + esc(t('High-earner list')) + ' ' + b + '">' + t('LIST') + ' ' + b + '</span>';
+  }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
-    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td><td class="c-name">' + name + actInfoHtml(a) + '</td>' +
+    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td>' +
+      '<td class="c-name">' + name + ' ' + bandPill(a.band) + actInfoHtml(a) + '</td>' +
       '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
       '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
       '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
@@ -919,7 +1034,8 @@
       (state._fserved ? '&fserved=' + state._fserved : '') +
       (state._fvisit ? '&fvisit=' + state._fvisit : '') +
       (state._fapk ? '&fapk=' + state._fapk : '') +
-      (state._factive ? '&factive=' + state._factive : '');
+      (state._factive ? '&factive=' + state._factive : '') +
+      (state._fband ? '&fband=' + state._fband : '');
     api('agents', { qs: qs }).then(function (d) {
       if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
       state._agentsMeta = d;
@@ -981,18 +1097,49 @@
       '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fapk === 'yes' ? ' selected' : '') + '>APK YES</option><option value="no"' + (state._fapk === 'no' ? ' selected' : '') + '>APK NO</option></select></div>' +
       '<div class="field"><label>Active</label><select data-change="factive">' +
       '<option value="">' + t('Any') + '</option><option value="active"' + (state._factive === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (state._factive === 'inactive' ? ' selected' : '') + '>Inactive</option></select></div>' +
+      '<div class="field"><label>' + t('High-earner list') + '</label><select data-change="fband">' +
+      '<option value="">' + t('Any') + '</option>' +
+      ['A', 'B', 'C', 'D', 'E', 'F'].map(function (b) {
+        return '<option value="' + b + '"' + (state._fband === b ? ' selected' : '') + '>' + t('LIST') + ' ' + b + '</option>';
+      }).join('') + '</select></div>' +
       '<div class="field"><label>' + t('Show') + '</label><select id="agentPer">' + perOpts + '</select></div>' +
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
+      (isManager() ? '<button class="ghost mini" data-action="agentsExport" title="' + esc(t('Every agent, one sheet per BDO')) + '">' + svg('download') + ' ' + t('All agents') + '</button>' : '') +
       '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div></div>' +
       '<div class="panel wide"><div class="tablewrap tall cardwrap"><table class="cardable"><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
       '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
-      '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>' +
-      '<div id="inactivePanel"></div>';
+      '<button class="ghost" id="agentsNext" data-action="nextPage">Next</button></div></div>';
     agentsBodyLoad();
-    inactivePanelLoad();
     var s = elById('agentSearch'); if (s && state._agentSearch) s.focus();
+  }
+  /* OM: every agent in one workbook, ONE SHEET PER BDO. */
+  function agentsExportAll() {
+    api('agents_export_all').then(function (d) {
+      if (!d.rows.length) { toast(t('No agents to export'), 'warn'); return; }
+      var wb = XLSX.utils.book_new();
+      function sheetRows(list) {
+        return list.map(function (r) {
+          return { 'Acc name': r.name, 'Acc number': r.acc, 'Phone': r.phone,
+                   'Branch': r.branch, 'Physical location': r.location,
+                   'High-earner list': r.band, 'BDO': r.bdoName };
+        });
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows(d.rows)), 'All agents');
+      var per = {};
+      d.rows.forEach(function (r) { (per[r.bdoName || r.bdo] = per[r.bdoName || r.bdo] || []).push(r); });
+      var used = { 'all agents': true };
+      Object.keys(per).sort().forEach(function (b) {
+        var name = String(b).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 28) || 'bdo';
+        var base = name, i = 2;
+        while (used[name.toLowerCase()]) name = base.slice(0, 25) + ' ' + (i++);
+        used[name.toLowerCase()] = true;
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows(per[b])), name);
+      });
+      XLSX.writeFile(wb, 'all_agents_' + d.month + '.xlsx');
+      toast(d.rows.length + ' ' + t('agents exported - one sheet per BDO'), 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
   }
   /* Inactive agents - two categories, visible to every BDO and management. */
   /* Inactive agents grouped BY SA STATION (Arusha / Manyara / ...): the LOST
@@ -1065,15 +1212,20 @@
     return '<span class="pill gold">' + score + '%</span>';
   }
   function perfBars(kpis) {
-    return TARGET_DEFS.map(function (t) {
-      var k = kpis[t.key]; if (!k) return '';
-      var pct = k.pct == null ? 0 : k.pct;
-      var cls = k.pct == null ? '' : (k.pct < 50 ? ' red' : (k.pct >= 80 ? ' green' : ''));
-      return '<div class="tg-row"><span class="tg-ic">' + svg(t.icon) + '</span>' +
-        '<span class="tg-name">' + esc(t.label) + ' <span class="note">(' + k.weight + '%)</span></span>' +
-        '<div class="bar" style="flex:1"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
+    /* loop variable must not be `t` - it would shadow the t() translator */
+    return TARGET_DEFS.map(function (def) {
+      var k = kpis[def.key]; if (!k) return '';
+      /* negative = going backwards; clamp the width so it never paints full */
+      var raw = k.pct == null ? null : k.pct;
+      var neg = raw !== null && raw < 0;
+      var pct = raw == null ? 0 : Math.max(0, Math.min(100, raw));
+      var cls = raw == null ? '' : (raw < 50 ? ' red' : (raw >= 80 ? ' green' : ''));
+      return '<div class="tg-row"><span class="tg-ic">' + svg(def.icon) + '</span>' +
+        '<span class="tg-name">' + esc(def.label) + ' <span class="note">(' + k.weight + '%)</span></span>' +
+        '<div class="bar' + (neg ? ' neg' : '') + '" style="flex:1"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
         '<span class="tg-meta">' + fmt(k.actual) + ' / ' + fmt(k.target) + '</span>' +
-        '<span class="tg-pct">' + (k.pct == null ? '-' : k.pct + '%') + '</span></div>';
+        '<span class="tg-pct' + (neg ? ' bad' : '') + '">' + (raw == null ? '-' : raw + '%') +
+        (neg ? ' <span class="pill bad">' + t('GOING BACKWARDS') + '</span>' : '') + '</span></div>';
     }).join('');
   }
   /* KPI chips for one agent: done -> who did it (locked); open -> markable. */
@@ -1145,84 +1297,71 @@
     if (mark) return doneChip(a, c, mark, isOM);
     return editable ? todoChip(a, c) : '<span class="kchip off">' + esc(c.label) + '</span>';
   }
+  /* ---------------- MY AGENT BASE ----------------
+   * ONLY the agents he actually served this month (location captured). This is
+   * his "these are mine" list: he finishes the remaining KPIs right here, and
+   * every row is labelled with its high-earner list so he can chase value
+   * first. Anything not yet served lives on the Agents tab. */
   function viewMyBase(v) {
-    Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' }), api('messages_get')]).then(function (rr) {
-      var d = rr[0], msgs = rr[1];
+    Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' })]).then(function (rr) {
+      var d = rr[0];
       state.month = d.month;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
-      var rows = (d.agents || []).map(function (a) {
-        var chips = kpiChips(a, editable);
-        var lv = a.level === 'priority' ? 'Priority' : a.level === 'new' ? 'New' : 'Never';
-        var pc = a.level === 'priority' ? 'ok' : a.level === 'new' ? 'gold' : 'bad';
-        return '<tr><td class="c-level"><span class="dot ' + a.level + '"></span><span class="pill ' + pc + '">' + lv + '</span></td>' +
+      var all = d.agents || [];
+      var q = (state._baseSearch || '').toLowerCase();
+      var fb = state._baseBand || '';
+      var list = all.filter(function (a) {
+        if (fb && (a.band || 'F') !== fb) return false;
+        if (!q) return true;
+        return ((a.name || '') + ' ' + (a.acc || '') + ' ' + (a.branch || '') + ' ' +
+                (a.physical_location || '') + ' LIST' + (a.band || 'F')).toLowerCase().indexOf(q) >= 0;
+      });
+      var rows = list.map(function (a) {
+        return '<tr><td class="c-level">' + bandPill(a.band) + '</td>' +
           '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div>' + actInfoHtml(a) + '</td>' +
+          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
           '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td><td class="c-kpis"><div class="kchips">' + chips + '</div></td></tr>';
-      }).join('') || '<tr><td colspan="5">' + emptyState('phone', 'No agents in your base yet', 'Your OM uploads your agent list.') + '</td></tr>';
+          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+          '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td></tr>';
+      }).join('') || '<tr><td colspan="6">' + emptyState('phone', t('Nothing here yet'),
+        t('Agents join this list the moment you serve them on the Agents tab.')) + '</td></tr>';
 
-      /* OM broadcast messages */
-      var msgPanel = (msgs && msgs.length)
-        ? '<div class="panel"><h2>' + svg('mail') + 'Messages from management</h2>' +
-          msgs.slice(0, 5).map(function (m) {
-            return '<div class="tg-row"><span class="tg-ic">' + svg('mail') + '</span><div style="flex:1">' + esc(m.body) +
-              '<div class="note">' + esc(m.from_user) + ' &middot; ' + esc((m.at || '').slice(0, 16)) + '</div></div></div>';
-          }).join('') + '</div>'
-        : '';
-
-      /* Daily report now lives in its own "Daily Report" tab */
-      var dailyPanel = editable
-        ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">Send today\'s KPI numbers from the <b>Daily Report</b> tab.</span>' +
-          '<button class="ghost mini" data-action="tab" data-tab="daily">' + svg('cal') + ' ' + t('Open Daily Report') + '</button></div></div>'
-        : '';
-
-      /* Priority agents still to serve this month */
-      var prioLeft = (d.agents || []).filter(function (a) { return a.level === 'priority' && !(a.kpi && a.kpi.served); });
-      var prioPanel = prioLeft.length
-        ? '<div class="panel"><h2>' + svg('flame') + t('Priority to serve') + ' (' + prioLeft.length + ')</h2>' +
-          '<p class="note">Your carried base - you already know where they are. Serve them first.</p>' +
-          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Location</th><th>Branch</th><th>Action</th></tr></thead><tbody>' +
-          prioLeft.map(function (a) {
-            return '<tr><td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-              '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-              '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-              '<td class="c-kpis">' + (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="served" data-name="' + esc(a.name) + '">Serve</button>' : '-') + '</td></tr>';
-          }).join('') + '</tbody></table></div></div>'
-        : '';
-
-      /* Partner-served + inactive agents moved to the FIELD TASKS tab: they are
-       * not his base and must not sit inside My Agent Base. A short pointer is
-       * shown instead so nobody loses the work. */
-      var fieldHint = ((d.special && d.special.length) || 0)
-        ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">' +
-          svg('pin') + ' ' + d.special.length + ' ' + t('partner-served agents are waiting to be claimed.') + '</span>' +
-          '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="field">' + t('Open Field Tasks') + '</button></div></div>'
-        : '';
-
-      var perfPanel = d.performance
-        ? '<div class="panel"><h2>' + svg('percent') + 'My Performance ' + flagPill(d.performance.flag, d.performance.score) + '</h2>' +
-          perfBars(d.performance.kpis) + '</div>'
-        : '<div class="panel"><div class="note">Your OM has not set your targets for ' + esc(d.month) + ' yet - your weighted score will appear here.</div></div>';
+      /* how many of each high-earner list he already owns */
+      var byBand = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+      all.forEach(function (a) { byBand[a.band || 'F']++; });
+      var bandChips = ['A', 'B', 'C', 'D', 'E', 'F'].map(function (b) {
+        if (!byBand[b]) return '';
+        return '<button class="role-chip' + (fb === b ? ' active' : '') + '" data-action="baseBand" data-b="' + b + '">' +
+          t('LIST') + ' ' + b + ' <b>' + byBand[b] + '</b></button>';
+      }).join('') + (fb ? '<button class="role-chip" data-action="baseBand" data-b="">' + t('All') + '</button>' : '');
 
       v.innerHTML =
-        '<h1 class="page-title">' + t('My Agent Base') + '</h1><p class="page-sub">' + esc(d.month) +
+        '<h1 class="page-title">' + t('My Agent Base') + '</h1>' +
+        '<p class="page-sub">' + esc(d.month) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
-        ' &middot; ' + t('tap a KPI to mark it done. A KPI already done by a colleague shows their name and cannot be repeated.') + '</p>' +
-        msgPanel +
+        ' &middot; ' + t('the agents you served - finish their other KPIs right here') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' +
-        card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
-        card('users', t('New'), fmt(d.counts.newAgents)) +
+        card('check', t('My agents'), fmt(all.length)) +
+        card('flame', t('High earners'), fmt(all.length - byBand.F), t('LIST A-E')) +
         card('users', t('Total Base'), fmt(d.counts.total)) +
-        card('check', t('My Served'), fmt(d.counts.served)) +
-        '</div>' + dailyPanel + perfPanel + prioPanel +
-        '<div class="panel"><h2>' + svg('dollar') + t('High earners - PRIORITY to serve') + '</h2>' +
-        '<p class="note">' + t('The OM\'s commission list, matched live: only the NOT-served appear. Pick your SA station first.') + '</p>' +
-        '<div class="row"><div class="field"><label>SA Station</label><select id="heStation"><option value="">' + t('pick...') + '</option></select></div>' +
-        '<button class="ghost" data-action="heLoad">' + t('Show list') + '</button></div>' +
-        '<div id="heBox" style="margin-top:10px"></div></div>' +
-        fieldHint +
-        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px"><h2 style="margin:0">' + svg('phone') + t('Agents - mark KPIs') + '</h2></div>' +
-        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Level</th><th>Agent</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
-      heStationsFill();
+        card('cal', t('Month'), d.month) +
+        '</div>' +
+        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
+        '<h2 style="margin:0">' + svg('phone') + t('My agents') + ' (' + list.length + ')</h2></div>' +
+        '<div class="row" style="margin-bottom:8px">' +
+        '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label>' +
+        '<input id="baseSearch" placeholder="' + esc(t('name, acc, branch, location, LIST A...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div></div>' +
+        (bandChips ? '<div class="row" style="margin-bottom:10px">' + bandChips + '</div>' : '') +
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+      var sb = elById('baseSearch');
+      if (sb) {
+        sb.addEventListener('input', function () {
+          state._baseSearch = sb.value;
+          clearTimeout(state._baseTimer);
+          state._baseTimer = setTimeout(function () { renderTab(); }, 220);
+        });
+        if (state._baseSearch) { sb.focus(); sb.setSelectionRange(sb.value.length, sb.value.length); }
+      }
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* ---- high-earner priority list (bands A-E, live not-served match) ---- */
@@ -1323,8 +1462,30 @@
     /* base gives his weighted performance so each saved report moves the trend */
     Promise.all([api('daily_reports_get'), api('base'), isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null),
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null),
-                 api('route_plans_get')]).then(function (rr) {
-      var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3], rp = rr[4];
+                 api('route_plans_get'), api('places_get')]).then(function (rr) {
+      var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3], rp = rr[4], places = rr[5];
+
+      /* His saved places: tick as many as he plans to visit today and they are
+       * joined into the route - no retyping the same spots every morning. */
+      var placeList = (places && places.rows) || [];
+      function placeChips(current) {
+        var chosen = String(current || '').split(/\s*(?:->|,)\s*/).filter(Boolean);
+        return placeList.map(function (p) {
+          var on = chosen.indexOf(p.place) >= 0;
+          return '<label class="role-chip' + (on ? ' active' : '') + '" style="cursor:pointer">' +
+            '<input type="checkbox" class="rpPlace" value="' + esc(p.place) + '"' + (on ? ' checked' : '') + ' style="accent-color:var(--fire2);margin-right:5px">' +
+            esc(p.place) + '</label>';
+        }).join('');
+      }
+      function routeEditor(current, label) {
+        return '<div class="row" style="margin-top:8px">' + (placeList.length ? placeChips(current) : '') + '</div>' +
+          (placeList.length ? '<p class="note">' + t('Tick the places you will visit - they fill the route below.') + '</p>' : '') +
+          '<div class="row" style="margin-top:6px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" value="' + esc(current || '') + '" placeholder="' + esc(t('e.g. Kaloleni -> Sakina -> Njiro, then HYDOM branch')) + '">' +
+          '<button class="btn" data-action="routeSave">' + label + '</button></div>' +
+          '<div class="row" style="margin-top:6px"><div class="field" style="flex:1;min-width:160px"><label>' + t('Save a place for next time') + '</label>' +
+          '<input id="newPlace" maxlength="160" placeholder="' + esc(t('e.g. Kaloleni')) + '"></div>' +
+          '<button class="ghost mini" data-action="placeAdd">+ ' + t('Save place') + '</button></div>';
+      }
 
       /* today's ROUTE PLAN (EAT): write before 10:00; leader approves/assigns */
       var todayPlan = (rp.rows || []).filter(function (r) { return r.date === rp.today; })[0];
@@ -1336,28 +1497,21 @@
           : '<span class="pill bad">REJECTED' + (todayPlan.note ? ' &middot; ' + esc(todayPlan.note) : '') + '</span>';
         routeHtml = '<div class="note" style="margin-top:6px">' + rpPill + ' ' + esc(todayPlan.plan) + '</div>' +
           (todayPlan.status === 'REJECTED' && before10
-            ? '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" value="' + esc(todayPlan.plan) + '"><button class="btn" data-action="routeSave">' + t('Resend plan') + '</button></div>'
+            ? routeEditor(todayPlan.plan, t('Resend plan'))
             : '');
       } else if (todayPlan) {
         routeHtml = '<div class="note" style="margin-top:6px"><span class="pill gold">PENDING</span> ' + esc(todayPlan.plan) + ' &middot; ' + t('waiting for your team leader') + '</div>' +
-          (before10 ? '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" value="' + esc(todayPlan.plan) + '"><button class="btn" data-action="routeSave">' + t('Update plan') + '</button></div>' : '');
+          (before10 ? routeEditor(todayPlan.plan, t('Update plan')) : '');
       } else if (before10) {
-        routeHtml = '<div class="row" style="margin-top:8px"><input id="rpPlan" maxlength="2000" style="flex:1;min-width:200px" placeholder="' + esc(t('e.g. Kaloleni -> Sakina -> Njiro, then HYDOM branch')) + '">' +
-          '<button class="btn" data-action="routeSave">' + t('Send route plan') + '</button></div>';
+        routeHtml = routeEditor('', t('Send route plan'));
       } else {
         routeHtml = '<div class="note" style="margin-top:6px"><span class="pill bad">' + t('CLOSED') + '</span> ' + t('Route plans close at 10:00 EAT - ask your team leader to assign one.') + '</div>';
       }
       /* ACTIVENESS work lives here now (moved out of My Agent Base): recruiting
        * a new agent counts in the SAME activeness KPI as waking a sleeping one. */
       var canMark = can('mybase', 'e') && base.monthStatus === 'OPEN';
-      var activenessPanel = can('mybase', 'e')
-        ? '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px"><h2 style="margin:0">' + svg('zap') + t('Activeness - wake or recruit') + '</h2><div class="spacer"></div>' +
-          (canMark ? (isSpecial()
-            ? '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button>'
-            : '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>') : '') + '</div>' +
-          '<p class="note">' + t('Both count in the SAME Activeness KPI this month: agents you WAKE and brand-new agents you RECRUIT.') + '</p>' +
-          '<div class="row"><button class="ghost mini" data-action="tab" data-tab="field">' + svg('pin') + ' ' + t('Wake inactive agents') + '</button></div></div>'
-        : '';
+      /* wake + recruit now live entirely on the FIELD ACTIVITY tab */
+      var activenessPanel = '';
       var routePanel = can('mybase', 'e')
         ? '<div class="panel"><h2>' + svg('pin') + t('My route plan today') + ' <span class="pill dim">' + esc(rp.now || '') + ' EAT</span></h2>' +
           '<p class="note">' + t('Write the places you are going to visit BEFORE 10:00 EAT. Your team leader approves it.') + '</p>' + routeHtml + '</div>'
@@ -1366,11 +1520,11 @@
       var tot = { f: 0, a: 0 };
       mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
       var hist = mine.slice(0, 14).map(function (r) {
-        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td><td>' + fmt(r.apk) + '</td>' +
+        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td>' +
           '<td>' + (r.late ? '<span class="pill gold">LATE</span>' : '<span class="pill ok">OK</span>') + '</td></tr>';
-      }).join('') || '<tr><td colspan="4" class="note">-</td></tr>';
+      }).join('') || '<tr><td colspan="3" class="note">-</td></tr>';
       var totalRow = mine.length
-        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td>' + fmt(tot.a) + '</td><td></td></tr>'
+        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td></td></tr>'
         : '';
       var perfPanel = base.performance
         ? '<div class="panel"><h2>' + svg('percent') + t('Performance trend') + ' ' + flagPill(base.performance.flag, base.performance.score) + '</h2>' +
@@ -1395,21 +1549,20 @@
       }
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
-        '<p class="page-sub">' + t('Type only FLOAT and APK here. Serving, visits and activeness are done on the agent list - find the agent, tap his chip and confirm, so we know which agent was handled by which BDO.') + '</p>' +
+        '<p class="page-sub">' + t('Type only FLOAT here. Every other KPI is ticked on the agent itself, so we always know which agent was handled by whom.') + '</p>' +
         '<div class="panel"><h2>' + svg('cal') + t('Send report') + '</h2>' +
         '<div class="row"><div class="field"><label>' + t('Report date (today or up to 2 days back)') + '</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
-        '<div class="field"><label>' + t('Total float served') + '</label><input id="drFloat" type="number" min="0" placeholder="0"></div>' +
-        '<div class="field"><label>' + t('APK updated') + '</label><input id="drApk" type="number" min="0" placeholder="0"></div></div>' +
-        '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits and activeness: use the agent list, not this form.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
+        '<div class="field"><label>' + t('Total float served') + '</label><input id="drFloat" type="number" min="0" placeholder="0"></div></div>' +
+        '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits, APK and activeness: tick them on the agent, not here.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
         '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
         '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
         routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
         '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>APK</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
+        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function drSave() {
-    api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value, apk: elById('drApk').value } })
+    api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value } })
       .then(function (d) { toast('Daily report saved for ' + d.date, 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
@@ -2264,31 +2417,30 @@
     var t2 = elById('flShown'); if (t2) t2.textContent = shown;
   }
 
+  /* ---------------- FIELD ACTIVITY ----------------
+   * Everything that grows the ACTIVENESS KPI lives here: waking sleeping agents
+   * (by SA station) and recruiting brand-new ones. Both count in the same
+   * Activeness figure for the month. */
   function viewField(v) {
-    api('base', { qs: state.month ? '&month=' + state.month : '' }).then(function (d) {
+    Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' }),
+                 isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null)]).then(function (rr) {
+      var d = rr[0], pipe = rr[1];
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
-      var special = (d.special || []).map(function (a) {
-        return '<tr><td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
-          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-          '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-          '<td class="c-kpis">' + (editable && !a.physical_location
-            ? '<button class="kchip todo" data-action="setLoc" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + svg('pin') + ' ' + t('Set location') + '</button>'
-            : (a.physical_location ? '<span class="pill ok">' + t('located') + '</span>' : '-')) + '</td></tr>';
-      }).join('') || '<tr><td colspan="5" class="note">' + t('No partner-served agents right now.') + '</td></tr>';
-
       v.innerHTML =
         greetingLine() +
-        '<h1 class="page-title">' + t('Field Tasks') + '</h1>' +
-        '<p class="page-sub">' + t('Agents you can CLAIM. They join your base only once you act on them - they do not touch your performance until then.') + '</p>' +
-        '<div class="panel"><h2>' + svg('alert') + t('Special agents - served by PARTNERS') + ' (' + (d.special || []).length + ')</h2>' +
-        '<p class="note">' + t('The partner served these agents. Visit them, capture the physical location and take them into your base.') + '</p>' +
-        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' + special + '</tbody></table></div></div>' +
+        '<h1 class="page-title">' + t('Field Activity') + '</h1>' +
+        '<p class="page-sub">' + t('Wake sleeping agents and recruit new ones - both build the SAME Activeness KPI this month.') + '</p>' +
+        '<div class="panel"><div class="row" style="align-items:center"><h2 style="margin:0">' + svg('zap') + t('Recruit a new agent') + '</h2>' +
+        '<div class="spacer"></div>' +
+        (editable ? (isSpecial()
+          ? '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button>'
+          : '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>') : '') + '</div>' +
+        '<p class="note">' + t('A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.') + '</p></div>' +
+        (pipe ? pipePanel(pipe) : '') +
         '<div id="inactivePanel"></div>';
       inactivePanelLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
-
   /* ---------------- Messages (every member's box) ---------------- */
   function viewInbox(v) {
     api('messages_get').then(function (msgs) {
@@ -2518,7 +2670,7 @@
        * in the box after navigating away confused people */
       if (toTab !== state.tab) {
         state._agentSearch = ''; state._agentField = ''; state.agentPage = 1;
-        state._fserved = state._fvisit = state._fapk = state._factive = '';
+        state._fserved = state._fvisit = state._fapk = state._factive = state._fband = '';
       }
       state.tab = toTab; renderShell(); return;
     }
@@ -2546,6 +2698,8 @@
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }
+    if (a === 'agentsExport') { agentsExportAll(); return; }
+    if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
@@ -2738,6 +2892,14 @@
         .catch(function (e2) { toast(e2.message, 'err'); });
       return;
     }
+    if (a === 'placeAdd') {
+      var np = elById('newPlace') ? elById('newPlace').value.trim() : '';
+      if (!np) { toast(t('Type the place name'), 'warn'); return; }
+      api('place_save', { body: { place: np } })
+        .then(function () { toast(t('Place saved'), 'ok'); renderTab(); })
+        .catch(function (e2) { toast(e2.message, 'err'); });
+      return;
+    }
     if (a === 'routeSave') {
       api('route_plan_save', { body: { plan: elById('rpPlan').value.trim() } })
         .then(function () { toast(t('Route plan sent - waiting for your team leader'), 'ok'); renderTab(); })
@@ -2899,10 +3061,18 @@
   }
   function onChange(e) {
     var n = e.target;
+    /* ticking saved places rebuilds the route line (and the label highlight) */
+    if (n && n.classList && n.classList.contains('rpPlace')) {
+      var picked = Array.prototype.slice.call(document.querySelectorAll('.rpPlace:checked')).map(function (c) { return c.value; });
+      var pl = elById('rpPlan');
+      if (pl) pl.value = picked.join(' -> ');
+      if (n.parentNode && n.parentNode.classList) n.parentNode.classList.toggle('active', n.checked);
+      return;
+    }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
-    if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive'].indexOf(n.getAttribute('data-change')) >= 0) {
+    if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
       state.agentPage = 1; agentsBodyLoad(); return;
     }
