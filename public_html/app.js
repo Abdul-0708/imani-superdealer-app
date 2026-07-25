@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.21.0';
+  var APP_VERSION = '1.21.1';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -212,6 +212,9 @@
     'agents exported - one sheet per BDO': 'mawakala wamepakuliwa - ukurasa mmoja kwa kila BDO',
     'No agents to export': 'Hakuna mawakala wa kupakua',
     'All': 'Zote',
+    'No report days yet.': 'Bado hakuna siku za ripoti.',
+    'working day without a report': 'siku ya kazi bila ripoti',
+    'No report on a working day': 'Hakuna ripoti siku ya kazi',
     'High-earner priority list': 'Orodha ya kipaumbele ya wanaoingiza zaidi',
     'High earners - PRIORITY to serve': 'Wanaoingiza zaidi - KIPAUMBELE kuhudumia',
     'The OM\'s commission list, matched live: only the NOT-served appear. Pick your SA station first.':
@@ -635,6 +638,8 @@
       if (m.key === 'inbox') return true; // everyone has a message box
       if (m.key === 'field') return can('mybase', 'v'); // BDO take-over + wake list
       if (m.key === 'flags') return isManager(); // OM / super admin only
+      /* a BDO's report days + ranking now live on HIS dashboard - one less tab */
+      if (m.key === 'reports') return !isFieldUser() && can('reports', 'v');
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -714,11 +719,43 @@
     return '<div class="greet">' + g + ', ' + esc(first.toUpperCase()) + ' &mdash; ' + t('WELCOME') + ' 👋</div>';
   }
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
+  /* His report days for a month: OK / LATE / MISS per elapsed working day.
+   * Shared by the BDO dashboard and the management Reports tab. */
+  function reportDaysMatrix(dr, month) {
+    var byKey = {};
+    (dr.reports || []).forEach(function (r) { byKey[r.bdo + '|' + r.date] = r; });
+    var today = dr.today, days = [];
+    var dim = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+    for (var i = 1; i <= dim; i++) {
+      var ds = month + '-' + String(i).padStart(2, '0');
+      if (ds > today) break;
+      days.push(ds);
+    }
+    var shown = days.slice(-10);
+    var head = '<th>BDO</th>' + shown.map(function (ds) {
+      return '<th>' + Number(ds.slice(8)) + '<div class="note">' + DAY_NAMES[isoDow(ds)] + '</div></th>';
+    }).join('');
+    var body = (dr.bdos || []).map(function (b) {
+      var cells = shown.map(function (ds) {
+        var wd = (b.workingDays || []).indexOf(isoDow(ds)) >= 0;
+        var r = byKey[b.username + '|' + ds];
+        if (r) {
+          var cls = r.late ? 'gold' : 'ok';
+          return '<td><span class="pill ' + cls + '" title="Float ' + fmt(r.float) + '">' + (r.late ? 'LATE' : 'OK') + '</span></td>';
+        }
+        if (!wd) return '<td><span class="pill dim">-</span></td>';
+        return '<td><span class="pill bad" title="' + esc(t('No report on a working day')) + '">MISS</span></td>';
+      }).join('');
+      return '<tr><td>' + esc(b.name) + '</td>' + cells + '</tr>';
+    }).join('') || '<tr><td class="note">' + t('No report days yet.') + '</td></tr>';
+    return { head: head, body: body, days: shown.length };
+  }
   function personalDashboard(v) {
     var calls = [api('base'), api('my_live_today'), api('messages_get'), api('bdo_rank_public'),
+                 api('daily_reports_get'),
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], sum = rr[4];
+      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], dr = rr[4], sum = rr[5];
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -770,6 +807,13 @@
           '<div class="row" style="margin-top:8px"><button class="ghost mini" data-action="tab" data-tab="inbox">' + t('Open Messages') + '</button></div></div>'
         : '';
 
+      /* HIS report days - merged in from the old Reports & Ranks tab */
+      var mx = reportDaysMatrix(dr, d.month || curMonth());
+      var daysPanel = '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(d.month || '') + '</h2>' +
+        '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span> ' +
+        t('working day without a report') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
+
       /* everyone sees who is on top this month */
       var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
@@ -803,7 +847,7 @@
             (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
             perfBars(perf.kpis) + '</div>'
           : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>') +
-        msgPanel + rankPanel;
+        msgPanel + daysPanel + rankPanel;
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* ---------------- LIVE WORK OF THE DAY (management) ----------------
@@ -2108,31 +2152,8 @@
         }).join('') || '<tr><td colspan="3" class="note">No targets set yet.</td></tr>') + '</tbody></table></div></div>';
 
       /* --- daily report matrix: BDO x day, OK / LATE / MISSING(red) --- */
-      var byKey = {};
-      (dr.reports || []).forEach(function (r) { byKey[r.bdo + '|' + r.date] = r; });
-      var today = dr.today;
-      var days = [];
-      var dim = new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0).getDate();
-      for (var i = 1; i <= dim; i++) {
-        var ds = m + '-' + String(i).padStart(2, '0');
-        if (ds > today) break;
-        days.push(ds);
-      }
-      var shown = days.slice(-10); // last 10 elapsed days keep the matrix readable
-      var head = '<th>BDO</th>' + shown.map(function (ds) { return '<th>' + Number(ds.slice(8)) + '<div class="note">' + DAY_NAMES[isoDow(ds)] + '</div></th>'; }).join('');
-      var matrix = (dr.bdos || []).map(function (b) {
-        var cells = shown.map(function (ds) {
-          var wd = (b.workingDays || []).indexOf(isoDow(ds)) >= 0;
-          var r = byKey[b.username + '|' + ds];
-          if (r) {
-            var cls = r.late ? 'gold' : 'ok', label = r.late ? 'LATE' : 'OK';
-            return '<td><span class="pill ' + cls + '" title="Float ' + fmt(r.float) + ', visited ' + r.visited + ', waked ' + r.waked + ', APK ' + r.apk + '">' + label + '</span></td>';
-          }
-          if (!wd) return '<td><span class="pill dim">-</span></td>';
-          return '<td><span class="pill bad" title="No report on a working day">MISS</span></td>';
-        }).join('');
-        return '<tr><td>' + esc(b.name) + '</td>' + cells + '</tr>';
-      }).join('') || '<tr><td class="note">No BDOs yet.</td></tr>';
+      var mx = reportDaysMatrix(dr, m);
+      var head = mx.head, matrix = mx.body, shown = { length: mx.days };
 
       /* --- rankings --- */
       var rankRows = (rk.rows || []).map(function (r, i) {
@@ -2197,18 +2218,8 @@
           '<button class="btn" data-action="routeAssign">Assign route</button></div></div>'
         : '';
 
-      /* plain BDO: HIS report days + the weighted top-performers list. Nothing else. */
-      if (!isMgmt) {
-        v.innerHTML =
-          greetingLine() +
-          '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">' + t('Your report days and the top performers') + '</p>' +
-          '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(m) + '</h2>' +
-          '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span></p>' +
-          '<div class="tablewrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + matrix + '</tbody></table></div></div>' +
-          weightRank;
-        return;
-      }
-
+      /* NB: a plain BDO never reaches this view any more - his report days and
+       * the ranking are merged into his own Dashboard. */
       v.innerHTML =
         '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">Daily reports, rankings and flags - visible to every member.</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="repMonth" type="month" value="' + esc(m) + '"></div>' +
