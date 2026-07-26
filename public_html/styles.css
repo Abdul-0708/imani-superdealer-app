@@ -127,6 +127,10 @@ button.btn:active{transform:scale(.96)}
 button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);padding:7px 12px;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px;transition:border-color .16s var(--ease),color .16s var(--ease),box-shadow .16s var(--ease),transform .12s var(--ease)}
 button.ghost:hover{border-color:var(--fire2);color:var(--yellow);box-shadow:var(--glow)}
 button.ghost:active{transform:scale(.96)}
+/* selected tab in a .tabrow (per-KPI flag tabs, and anything else that groups
+   ghost buttons as a segmented control) */
+.tabrow{gap:6px;flex-wrap:wrap}
+button.ghost.on{border-color:var(--fire2);color:var(--yellow);background:rgba(255,140,26,.12);box-shadow:var(--glow)}
 button.danger{background:linear-gradient(135deg,#c62f1d,#ff6b5e);color:#fff;border:0;padding:7px 12px;border-radius:10px;font-weight:700;cursor:pointer;font-size:13px}
 button.danger:active{transform:scale(.96)}
 button:disabled{opacity:.45;cursor:not-allowed}
@@ -544,3 +548,101 @@ button.loading::after{
 button.ghost.loading::after,button.danger.loading::after{color:var(--ink)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .busy{opacity:.55;pointer-events:none;transition:opacity .2s var(--ease)}
+
+/* ================= DARK VARIANTS OF EVERY PALETTE =================
+ * Green, yellow and blue used to exist only on the white base. Each now has a
+ * full dark skin too, so the colour choice and the light/dark choice are
+ * independent. :not(.light) can never collide with the body.light rules above,
+ * and these come last so they beat the shared dark defaults.
+ *
+ * Readability rules applied to all three:
+ *   - --ink is a near-white tinted with the palette, --muted stays >= 4.5:1
+ *     against the panel background;
+ *   - anything filled with --grad (buttons, avatar, active nav, "mine" chips)
+ *     gets DARK text, because all three dark gradients end on a light stop;
+ *   - the .ok / .bad / .gold status pills keep their own hues untouched, so a
+ *     flag still reads red and a match still reads green in every palette. */
+
+/* ---- GREEN, DARK ---- */
+body.pal-green:not(.light){
+  --bg:#04140c; --bg2:#071c11; --panel:#0a2416; --panel2:#0d2e1c; --line:#1d5638;
+  --ink:#e8f8ef; --muted:#93cbac;
+  --fire:#12a35a; --fire2:#3ddc84; --gold:#7ff0ae; --yellow:#9df3c2;
+  --grad:linear-gradient(135deg,#0b8043 0%,#0f9d58 45%,#3ddc84 100%);
+  --grad-soft:linear-gradient(135deg,rgba(15,157,88,.20),rgba(61,220,132,.10));
+  --glow:0 0 18px rgba(34,196,110,.28); --glow-strong:0 0 26px rgba(61,220,132,.46);
+}
+body.pal-green:not(.light){background:
+  radial-gradient(900px 500px at 85% -10%,rgba(15,157,88,.16),transparent 60%),
+  radial-gradient(700px 420px at -10% 110%,rgba(61,220,132,.08),transparent 60%),var(--bg)}
+body.pal-green:not(.light) .sidebar{background:linear-gradient(180deg,#07200f,#05170b)}
+body.pal-green:not(.light) input,body.pal-green:not(.light) select{background:#07200f}
+body.pal-green:not(.light) .bar{background:#07200f}
+body.pal-green:not(.light) .skel{background:linear-gradient(90deg,var(--panel2) 25%,#154a2d 37%,var(--panel2) 63%)}
+body.pal-green:not(.light) .login{background:radial-gradient(1000px 520px at 50% -10%,rgba(15,157,88,.20),transparent 65%),var(--bg)}
+body.pal-green:not(.light) tbody tr:hover{background:rgba(61,220,132,.09)}
+body.pal-green:not(.light) .pill.fire{background:rgba(61,220,132,.18);color:#7ff0ae}
+
+/* ---- YELLOW, DARK ---- */
+body.pal-yellow:not(.light){
+  --bg:#151005; --bg2:#1d1606; --panel:#241b08; --panel2:#2f240b; --line:#5a4514;
+  --ink:#fff5da; --muted:#d9c188;
+  --fire:#f9ab00; --fire2:#ffc93c; --gold:#ffd84a; --yellow:#ffe694;
+  --grad:linear-gradient(135deg,#c98a00 0%,#f9ab00 45%,#ffd166 100%);
+  --grad-soft:linear-gradient(135deg,rgba(249,171,0,.20),rgba(255,209,102,.10));
+  --glow:0 0 18px rgba(249,171,0,.30); --glow-strong:0 0 26px rgba(255,201,60,.48);
+}
+body.pal-yellow:not(.light){background:
+  radial-gradient(900px 500px at 85% -10%,rgba(249,171,0,.16),transparent 60%),
+  radial-gradient(700px 420px at -10% 110%,rgba(255,209,102,.08),transparent 60%),var(--bg)}
+body.pal-yellow:not(.light) .sidebar{background:linear-gradient(180deg,#221a07,#191305)}
+body.pal-yellow:not(.light) input,body.pal-yellow:not(.light) select{background:#221a07}
+body.pal-yellow:not(.light) .bar{background:#221a07}
+body.pal-yellow:not(.light) .skel{background:linear-gradient(90deg,var(--panel2) 25%,#4a3910 37%,var(--panel2) 63%)}
+body.pal-yellow:not(.light) .login{background:radial-gradient(1000px 520px at 50% -10%,rgba(249,171,0,.20),transparent 65%),var(--bg)}
+body.pal-yellow:not(.light) tbody tr:hover{background:rgba(255,201,60,.09)}
+body.pal-yellow:not(.light) .pill.fire{background:rgba(255,201,60,.18);color:#ffd84a}
+
+/* ---- BLUE, DARK ---- */
+body.pal-blue:not(.light){
+  --bg:#050d1a; --bg2:#081426; --panel:#0b1c33; --panel2:#0e2340; --line:#1d4275;
+  --ink:#e8f1ff; --muted:#9bb8de;
+  --fire:#1a73e8; --fire2:#6fa8f5; --gold:#8fc0ff; --yellow:#b3d4ff;
+  --grad:linear-gradient(135deg,#0b57d0 0%,#1a73e8 45%,#6fa8f5 100%);
+  --grad-soft:linear-gradient(135deg,rgba(26,115,232,.20),rgba(111,168,245,.10));
+  --glow:0 0 18px rgba(26,115,232,.30); --glow-strong:0 0 26px rgba(111,168,245,.46);
+}
+body.pal-blue:not(.light){background:
+  radial-gradient(900px 500px at 85% -10%,rgba(26,115,232,.18),transparent 60%),
+  radial-gradient(700px 420px at -10% 110%,rgba(111,168,245,.08),transparent 60%),var(--bg)}
+body.pal-blue:not(.light) .sidebar{background:linear-gradient(180deg,#0a1930,#061020)}
+body.pal-blue:not(.light) input,body.pal-blue:not(.light) select{background:#0a1930}
+body.pal-blue:not(.light) .bar{background:#0a1930}
+body.pal-blue:not(.light) .skel{background:linear-gradient(90deg,var(--panel2) 25%,#173a68 37%,var(--panel2) 63%)}
+body.pal-blue:not(.light) .login{background:radial-gradient(1000px 520px at 50% -10%,rgba(26,115,232,.22),transparent 65%),var(--bg)}
+body.pal-blue:not(.light) tbody tr:hover{background:rgba(111,168,245,.09)}
+body.pal-blue:not(.light) .pill.fire{background:rgba(111,168,245,.18);color:#8fc0ff}
+
+/* Every gradient-filled surface in the dark palettes carries DARK text - all
+ * three gradients finish on a light stop, so white would wash out. This must
+ * override the older "green/blue get white text" rule, hence it comes last. */
+body.pal-green:not(.light) button.btn,
+body.pal-green:not(.light) .nav-item.active,body.pal-green:not(.light) .nav-item.active *,
+body.pal-green:not(.light) .avatar,body.pal-green:not(.light) .sb-mark,body.pal-green:not(.light) .brandmark,
+body.pal-green:not(.light) .kchip.done.mine,body.pal-green:not(.light) .kchip.todo:hover,
+body.pal-green:not(.light) .kchip.todo.arm,body.pal-green:not(.light) button.btn.loading::after{color:#04140c}
+body.pal-blue:not(.light) button.btn,
+body.pal-blue:not(.light) .nav-item.active,body.pal-blue:not(.light) .nav-item.active *,
+body.pal-blue:not(.light) .avatar,body.pal-blue:not(.light) .sb-mark,body.pal-blue:not(.light) .brandmark,
+body.pal-blue:not(.light) .kchip.done.mine,body.pal-blue:not(.light) .kchip.todo:hover,
+body.pal-blue:not(.light) .kchip.todo.arm,body.pal-blue:not(.light) button.btn.loading::after{color:#050d1a}
+body.pal-yellow:not(.light) button.btn,
+body.pal-yellow:not(.light) .nav-item.active,body.pal-yellow:not(.light) .nav-item.active *,
+body.pal-yellow:not(.light) .avatar,body.pal-yellow:not(.light) .sb-mark,body.pal-yellow:not(.light) .brandmark,
+body.pal-yellow:not(.light) .kchip.done.mine,body.pal-yellow:not(.light) .kchip.todo:hover,
+body.pal-yellow:not(.light) .kchip.todo.arm,body.pal-yellow:not(.light) button.btn.loading::after{color:#151005}
+
+/* the brand wordmark is a gradient-clipped text - keep it clipped, not solid */
+body.pal-green:not(.light) .sb-title,
+body.pal-yellow:not(.light) .sb-title,
+body.pal-blue:not(.light) .sb-title{-webkit-text-fill-color:transparent}

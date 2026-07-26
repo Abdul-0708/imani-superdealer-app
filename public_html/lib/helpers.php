@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.22.1');
+define('APP_VERSION', '1.23.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -130,14 +130,21 @@ function perms_for_role($role) {
  * "agents: Edit" for the BDO role in Access Control, a BDO must still NOT gain
  * management override powers. Being a field user always wins.
  */
+/* Roles that run the office. Their standing NEVER depends on which permission
+ * boxes happen to be ticked - an OM who was also given a "my base" tick is
+ * still the OM, and must not be demoted into a field user (which would hide
+ * the Flags panel, pin him to one station and strip commission figures). */
+function is_office_role($user) {
+  return in_array($user['role'], array('superadmin', 'md', 'om'), true);
+}
 function is_field_user($user) {
-  if ($user['role'] === 'superadmin') return false;
+  if (is_office_role($user)) return false;
   return can($user, 'mybase', 'e');
 }
 function is_manager($user) {
-  if ($user['role'] === 'superadmin') return true;
-  if (is_field_user($user)) return false;
-  return can($user, 'agents', 'e');
+  if (is_office_role($user)) return true;
+  if (is_field_user($user)) return false;   /* a BDO never gains office powers */
+  return can($user, 'agents', 'e');         /* team leaders: by permission */
 }
 function require_manager($user) {
   if (!is_manager($user)) fail('Management access only', 403);

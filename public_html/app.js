@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.22.1';
+  var APP_VERSION = '1.23.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -214,6 +214,19 @@
     'Flags against me': 'Alama dhidi yangu',
     'need your answer': 'zinahitaji jibu lako',
     'all answered': 'zote zimejibiwa',
+    'All KPI': 'KPI zote',
+    'total': 'jumla',
+    'No flags on this KPI.': 'Hakuna alama kwenye KPI hii.',
+    'When I did it': 'Nilipofanya',
+    'flagged': 'imewekewa alama',
+    /* KPI names (Served / Visit / APK / Activeness) stay in English by request */
+    'Live work today - whole team': 'Kazi mubashara leo - timu nzima',
+    'view only': 'kuangalia tu',
+    'What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.':
+      'Kila kilichowekwa alama ndani ya muda uliochagua (EAT). Unaweza kuangalia, huwezi kupakua.',
+    'Only management can download the live board': 'Ni menejimenti pekee wanaoweza kupakua bodi ya mubashara',
+    'Attach the receipt photo of what he transacted as your proof of serving.':
+      'Ambatanisha picha ya risiti ya alichofanya kama uthibitisho wa kumhudumia.',
     'The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.':
       'Faili la utendaji halikuunga mkono madai haya. Sema kama kila moja ni kweli - jibu lako linaenda kwa OM.',
     'Your answer': 'Jibu lako',
@@ -494,12 +507,20 @@
   /* Mirrors the server: a FIELD user (a BDO who marks his own base) never gets
    * management override powers, even if someone ticks "agents: Edit" for his
    * role in Access Control. Managers = OM / super admin. */
+  /* Mirrors is_office_role()/is_field_user()/is_manager() in lib/helpers.php -
+   * office roles are managers by ROLE, never by which permission boxes are
+   * ticked, so the OM cannot lose the Flags panel by being given a "my base"
+   * tick. A BDO still never gains office powers. */
+  function isOfficeRole() {
+    var r = state.user && state.user.role;
+    return r === 'superadmin' || r === 'md' || r === 'om';
+  }
   function isFieldUser() {
-    if (state.user && state.user.role === 'superadmin') return false;
+    if (isOfficeRole()) return false;
     return can('mybase', 'e');
   }
   function isManager() {
-    if (state.user && state.user.role === 'superadmin') return true;
+    if (isOfficeRole()) return true;
     if (isFieldUser()) return false;
     return can('agents', 'e');
   }
@@ -514,14 +535,15 @@
     var d = new Date();
     return days[d.getDay()] + ', ' + d.getDate() + ' ' + mon[d.getMonth()] + ' ' + d.getFullYear();
   }
-  /* ---------------- themes: 4 colour palettes ----------------
-   * 'fire'   = the original look (dark by default, Light/Dark switch applies)
-   * the three "& white" palettes always ride on the light base. */
+  /* ---------------- themes: 4 colour palettes x light/dark ----------------
+   * Every palette now works in BOTH modes - the colour choice and the light/dark
+   * choice are independent, and each dark variant is tuned so every detail stays
+   * readable. */
   var PALETTES = [
     { key: 'fire', label: 'Fire orange', sub: 'the original', dot: 'linear-gradient(135deg,#ff5400,#ff9a1f,#ffd84a)' },
-    { key: 'green', label: 'Fire green & white', sub: 'light', dot: 'linear-gradient(135deg,#0b8043,#0f9d58,#57c98a)' },
-    { key: 'yellow', label: 'Fire yellow & white', sub: 'light', dot: 'linear-gradient(135deg,#f9ab00,#ffc93c,#ffe08a)' },
-    { key: 'blue', label: 'Fire blue & white', sub: 'light', dot: 'linear-gradient(135deg,#1557b0,#1a73e8,#6fa8f5)' }
+    { key: 'green', label: 'Fire green', sub: 'light or dark', dot: 'linear-gradient(135deg,#0b8043,#0f9d58,#57c98a)' },
+    { key: 'yellow', label: 'Fire yellow', sub: 'light or dark', dot: 'linear-gradient(135deg,#f9ab00,#ffc93c,#ffe08a)' },
+    { key: 'blue', label: 'Fire blue', sub: 'light or dark', dot: 'linear-gradient(135deg,#1557b0,#1a73e8,#6fa8f5)' }
   ];
   function curPal() {
     var p = localStorage.getItem('imani_pal') || 'fire';
@@ -531,22 +553,17 @@
     var pal = curPal();
     var light = localStorage.getItem('imani_theme') === 'light';
     document.body.classList.remove('pal-green', 'pal-yellow', 'pal-blue');
-    if (pal !== 'fire') { document.body.classList.add('pal-' + pal); light = true; } // white palettes
+    if (pal !== 'fire') document.body.classList.add('pal-' + pal);
     document.body.classList.toggle('light', light);
   }
-  function setPalette(p) {
-    localStorage.setItem('imani_pal', p);
-    if (p !== 'fire') localStorage.setItem('imani_theme', 'light');
-    applyTheme();
-  }
+  function setPalette(p) { localStorage.setItem('imani_pal', p); applyTheme(); }
   function toggleTheme() {
     var light = !document.body.classList.contains('light');
     localStorage.setItem('imani_theme', light ? 'light' : 'dark');
-    if (light === false) localStorage.setItem('imani_pal', 'fire'); // dark = fire only
     applyTheme();
     renderShell();
   }
-  /* picker: 4 palettes + a Dark/Light switch for the fire palette */
+  /* picker: 4 palettes, each usable light or dark */
   function themePicker() {
     var pal = curPal();
     var opts = PALETTES.map(function (p) {
@@ -556,13 +573,12 @@
     }).join('');
     var isLight = document.body.classList.contains('light');
     openModal('<h2>' + svg('flame') + ' ' + t('Choose theme') + '</h2>' +
-      '<p class="note">' + t('Pick the colours you like. Saved on this device.') + '</p>' +
+      '<p class="note">' + t('Pick the colours you like, then light or dark. Saved on this device.') + '</p>' +
       '<div class="pal-grid">' + opts + '</div>' +
-      (pal === 'fire'
-        ? '<div class="row" style="margin-top:12px;align-items:center"><span class="note">' + t('Fire orange mode') + '</span>' +
-          '<div class="spacer"></div><button class="ghost" data-action="toggleTheme">' +
-          (isLight ? svg('flame') + ' ' + t('Dark') : svg('eye') + ' ' + t('Light')) + '</button></div>'
-        : '') +
+      '<div class="row" style="margin-top:12px;align-items:center"><span class="note">' +
+      t('Currently') + ': <b>' + (isLight ? t('Light') : t('Dark')) + '</b></span>' +
+      '<div class="spacer"></div><button class="ghost" data-action="toggleTheme">' +
+      (isLight ? svg('flame') + ' ' + t('Switch to dark') : svg('eye') + ' ' + t('Switch to light')) + '</button></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
       '<button class="btn" data-action="closeModal">' + t('Done') + '</button></div>');
   }
@@ -879,26 +895,51 @@
           '<div class="row" style="margin-top:8px"><button class="ghost mini" data-action="tab" data-tab="inbox">' + t('Open Messages') + '</button></div></div>'
         : '';
 
-      /* FLAGS AGAINST HIM - he answers for himself before the OM decides. */
+      /* FLAGS AGAINST HIM - he answers for himself before the OM decides.
+       * One tab per KPI plus an "All" tab, each tab showing its own count so he
+       * can see at a glance which KPI he is losing marks on. */
       var KLF = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
-      var flagPanel = ((myfl && myfl.rows) || []).length
-        ? '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
+      var flRows = (myfl && myfl.rows) || [];
+      var flagPanel = '';
+      if (flRows.length) {
+        var perKpi = { served: 0, visit: 0, apk: 0, active: 0 };
+        flRows.forEach(function (f) { if (perKpi[f.kpi] !== undefined) perKpi[f.kpi]++; });
+        /* an empty KPI tab still opens - "0 flags on APK" is the answer he wants,
+         * not a silent bounce back to All */
+        var active = state._myFlagKpi || 'all';
+        if (active !== 'all' && perKpi[active] === undefined) active = 'all';
+        state._myFlagKpi = active;
+
+        var tabs = [{ k: 'all', label: t('All KPI'), n: flRows.length }].concat(
+          ['served', 'visit', 'apk', 'active'].map(function (k) { return { k: k, label: t(KLF[k]), n: perKpi[k] }; })
+        ).map(function (x) {
+          return '<button class="ghost mini' + (x.k === active ? ' on' : '') + '" data-action="myFlagTab" data-kpi="' + x.k + '">' +
+            esc(x.label) + ' <span class="pill ' + (x.n ? 'bad' : 'dim') + '">' + x.n + '</span></button>';
+        }).join(' ');
+
+        var shown = active === 'all' ? flRows : flRows.filter(function (f) { return f.kpi === active; });
+        var body = shown.map(function (f) {
+          var ans = f.bdo_response === 'CONFIRMED'
+              ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
+            : f.bdo_response === 'DISPUTED'
+              ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
+              : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
+                '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
+          return '<tr><td>' + esc(t(KLF[f.kpi] || f.kpi)) + '</td>' +
+            '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
+            '<td class="note">' + esc(f.detail || '') + '</td>' +
+            '<td class="note">' + esc(kpiWhen(f)) + '</td><td>' + ans + '</td></tr>';
+        }).join('') || '<tr><td colspan="5" class="note">' + t('No flags on this KPI.') + '</td></tr>';
+
+        flagPanel = '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
           '<h2>' + svg('alert') + t('Flags against me') +
+          ' <span class="pill ' + (flRows.length ? 'bad' : 'dim') + '">' + flRows.length + ' ' + t('total') + '</span>' +
           (myfl.pending ? ' <span class="pill bad">' + myfl.pending + ' ' + t('need your answer') + '</span>' : ' <span class="pill ok">' + t('all answered') + '</span>') + '</h2>' +
           '<p class="note">' + t('The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.') + '</p>' +
-          '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
-          myfl.rows.map(function (f) {
-            var ans = f.bdo_response === 'CONFIRMED'
-                ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
-              : f.bdo_response === 'DISPUTED'
-                ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
-                : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
-                  '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
-            return '<tr><td>' + (KLF[f.kpi] || f.kpi) + '</td>' +
-              '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
-              '<td class="note">' + esc(f.detail || '') + '</td><td>' + ans + '</td></tr>';
-          }).join('') + '</tbody></table></div></div>'
-        : '';
+          '<div class="row tabrow" style="margin-bottom:8px">' + tabs + '</div>' +
+          '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('When I did it') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
+          body + '</tbody></table></div></div>';
+      }
 
       /* HIS report days - merged in from the old Reports & Ranks tab */
       var mx = reportDaysMatrix(dr, d.month || curMonth());
@@ -915,6 +956,25 @@
             '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
         }).join('') || '<tr><td colspan="3" class="note">' + t('No targets set yet.') + '</td></tr>') +
         '</tbody></table></div></div>';
+
+      /* THE TEAM'S LIVE BOARD - every BDO sees the same feed the OM sees, so
+       * the day is a shared race. Read-only: no Download button here, and the
+       * server refuses live_export to field users. */
+      var teamLivePanel =
+        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
+        '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
+        '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
+        '<div class="field"><label>' + t('From day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('To day') + '</label><input id="liveDateTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('From (EAT)') + '</label><input id="liveFrom" type="time" value="00:00"></div>' +
+        '<div class="field"><label>' + t('To (EAT)') + '</label><input id="liveTo" type="time" value="23:59"></div>' +
+        '<button class="ghost mini" data-action="liveWinAll">' + t('All day') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinMorning" title="06:00-12:00">' + t('Morning') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinAfternoon" title="12:00-17:00">' + t('Afternoon') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinEvening" title="17:00-23:59">' + t('Evening') + '</button>' +
+        '<button class="ghost" data-action="liveLoad">' + svg('rotate') + ' ' + t('Refresh') + '</button></div>' +
+        '<p class="note">' + t('What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.') + '</p>' +
+        '<div id="liveBox"></div></div>';
 
       var perf = d.performance;
       var cards;
@@ -940,7 +1000,8 @@
             (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
             perfBars(perf.kpis) + '</div>'
           : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>') +
-        msgPanel + daysPanel + rankPanel;
+        teamLivePanel + msgPanel + daysPanel + rankPanel;
+      liveTodayLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* OM dashboard alert: unmatched claims waiting for his decision, broken down
@@ -1040,6 +1101,8 @@
     }).catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
   }
   function liveDownload() {
+    /* BDOs watch the live board but never carry it out of the app. */
+    if (!isManager()) { toast(t('Only management can download the live board'), 'warn'); return; }
     var d = state._live;
     if (!d || !(d.marks || []).length) { toast(t('Nothing to download for this day'), 'warn'); return; }
     var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
@@ -1826,8 +1889,10 @@
       })
       .catch(function (e) { toast(e.message, 'err'); });
   }
-  function kpiMark(id, kpi, name, node, location, proof, proofNote) {
-    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '', proofNote: proofNote || '' } })
+  /* `confirmed` is set once the BDO has been through the serve dialog, so the
+   * server knows he was offered the receipt-photo box. */
+  function kpiMark(id, kpi, name, node, location, proof, proofNote, confirmed) {
+    api('kpi_mark', { body: { agentId: Number(id), kpi: kpi, location: location || '', proof: proof || '', proofNote: proofNote || '', confirmed: confirmed ? '1' : '' } })
       .then(function () {
         toast(t('Status updated') + ' - ' + esc(name), 'ok');
         /* swap ONLY the tapped chip in place - never reload the list, so the
@@ -1850,7 +1915,8 @@
   function locationModal(id, kpi, name, node, receiptRule, knownLoc) {
     var required = receiptRule === 'required';
     openModal('<h2>' + svg('pin') + ' ' + t('Serve') + ' ' + esc(name) + '</h2>' +
-      '<p class="note">' + t('Confirm the agent\'s physical location - it becomes his known location and counts him into your base.') + '</p>' +
+      '<p class="note">' + t('Confirm the agent\'s physical location - it becomes his known location and counts him into your base.') + ' ' +
+      t('Attach the receipt photo of what he transacted as your proof of serving.') + '</p>' +
       '<div class="field"><label>' + t('Physical location') + '</label><input id="locInput" value="' + esc(knownLoc || '') + '" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
       '<div class="field" style="margin-top:8px"><label>' + t('Serving receipt photo') + ' ' +
       (required ? '<span class="pill bad">' + t('COMPULSORY') + '</span>' : '<span class="pill dim">' + t('optional') + '</span>') + '</label>' +
@@ -2494,6 +2560,11 @@
    * it stays out of My Agent Base and out of his performance until he acts:
    *   1. partner-served agents - capture the location and adopt them
    *   2. inactive agents by SA station - wake them (receipt + location) */
+  /* "When?" on a flag means the moment the BDO tapped the KPI in the field
+   * (kpi_at), not the moment the upload raised the flag. Matched rows already
+   * carry the tap time in .at. */
+  function kpiWhen(r) { return String(r.kpi_at || r.at || '').slice(0, 16); }
+
   /* ---------------- Flags (OM / management): all KPI, all BDO, live search ----- */
   function viewFlags(v) {
     var m = state._flagsMonth || state.openMonth || curMonth();
@@ -2522,7 +2593,9 @@
             : r.bdo_response === 'DISPUTED'
               ? '<span class="pill ok">' + t('BDO disputes') + '</span><div class="note">' + esc(r.bdo_note || '') + '</div>'
             : (isFlag ? '<span class="pill dim">' + t('no answer yet') + '</span>' : '')) + '</td>' +
-          '<td class="note">' + esc((r.at || '').slice(0, 16)) + '</td></tr>';
+          '<td class="note">' + esc(kpiWhen(r)) +
+            (isFlag && r.kpi_at ? '<div class="note dim">' + t('flagged') + ' ' + esc((r.at || '').slice(0, 16)) + '</div>' : '') +
+          '</td></tr>';
       }
       var mmRows = (d.flags || []).map(function (r) { return detailRow(r, true); }).join('');
       var okRows = (d.matched || []).map(function (r) { return detailRow(r, false); }).join('');
@@ -2579,10 +2652,12 @@
     Object.keys(perBdo).sort().forEach(function (b) {
       var rows = perBdo[b].f.map(function (r) {
         return { 'Status': 'FLAG', 'KPI': KL[r.kpi] || r.kpi, 'Agent': r.agent_name || '', 'Acc': r.acc || '',
-                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': r.detail || '', 'When': (r.at || '').slice(0, 16) };
+                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': r.detail || '',
+                 'When BDO did the KPI': kpiWhen(r), 'When flagged': (r.at || '').slice(0, 16) };
       }).concat(perBdo[b].m.map(function (r) {
         return { 'Status': 'MATCHED', 'KPI': KL[r.kpi] || r.kpi, 'Agent': r.agent_name || '', 'Acc': r.acc || '',
-                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': '', 'When': (r.at || '').slice(0, 16) };
+                 'Branch': r.branch || '', 'SA Station': r.station || '', 'Detail': '',
+                 'When BDO did the KPI': kpiWhen(r), 'When flagged': '' };
       }));
       if (!rows.length) return;
       /* sheet names: <=31 chars, no []:*?/\ and unique */
@@ -2951,6 +3026,7 @@
     if (a === 'baseClear') { state._baseBand = ''; state._baseKpi = ''; state._baseSearch = ''; renderTab(); return; }
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
+    if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {
@@ -2995,7 +3071,7 @@
       if (node.getAttribute('data-req') && !state._serveProof) { toast(t('Attach the serving receipt photo - the OM has made it compulsory'), 'warn'); return; }
       var n2 = state._locNode, sp = state._serveProof; state._serveProof = '';
       closeModal();
-      kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2, sp);
+      kpiMark(node.getAttribute('data-id'), node.getAttribute('data-kpi'), node.getAttribute('data-name'), n2, lv2, sp, '', true);
       return;
     }
     if (a === 'proofConfirm') {

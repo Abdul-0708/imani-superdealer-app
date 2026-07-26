@@ -5,6 +5,57 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.23.0 — 2026-07-26 · "Flags judged across the whole month + dark mode everywhere"
+
+### Release notes
+**Flags stopped accusing honest work.** The month is uploaded as several weekly files, but each
+upload used to judge the BDOs against *that one file only* — so an agent covered in week 1 was
+reported as "NOT in the performance file at all" by a week-4 file that never mentioned him, and an
+agent genuinely woken in week 1 was flagged the moment he went dormant again later in the month.
+Flag calculation now runs **once, after the whole file is written, against everything the office has
+reported for the month**: a KPI counts as backed if **any** upload that month confirms it, and
+activeness follows the same rule so a later relapse is no longer treated as a false claim. Claims
+with no support anywhere in the month are still flagged, exactly as before.
+Verified on a seeded two-upload month (week-1 file + partial week-4 file): the old rules produced
+**4 flags, 3 of them false**; the new rules produce **1** — the single genuinely unsupported claim.
+
+**"When?" now means when the BDO did the work.** The flag tables and the Excel export used to show
+the moment the *upload* raised the flag. They now show `agent_month_kpi.at` — the moment he tapped
+the KPI in the field — with the flag time underneath. The workbook carries both as
+"When BDO did the KPI" and "When flagged".
+
+**Flags against me, split per KPI.** The BDO's flag panel gained tabs — **All KPI / Served / Visit /
+APK / Activeness** — each with its own count, plus a running **total** in the heading. An empty tab
+opens and says so rather than bouncing back to All.
+
+**Office roles are managers by role, not by checkbox.** `is_manager()` / `is_field_user()` used to
+depend on which permission boxes a role happened to have, so an MD (no `agents: Edit`) was not a
+manager, and any office user given a "my base" tick would have been demoted to a field user and
+lost the Flags panel, the station picker and commission figures. `superadmin` / `md` / `om` are now
+management by role. A BDO still can never gain office powers, whatever is ticked for him.
+
+**Every BDO can watch the live board.** His dashboard gained **"Live work today — whole team"**: the
+same feed, time-window presets and per-BDO tally the OM sees. `live_today` now accepts `mybase.v`.
+**Downloading stays management-only** — no export button is rendered for him and `liveDownload()`
+refuses.
+
+**Serving always offers the receipt photo.** The serve dialog only opened when the agent's location
+was *missing*, so an agent with a known location could never have a receipt attached — the complaint
+that "serving proof is just physical locations". Serving now always goes through the dialog
+(location prefilled, receipt box present); the client marks it with `confirmed`, and the photo stays
+optional unless the OM set Serving receipt to Compulsory.
+
+**Dark mode for all four palettes.** Green, yellow and blue existed only on the white base. Each now
+has a full dark skin, and the colour choice is independent of light/dark. Gradient-filled surfaces
+(buttons, avatar, active nav, "mine" chips) carry dark text in the dark palettes because all three
+gradients end on a light stop. Verified with a compositing contrast sweep over all
+**4 palettes × 2 modes**: worst reading **4.4:1** (a pre-existing light palette), the new dark
+palettes **5.5:1 – 17.4:1**; no console errors.
+
+- Assets `?v=37`, SW `imani-v37`
+
+---
+
 ## v1.20.1 — 2026-07-21 · "Flags workbook + commission hidden from BDOs"
 
 - **Flags Excel, one sheet per BDO**: the Flags tab gained a Download button. The workbook opens

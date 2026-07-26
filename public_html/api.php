@@ -650,12 +650,22 @@ try {
       if (!$agent) fail('Agent not found', 404);
       $bdo = $u['username'];
 
-      /* Serving requires the agent's physical location (typed now or already
-       * known). A serving RECEIPT photo is optional or required per the OM's
-       * setting - separate from the wake-up receipt. */
+      /* Serving ALWAYS goes through the serve dialog: the BDO confirms the
+       * agent's physical location AND gets the chance to attach the serving
+       * receipt photo. Knowing the location already is not enough - without the
+       * dialog there was no way to attach a receipt at all. The client signals
+       * it has been through the dialog by sending confirmed=1; the photo itself
+       * stays optional unless the OM made it compulsory. */
       $proofFile = ''; $proofNote = '';
       if ($kpi === 'served') {
         $loc = trim((string)bval('location'));
+        $confirmed = (string)bval('confirmed') !== '';
+        if (!$confirmed) {
+          fail('Confirm the location and attach the serving receipt', 400,
+               array('needLocation' => true,
+                     'receiptRule' => setting_get('serve_receipt', 'optional'),
+                     'agentLoc' => (string)$agent['physical_location']));
+        }
         if ($loc !== '') {
           db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?')->execute(array($loc, $agentId));
         } elseif (trim((string)$agent['physical_location']) === '') {
@@ -1045,7 +1055,10 @@ try {
      */
     case 'live_today': {
       $u = require_auth();
-      if (!can($u, 'targets', 'v') && !can($u, 'reports', 'e')) fail('No access', 403);
+      /* Every member may WATCH the live board - seeing the team work is the
+       * point of it. Downloading the feed stays management-only and is enforced
+       * by live_export, not here. */
+      if (!can($u, 'targets', 'v') && !can($u, 'reports', 'e') && !can($u, 'mybase', 'v')) fail('No access', 403);
       $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)($_GET['date'] ?? '')) ? $_GET['date'] : date('Y-m-d');
       /* DATE RANGE: dateFrom/dateTo span several days (defaults to the one day),
        * and the EAT hour window applies inside each day of that span. */
@@ -1297,11 +1310,14 @@ try {
     case 'my_flags': {
       $u = require_auth(); require_perm($u, 'mybase', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $st = db()->prepare('SELECT f.id, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
-                                  a.acc, a.name AS agent, a.branch
+      $st = db()->prepare("SELECT f.id, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
+                                  k.at AS kpi_at, a.acc, a.name AS agent, a.branch
                            FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
+                           LEFT JOIN agent_month_kpi k
+                             ON k.month = f.month AND k.agent_id = f.agent_id
+                            AND k.kpi = f.kpi AND k.source = 'bdo'
                            WHERE f.month = ? AND f.bdo = ?
-                           ORDER BY (f.bdo_response = "") DESC, f.id DESC');
+                           ORDER BY (f.bdo_response = '') DESC, f.id DESC");
       $st->execute(array($month, $u['username']));
       $rows = $st->fetchAll();
       $pending = 0;
@@ -1563,17 +1579,9 @@ try {
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
       $flagged = 0;
-      $seenIds = array(); /* every agent this file mentions - drives the absent-agent flag */
-      /* Every LIVE (BDO-tapped) KPI mark of the WHOLE month, from day 1 - the
-       * new file is judged against all of them, not just recent ones. Loaded
-       * before any row is written so the upload's own credits never self-flag. */
-      $liveMarks = array();
-      if (!$priorityMode) {
-        $lm = db()->prepare("SELECT agent_id, kpi, bdo FROM agent_month_kpi
-                             WHERE month = ? AND source = 'bdo' AND bdo NOT IN ('partners','unassigned')");
-        $lm->execute(array($month));
-        foreach ($lm->fetchAll() as $r0) $liveMarks[(int)$r0['agent_id']][$r0['kpi']] = $r0['bdo'];
-      }
+      /* Flags are recomputed once, after every row is written, by comparing the
+       * BDO's live claims with the month's ENTIRE office record - see the
+       * reconciliation block below. */
       /* A fresh performance file is the new truth: wipe this month's flags so
        * old accusations from a superseded file never linger. A priority seed
        * touches nothing. */
@@ -1667,7 +1675,6 @@ try {
         if ($r['act_cur'] !== '' || $r['act_prev'] !== '') $updAct->execute(array($r['act_cur'], $r['act_prev'], $month, $id));
 
         $agents++;
-        $seenIds[] = $id;
         /* PRIORITY MODE is a DATABASE SEED, not performance: it only creates or
          * updates the agent record and drops him into a BDO's priority base. It
          * writes NO service history, NO ledger credits, NO flags and never
@@ -1688,50 +1695,59 @@ try {
         if ($r['apk_up']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
         if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key, $uploadId));
 
-        /* CROSS-CHECK EVERY KPI, not just serving. For each KPI the BDO ticked
-         * live this month, compare it with what the released file says about
-         * that same agent. Any disagreement is a flag. */
-        if (isset($liveMarks[$id])) {
-          $fileSays = array(
-            'served' => ($r['served'] === 'SERVED'),
-            'visit'  => ($r['visit'] === 'YES'),
-            'apk'    => (bool)$r['apk_yes'],
-            'active' => ($r['act_cur'] === 'ACTIVE'),
-          );
-          $saidWhat = array(
-            'served' => 'says NOT_SERVED',
-            'visit'  => 'shows no agent visit',
-            'apk'    => 'shows APK below ' . $apkRequired,
-            'active' => 'still shows the agent INACTIVE',
-          );
-          foreach ($fileSays as $kk => $ok) {
-            if ($ok) continue;                        /* file agrees - no flag */
-            if (!isset($liveMarks[$id][$kk])) continue; /* nobody claimed it */
-            $who = $liveMarks[$id][$kk];
-            $insFlag->execute(array($month, $id, $who, $kk,
-              'Marked ' . strtoupper($kk) . ' by ' . $who . ' but the performance file ' .
-              $saidWhat[$kk] . ' (' . $r['acc'] . ')'));
-            $flagged++;
-          }
-        }
       }
 
-      /* SECOND cross-check - the one that used to be missed entirely:
-       * the agent is ABSENT from the performance file altogether (not even
-       * listed as NOT_SERVED). The file is the complete truth for the month,
-       * so EVERY KPI claimed on that agent is unsupported. */
-      if (!$priorityMode && $seenIds) {
-        $in = implode(',', array_fill(0, count($seenIds), '?'));
-        $mq = db()->prepare("SELECT k.agent_id, k.bdo, k.kpi, a.acc
-                             FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
-                             WHERE k.month = ? AND k.source = 'bdo'
-                               AND k.bdo NOT IN ('partners','unassigned')
-                               AND k.agent_id NOT IN ($in)");
-        $mq->execute(array_merge(array($month), $seenIds));
-        foreach ($mq->fetchAll() as $miss) {
-          $insFlag->execute(array($month, (int)$miss['agent_id'], $miss['bdo'], $miss['kpi'],
-            'Marked ' . strtoupper($miss['kpi']) . ' by ' . $miss['bdo'] .
-            ' but the agent is NOT in the performance file at all (' . $miss['acc'] . ')'));
+      /* ================= MONTH-WIDE RECONCILIATION =================
+       * Judge every live BDO claim against EVERYTHING the office has reported
+       * this month (day 1 onwards), not against the single file being imported.
+       * Weekly files each cover only part of the base, so a week-4 file must
+       * never overturn what week 1 already confirmed. A KPI counts as backed if
+       * ANY upload this month confirms it - including activeness: an agent the
+       * BDO genuinely woke in week 1 may have gone dormant again by week 4, and
+       * that later relapse is not a false claim. */
+      if (!$priorityMode) {
+        $rq2 = db()->prepare("SELECT k.agent_id, k.bdo, k.kpi, a.acc,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo'
+                                              AND LOWER(s.activeness) LIKE 'activ%') AS f_active,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo') AS in_file,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED') AS f_served,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo' AND s.odk = 'YES') AS f_visit,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo' AND s.apk = 'YES') AS f_apk
+                              FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                              WHERE k.month = ? AND k.source = 'bdo'
+                                AND k.bdo NOT IN ('partners','unassigned')");
+        $rq2->execute(array($month));
+        $saidWhat = array(
+          'served' => 'no file this month shows him SERVED',
+          'visit'  => 'no file this month shows an agent visit',
+          'apk'    => 'no file this month shows APK at ' . $apkRequired . ' or above',
+          'active' => 'no file this month ever shows the agent ACTIVE',
+        );
+        foreach ($rq2->fetchAll() as $c) {
+          $aid = (int)$c['agent_id']; $kk = $c['kpi']; $who = $c['bdo'];
+          if (!(int)$c['in_file']) {
+            $insFlag->execute(array($month, $aid, $who, $kk,
+              'Marked ' . strtoupper($kk) . ' by ' . $who .
+              ' but the agent is in NO performance file this month (' . $c['acc'] . ')'));
+            $flagged++;
+            continue;
+          }
+          $backed = $kk === 'served' ? (int)$c['f_served']
+                  : ($kk === 'visit' ? (int)$c['f_visit']
+                  : ($kk === 'apk'   ? (int)$c['f_apk'] : (int)$c['f_active']));
+          if ($backed) continue;
+          $insFlag->execute(array($month, $aid, $who, $kk,
+            'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')'));
           $flagged++;
         }
       }
@@ -2194,10 +2210,15 @@ try {
       $st->execute(array($month));
       $rank = $st->fetchAll();
       /* NOT_MATCHED rows: BDO claim vs uploaded file said NOT_SERVED. */
-      $det = db()->prepare('SELECT f.id, f.bdo, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
-                                   a.name agent_name, a.acc, a.branch, a.station
+      /* k.at is the moment the BDO actually tapped the KPI in the field - that,
+       * not the upload time, is what "When?" must show. */
+      $det = db()->prepare("SELECT f.id, f.bdo, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
+                                   k.at AS kpi_at, a.name agent_name, a.acc, a.branch, a.station
                             FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
-                            WHERE f.month = ? ORDER BY f.id DESC');
+                            LEFT JOIN agent_month_kpi k
+                              ON k.month = f.month AND k.agent_id = f.agent_id
+                             AND k.kpi = f.kpi AND k.source = 'bdo'
+                            WHERE f.month = ? ORDER BY f.id DESC");
       $det->execute(array($month));
       $mismatched = $det->fetchAll();
 
@@ -2213,7 +2234,7 @@ try {
                              AND ( (k.kpi = 'served' AND s.served_status = 'SERVED')
                                 OR (k.kpi = 'visit'  AND s.odk = 'YES')
                                 OR (k.kpi = 'apk'    AND s.apk = 'YES')
-                                OR (k.kpi = 'active' AND s.activeness LIKE 'Active%') )
+                                OR (k.kpi = 'active' AND LOWER(s.activeness) LIKE 'activ%') )
                            GROUP BY k.bdo, k.kpi, k.agent_id
                            ORDER BY k.at DESC");
       $mq->execute(array($month));
