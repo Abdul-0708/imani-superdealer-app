@@ -5,6 +5,52 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.24.0 — 2026-07-26 · "Attainment per SA station, calmer dashboards" — schema v14
+
+### Release notes
+**Target Attainment reads one station.** Picking ARUSHA on the dashboard now scopes the attainment
+bars and the weighted achievement to Arusha, not just the KPI cards. Office targets became
+**per (month, SA station)**: the OM picks a region in Monthly Targets and types its numbers, and the
+dashboard reads exactly those. Everything already typed was kept as the **All stations** row, so
+nothing was lost or reassigned. A station with no targets of its own falls back to the office row
+and says so — `using office-wide targets` with a one-click jump to set them — instead of silently
+reporting 0%.
+Verified with a two-station file: ALL = 6 served against target 1,700; ARUSHA = 4 against its own
+900 (`targetsFrom: station`); MANYARA = 2 against the office row (`targetsFrom: office-fallback`).
+
+**A blank SA STATION no longer creates a phantom region.** Rows with an empty station cell used to
+land in an `UNSPECIFIED` bucket and vanish from Arusha's attainment. They are now counted into the
+home station, and the upload reports how many — `2 rows had no SA STATION · counted as ARUSHA` — so
+the file can be corrected at source without losing numbers in the meantime.
+
+**Messages live only in Messages.** The "Messages from administration" panel is gone from the BDO
+dashboard. In its place the Messages tab carries an **unread count badge**; opening the tab marks
+everything read (new `msgs_seen_at` per user). Verified: 2 unread → badge `2` → open tab → badge
+cleared and the server agrees.
+
+**The dashboards were emptied of things that belong elsewhere.** The BDO dashboard went from **nine
+panels to three** — his day so far, his KPI cards and weighted performance, and the high earners he
+served. Everything else moved to where it belongs:
+- **Team** (new tab) — the live whole-team board and the ranking. Still read-only: no download
+  button is rendered for a field user.
+- **Flags** (now his own tab) — the per-KPI tabs and totals from v1.23, with a **red nav badge**
+  while any flag is unanswered.
+- **My report days** — moved beside the Daily Report he actually writes.
+- **OM:** the "Dashboard settings" block (KPI visibility, required APK version, serving-receipt and
+  waking-proof rules) left the dashboard for the management area. It went to **Settings & Data**
+  (the renamed Data Manager) rather than Admin, because the OM's role has no Admin access and would
+  have lost the settings entirely. Verified saving from the new location.
+
+**Fixed while in there:** the Targets station picker listed stations straight from `agents.station`
+in whatever case was typed ("Arusha") while the dashboard scopes by the snapshot's upper case
+("ARUSHA"), so the picker never matched and always fell back to All stations. Station names are now
+normalised and de-duplicated. Also removed two more `t` shadowings (`viewTargets` declared a local
+`var t`, which is the translator) — the recurring cause of blank pages in this codebase.
+
+- Assets `?v=38`, SW `imani-v38`
+
+---
+
 ## v1.23.0 — 2026-07-26 · "Flags judged across the whole month + dark mode everywhere"
 
 ### Release notes

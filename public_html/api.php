@@ -326,18 +326,19 @@ try {
       $u = require_auth(); require_perm($u, 'dashboard', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
 
-      $oa = office_attainment($month);
       $visible = setting_get('dashboard_kpis', 'serving,float,visits,apk,activeness,withdraw');
 
       /* SA-station breakdown rides inside the month snapshot (from the file).
-       * The OM picks a station; the KPI cards then show THAT station's numbers
-       * (incl. its own withdraw-volume sum). Target attainment stays office-wide. */
+       * The OM picks a station; the KPI cards AND the target attainment then
+       * both read THAT station alone, against the targets typed for it. */
       $snap = json_decode(setting_get('month_stats_' . $month, '{}'), true);
       $byStation = isset($snap['_stations']) && is_array($snap['_stations']) ? $snap['_stations'] : array();
       $stations = array_keys($byStation);
       sort($stations);
       $station = strtoupper(trim((string)($_GET['station'] ?? '')));
       $stationStats = ($station !== '' && isset($byStation[$station])) ? $byStation[$station] : null;
+
+      $oa = office_attainment($month, $station);
 
       if ($station !== '') {
         $tq = db()->prepare('SELECT COUNT(*) c FROM agents WHERE station = ?');
@@ -353,6 +354,7 @@ try {
         'weighted' => $oa['weighted'], 'fromUpload' => $oa['fromUpload'],
         'waked' => $oa['waked'], 'lost' => $oa['lost'],
         'stations' => $stations, 'station' => $station, 'stationStats' => $stationStats,
+        'targetsFrom' => $oa['targetsFrom'],
         'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
         'serveReceipt' => setting_get('serve_receipt', 'optional'),
         'wakeReceipt' => setting_get('wake_receipt', 'photo'),
@@ -1598,9 +1600,16 @@ try {
       $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0);
       $stats = $zero;
       $byStation = array(); /* SA-station breakdown (ARUSHA / MANYARA / ...) */
+      /* A blank SA STATION cell is a missing value, not a separate region: the
+       * row belongs to the home station and must not vanish from that station's
+       * attainment. We still COUNT the blanks and hand the number back so the OM
+       * can get the file fixed at source. */
+      $homeStation = strtoupper(setting_get('home_station', 'ARUSHA'));
+      $blankStation = 0;
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
+        if ($r['station'] === '') { $blankStation++; $r['station'] = $homeStation; }
         $r['act_cur'] = act_norm($r['activeness']);
         $r['act_prev'] = act_norm($r['activeness_prev']);
         $r['apk_yes'] = apk_is_yes($r['apk_raw'], $apkRequired);
@@ -1611,7 +1620,7 @@ try {
         $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_prev'] === 'INACTIVE');
         $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_prev'] === 'ACTIVE');
         $parsed[] = $r;
-        $stKey = $r['station'] !== '' ? $r['station'] : 'UNSPECIFIED';
+        $stKey = $r['station'];
         if (!isset($byStation[$stKey])) $byStation[$stKey] = $zero;
         if ($r['served'] === 'SERVED') {
           $stats['serving']++; $stats['float'] += $r['float'];
@@ -1757,40 +1766,59 @@ try {
        * A priority seed never writes it. */
       if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
-      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged);
+      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ($blankStation ? ' blankStation=' . $blankStation : ''));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
-                    'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats));
+                    'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats,
+                    'blankStation' => $blankStation, 'homeStation' => $homeStation));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
 
     case 'targets_get': {
       $u = require_auth(); require_perm($u, 'targets', 'v');
-      $rows = db()->query('SELECT * FROM targets ORDER BY month DESC LIMIT 12')->fetchAll();
-      respond($rows);
+      /* Targets are per (month, SA station); station '' is the office-wide row.
+       * The OM picks a station and edits that region's numbers. */
+      $rows = db()->query('SELECT * FROM targets ORDER BY month DESC, station LIMIT 60')->fetchAll();
+      /* Station names must match what the DASHBOARD scopes by, and that comes
+       * from the upload snapshot in UPPER CASE. The agents table holds whatever
+       * case was typed ("Arusha"), so normalise and de-duplicate here or the
+       * picker offers a station that never matches. */
+      $stations = array();
+      foreach (db()->query('SELECT DISTINCT station FROM agents WHERE station <> ""')->fetchAll() as $r) {
+        $s = strtoupper(trim($r['station']));
+        if ($s !== '') $stations[$s] = true;
+      }
+      foreach ($rows as $r) if ($r['station'] !== '') $stations[strtoupper($r['station'])] = true;
+      $home = strtoupper(setting_get('home_station', 'ARUSHA'));
+      $stations[$home] = true;                       /* the region we actually work */
+      $stations = array_keys($stations);
+      sort($stations);
+      respond(array('rows' => $rows, 'stations' => $stations, 'homeStation' => $home));
     }
 
     case 'targets_save': {
       $u = require_auth(); require_perm($u, 'targets', 'e');
       $month = (string)bval('month');
       if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
+      $station = strtoupper(trim((string)bval('station')));   /* '' = all stations */
+      if (strlen($station) > 32) fail('Station name too long');
       /* weights: either all zero (plain average) or they must total 100 */
       $wsum = 0; $w = array();
       foreach (array_keys(office_kpi_defs()) as $col) { $w[$col] = (int)num(bval($col . '_w')); $wsum += $w[$col]; }
       if ($wsum !== 0 && $wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%) - or leave all at 0 for a plain average');
-      db()->prepare('INSERT INTO targets (month, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
+      db()->prepare('INSERT INTO targets (month, station, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
                        serving_w, float_w, visits_w, apk_w, activeness_w, withdraw_w)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
                        visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
                        withdraw_target=VALUES(withdraw_target), serving_w=VALUES(serving_w), float_w=VALUES(float_w),
                        visits_w=VALUES(visits_w), apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w), withdraw_w=VALUES(withdraw_w)')
-          ->execute(array($month, (int)num(bval('serving')), (int)num(bval('float')), (int)num(bval('visits')),
+          ->execute(array($month, $station, (int)num(bval('serving')), (int)num(bval('float')), (int)num(bval('visits')),
                           (int)num(bval('apk')), (int)num(bval('activeness')), (int)num(bval('withdraw')),
                           $w['serving'], $w['float'], $w['visits'], $w['apk'], $w['activeness'], $w['withdraw']));
-      audit($u['id'], 'targets_save', $month . ($wsum ? ' weighted' : ''));
-      respond(array('ok' => true, 'month' => $month));
+      audit($u['id'], 'targets_save', $month . ' ' . ($station !== '' ? $station : 'ALL') . ($wsum ? ' weighted' : ''));
+      respond(array('ok' => true, 'month' => $month, 'station' => $station));
     }
 
     /* ================= PER-BDO TARGETS + WEIGHTED PERFORMANCE ================= */
@@ -2116,6 +2144,30 @@ try {
       $st = db()->prepare($sql);
       $st->execute(array($u['username'], $u['username']));
       respond($st->fetchAll());
+    }
+
+    /* Unread count for the Messages nav badge. Messages no longer sit on the
+     * dashboard, so this is how a member still notices a new one. His own sent
+     * messages never count as unread against him. */
+    case 'messages_unread': {
+      $u = require_auth();
+      $lead = can($u, 'reports', 'e');
+      $sql = 'SELECT COUNT(*) c FROM messages m
+              LEFT JOIN msg_hidden h ON h.message_id = m.id AND h.username = ?
+              WHERE h.message_id IS NULL AND m.from_user <> ?
+                AND (m.to_user = "" OR m.to_user = ?' . ($lead ? ' OR m.to_user = "mgmt"' : '') . ')
+                AND (? IS NULL OR m.at > ?)';
+      $seen = $u['msgs_seen_at'];
+      $st = db()->prepare($sql);
+      $st->execute(array($u['username'], $u['username'], $u['username'], $seen, $seen));
+      respond(array('unread' => (int)$st->fetch()['c']));
+    }
+
+    /* Opening the Messages tab marks everything up to now as read. */
+    case 'messages_seen': {
+      $u = require_auth();
+      db()->prepare('UPDATE users SET msgs_seen_at = NOW() WHERE id = ?')->execute(array($u['id']));
+      respond(array('ok' => true));
     }
 
     /* Reader hides a message from HIS inbox (sender's copy is untouched). */

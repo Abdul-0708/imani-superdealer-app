@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.23.0';
+  var APP_VERSION = '1.24.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -227,6 +227,34 @@
     'Only management can download the live board': 'Ni menejimenti pekee wanaoweza kupakua bodi ya mubashara',
     'Attach the receipt photo of what he transacted as your proof of serving.':
       'Ambatanisha picha ya risiti ya alichofanya kama uthibitisho wa kumhudumia.',
+    'Team': 'Timu',
+    'What everyone is doing today, and where you stand.': 'Kila mtu anafanya nini leo, na wewe uko wapi.',
+    'Every claim you made matches the performance file. Keep it up!':
+      'Kila dai lako linalingana na faili la utendaji. Endelea hivyo!',
+    'Settings & Data': 'Mipangilio na Data',
+    'The rules everyone works by, and every eraser in one place. Performance and all reports recalculate instantly after any erase. Everything here is audit-logged.':
+      'Kanuni tunazofuata wote, na vifutio vyote mahali pamoja. Utendaji na ripoti zote hukokotolewa upya mara moja baada ya kufuta. Kila kitu hapa kinawekwa kwenye kumbukumbu.',
+    'Dashboard & field rules': 'Kanuni za dashibodi na kazi za nje',
+    'Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads the required version or newer.':
+      'KPI zilizotiwa alama zinaonekana kwenye dashibodi ya kila mtu. APK inahesabika tu wakala akiwa na toleo linalotakiwa au jipya zaidi.',
+    'Required APK version': 'Toleo la APK linalotakiwa',
+    'Rules saved': 'Kanuni zimehifadhiwa',
+    'Save': 'Hifadhi',
+    'All stations': 'Vituo vyote',
+    'All stations combined': 'Vituo vyote kwa pamoja',
+    'Everything below reads': 'Kila kitu hapa chini kinasoma',
+    'only': 'pekee',
+    'using office-wide targets': 'inatumia malengo ya ofisi nzima',
+    'Set targets for': 'Weka malengo ya',
+    'no targets set': 'hakuna malengo yaliyowekwa',
+    'Editing': 'Unahariri',
+    'Editing the all-stations roll-up': 'Unahariri jumla ya vituo vyote',
+    'nothing saved here yet': 'hakuna kilichohifadhiwa hapa bado',
+    'Targets saved for': 'Malengo yamehifadhiwa kwa',
+    'rows had no SA STATION': 'safu hazikuwa na SA STATION',
+    'counted as': 'zimehesabiwa kama',
+    'so nothing drops out of that station\'s attainment - fix the column in the file when you can.':
+      'ili kisiwepo kinachopotea kwenye ufikiaji wa kituo hicho - rekebisha safu kwenye faili utakapoweza.',
     'The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.':
       'Faili la utendaji halikuunga mkono madai haya. Sema kama kila moja ni kweli - jibu lako linaenda kwa OM.',
     'Your answer': 'Jibu lako',
@@ -489,7 +517,10 @@
      * POST without it, and no cross-site page can attach it. */
     var init = { method: opts.body ? 'POST' : 'GET', credentials: 'same-origin', headers: { 'X-Requested-With': 'imani' } };
     if (opts.body) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
-    netStart();
+    /* silent = background poll (nav badges): no progress bar, it is not a
+     * request the user made and a flickering bar would just look like noise */
+    if (!opts.silent) netStart();
+    function done() { if (!opts.silent) netEnd(); }
     return fetch(url, init).catch(function () {
       throw new Error(t('No connection - check your internet and try again'));
     }).then(function (r) {
@@ -498,7 +529,7 @@
         if (!r.ok) { var err = new Error(d.error || ('Error ' + r.status)); err.data = d; throw err; }
         return d;
       });
-    }).then(function (d) { netEnd(); return d; }, function (e) { netEnd(); throw e; });
+    }).then(function (d) { done(); return d; }, function (e) { done(); throw e; });
   }
   function can(mod, lvl) {
     if (state.user && state.user.role === 'superadmin') return true;
@@ -619,9 +650,10 @@
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
+    { key: 'team', label: 'Team', icon: 'chart' },
     { key: 'field', label: 'Field Activity', icon: 'pin' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
-    { key: 'data', label: 'Data Manager', icon: 'alert' },
+    { key: 'data', label: 'Settings & Data', icon: 'lock' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
   ];
   var TARGET_DEFS = [
@@ -662,6 +694,32 @@
   function render() {
     if (!state.user) { renderLogin(); return; }
     renderShell();
+    refreshBadges();
+  }
+  /* Counts behind the nav badges. Fetched quietly in the background and painted
+   * straight into the existing nav - re-rendering the shell here would re-fetch
+   * whatever tab the user is reading. A failure must never blank the app, so
+   * both branches swallow their errors. */
+  function refreshBadges() {
+    if (!state.user) return;
+    Promise.all([
+      api('messages_unread', { silent: true }).then(function (d) { state.unreadMsgs = d.unread || 0; }, function () {}),
+      isFieldUser()
+        ? api('my_flags', { silent: true }).then(function (d) { state.pendingFlags = d.pending || 0; }, function () {})
+        : Promise.resolve()
+    ]).then(paintBadges);
+  }
+  function paintBadges() {
+    if (!state.user) return;
+    [['inbox', state.unreadMsgs || 0, ''], ['flags', isFieldUser() ? (state.pendingFlags || 0) : 0, ' bad']]
+      .forEach(function (x) {
+        var item = document.querySelector('.nav-item[data-tab="' + x[0] + '"]');
+        if (!item) return;
+        var b = item.querySelector('.navbadge');
+        if (!x[1]) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('span'); b.className = 'navbadge' + x[2]; item.appendChild(b); }
+        b.textContent = x[1] > 99 ? '99+' : x[1];
+      });
   }
   function renderLogin() {
     elById('app').innerHTML =
@@ -725,7 +783,12 @@
       if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
       if (m.key === 'field') return can('mybase', 'v'); // BDO take-over + wake list
-      if (m.key === 'flags') return isManager(); // OM / super admin only
+      /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
+       * (viewFlags branches on the role). Both need the tab. */
+      if (m.key === 'flags') return isManager() || can('mybase', 'v');
+      /* Team: the read-only live board + ranking, for field users. Managers get
+       * the same thing inside their own Dashboard / Reports. */
+      if (m.key === 'team') return isFieldUser();
       /* a BDO's report days + ranking now live on HIS dashboard - one less tab */
       if (m.key === 'reports') return !isFieldUser() && can('reports', 'v');
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
@@ -736,8 +799,14 @@
   function renderShell() {
     var tabs = visibleModules();
     if (!tabs.some(function (m) { return m.key === state.tab; })) state.tab = tabs.length ? tabs[0].key : 'dashboard';
+    /* Nav badges replace the panels that used to shout from the dashboard:
+     * unread messages and flags still waiting for the BDO's answer. */
     var nav = tabs.map(function (m) {
-      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' + svg(m.icon) + '<span>' + esc(t(m.label)) + '</span></button>';
+      var n = m.key === 'inbox' ? (state.unreadMsgs || 0)
+            : m.key === 'flags' ? (isFieldUser() ? (state.pendingFlags || 0) : 0) : 0;
+      var badge = n ? '<span class="navbadge' + (m.key === 'flags' ? ' bad' : '') + '">' + (n > 99 ? '99+' : n) + '</span>' : '';
+      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' +
+        svg(m.icon) + '<span>' + esc(t(m.label)) + '</span>' + badge + '</button>';
     }).join('');
     elById('app').innerHTML =
       '<div class="shell"><aside class="sidebar">' +
@@ -764,7 +833,9 @@
     else if (state.tab === 'data') viewData(v);
     else if (state.tab === 'inbox') viewInbox(v);
     else if (state.tab === 'field') viewField(v);
-    else if (state.tab === 'flags') viewFlags(v);
+    else if (state.tab === 'team') viewTeam(v);
+    /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
+    else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
@@ -838,12 +909,16 @@
     }).join('') || '<tr><td class="note">' + t('No report days yet.') + '</td></tr>';
     return { head: head, body: body, days: shown.length };
   }
+  /* HIS dashboard answers one question: how is MY day and MY month going.
+   * Everything that is not about his own work lives elsewhere now - the team
+   * board and the ranking in the Team tab, his flags in the Flags tab, his
+   * report days beside the Daily Report he writes, and messages only in
+   * Messages (the nav badge is what tells him a new one arrived). */
   function personalDashboard(v) {
-    var calls = [api('base'), api('my_live_today'), api('messages_get'), api('bdo_rank_public'),
-                 api('daily_reports_get'), api('my_flags'),
+    var calls = [api('base'), api('my_live_today'),
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], live = rr[1], msgs = rr[2], wrk = rr[3], dr = rr[4], myfl = rr[5], sum = rr[6];
+      var d = rr[0], live = rr[1], sum = rr[2];
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -885,97 +960,6 @@
         '<tr><td><b>' + t('This month') + '</b></td>' + bandCells('month') + '</tr>' +
         '</tbody></table></div></div>';
 
-      /* messages from administration */
-      var msgPanel = (msgs && msgs.length)
-        ? '<div class="panel"><h2>' + svg('mail') + t('Messages from administration') + '</h2>' +
-          msgs.slice(0, 5).map(function (m) {
-            return '<div class="tg-row"><span class="tg-ic">' + svg('mail') + '</span><div style="flex:1">' + esc(m.body) +
-              '<div class="note">' + esc(m.from_user) + ' &middot; ' + esc((m.at || '').slice(0, 16)) + '</div></div></div>';
-          }).join('') +
-          '<div class="row" style="margin-top:8px"><button class="ghost mini" data-action="tab" data-tab="inbox">' + t('Open Messages') + '</button></div></div>'
-        : '';
-
-      /* FLAGS AGAINST HIM - he answers for himself before the OM decides.
-       * One tab per KPI plus an "All" tab, each tab showing its own count so he
-       * can see at a glance which KPI he is losing marks on. */
-      var KLF = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
-      var flRows = (myfl && myfl.rows) || [];
-      var flagPanel = '';
-      if (flRows.length) {
-        var perKpi = { served: 0, visit: 0, apk: 0, active: 0 };
-        flRows.forEach(function (f) { if (perKpi[f.kpi] !== undefined) perKpi[f.kpi]++; });
-        /* an empty KPI tab still opens - "0 flags on APK" is the answer he wants,
-         * not a silent bounce back to All */
-        var active = state._myFlagKpi || 'all';
-        if (active !== 'all' && perKpi[active] === undefined) active = 'all';
-        state._myFlagKpi = active;
-
-        var tabs = [{ k: 'all', label: t('All KPI'), n: flRows.length }].concat(
-          ['served', 'visit', 'apk', 'active'].map(function (k) { return { k: k, label: t(KLF[k]), n: perKpi[k] }; })
-        ).map(function (x) {
-          return '<button class="ghost mini' + (x.k === active ? ' on' : '') + '" data-action="myFlagTab" data-kpi="' + x.k + '">' +
-            esc(x.label) + ' <span class="pill ' + (x.n ? 'bad' : 'dim') + '">' + x.n + '</span></button>';
-        }).join(' ');
-
-        var shown = active === 'all' ? flRows : flRows.filter(function (f) { return f.kpi === active; });
-        var body = shown.map(function (f) {
-          var ans = f.bdo_response === 'CONFIRMED'
-              ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
-            : f.bdo_response === 'DISPUTED'
-              ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
-              : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
-                '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
-          return '<tr><td>' + esc(t(KLF[f.kpi] || f.kpi)) + '</td>' +
-            '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
-            '<td class="note">' + esc(f.detail || '') + '</td>' +
-            '<td class="note">' + esc(kpiWhen(f)) + '</td><td>' + ans + '</td></tr>';
-        }).join('') || '<tr><td colspan="5" class="note">' + t('No flags on this KPI.') + '</td></tr>';
-
-        flagPanel = '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
-          '<h2>' + svg('alert') + t('Flags against me') +
-          ' <span class="pill ' + (flRows.length ? 'bad' : 'dim') + '">' + flRows.length + ' ' + t('total') + '</span>' +
-          (myfl.pending ? ' <span class="pill bad">' + myfl.pending + ' ' + t('need your answer') + '</span>' : ' <span class="pill ok">' + t('all answered') + '</span>') + '</h2>' +
-          '<p class="note">' + t('The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.') + '</p>' +
-          '<div class="row tabrow" style="margin-bottom:8px">' + tabs + '</div>' +
-          '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('When I did it') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
-          body + '</tbody></table></div></div>';
-      }
-
-      /* HIS report days - merged in from the old Reports & Ranks tab */
-      var mx = reportDaysMatrix(dr, d.month || curMonth());
-      var daysPanel = '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(d.month || '') + '</h2>' +
-        '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span> ' +
-        t('working day without a report') + '</p>' +
-        '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
-
-      /* everyone sees who is on top this month */
-      var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
-        (((wrk && wrk.rows) || []).map(function (r, i) {
-          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '>' +
-            '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
-        }).join('') || '<tr><td colspan="3" class="note">' + t('No targets set yet.') + '</td></tr>') +
-        '</tbody></table></div></div>';
-
-      /* THE TEAM'S LIVE BOARD - every BDO sees the same feed the OM sees, so
-       * the day is a shared race. Read-only: no Download button here, and the
-       * server refuses live_export to field users. */
-      var teamLivePanel =
-        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
-        '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
-        '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
-        '<div class="field"><label>' + t('From day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
-        '<div class="field"><label>' + t('To day') + '</label><input id="liveDateTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
-        '<div class="field"><label>' + t('From (EAT)') + '</label><input id="liveFrom" type="time" value="00:00"></div>' +
-        '<div class="field"><label>' + t('To (EAT)') + '</label><input id="liveTo" type="time" value="23:59"></div>' +
-        '<button class="ghost mini" data-action="liveWinAll">' + t('All day') + '</button>' +
-        '<button class="ghost mini" data-action="liveWinMorning" title="06:00-12:00">' + t('Morning') + '</button>' +
-        '<button class="ghost mini" data-action="liveWinAfternoon" title="12:00-17:00">' + t('Afternoon') + '</button>' +
-        '<button class="ghost mini" data-action="liveWinEvening" title="17:00-23:59">' + t('Evening') + '</button>' +
-        '<button class="ghost" data-action="liveLoad">' + svg('rotate') + ' ' + t('Refresh') + '</button></div>' +
-        '<p class="note">' + t('What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.') + '</p>' +
-        '<div id="liveBox"></div></div>';
-
       var perf = d.performance;
       var cards;
       if (sum) {
@@ -993,15 +977,109 @@
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
-        livePanel + flagPanel + heScorePanel +
+        livePanel +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         (perf
           ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
             (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
             perfBars(perf.kpis) + '</div>'
           : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>') +
-        teamLivePanel + msgPanel + daysPanel + rankPanel;
+        heScorePanel;
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+
+  /* ---------------- Team (field users): the live board + the ranking --------
+   * Read-only by design: he watches the day and sees where he stands, but the
+   * export stays with management. */
+  function viewTeam(v) {
+    api('bdo_rank_public').then(function (wrk) {
+      var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
+        (((wrk && wrk.rows) || []).map(function (r, i) {
+          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '>' +
+            '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
+        }).join('') || '<tr><td colspan="3" class="note">' + t('No targets set yet.') + '</td></tr>') +
+        '</tbody></table></div></div>';
+
+      v.innerHTML =
+        greetingLine() + '<h1 class="page-title">' + t('Team') + '</h1>' +
+        '<p class="page-sub">' + t('What everyone is doing today, and where you stand.') + '</p>' +
+        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
+        '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
+        '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
+        '<div class="field"><label>' + t('From day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('To day') + '</label><input id="liveDateTo" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
+        '<div class="field"><label>' + t('From (EAT)') + '</label><input id="liveFrom" type="time" value="00:00"></div>' +
+        '<div class="field"><label>' + t('To (EAT)') + '</label><input id="liveTo" type="time" value="23:59"></div>' +
+        '<button class="ghost mini" data-action="liveWinAll">' + t('All day') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinMorning" title="06:00-12:00">' + t('Morning') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinAfternoon" title="12:00-17:00">' + t('Afternoon') + '</button>' +
+        '<button class="ghost mini" data-action="liveWinEvening" title="17:00-23:59">' + t('Evening') + '</button>' +
+        '<button class="ghost" data-action="liveLoad">' + svg('rotate') + ' ' + t('Refresh') + '</button></div>' +
+        '<p class="note">' + t('What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.') + '</p>' +
+        '<div id="liveBox"></div></div>' +
+        rankPanel;
       liveTodayLoad();
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+
+  /* ---------------- Flags, a field user's own page ----------------
+   * The same panel that used to sit on his dashboard, now a tab of its own with
+   * a red nav badge while any flag is unanswered. */
+  function viewMyFlags(v) {
+    api('my_flags').then(function (myfl) {
+      state.pendingFlags = myfl.pending || 0;
+      paintBadges();
+      var KLF = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+      var flRows = myfl.rows || [];
+      var head = greetingLine() + '<h1 class="page-title">' + t('Flags against me') + '</h1>' +
+        '<p class="page-sub">' + esc(myfl.month || '') + ' &middot; ' +
+        t('The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.') + '</p>';
+
+      if (!flRows.length) {
+        v.innerHTML = head + '<div class="panel"><div class="row" style="align-items:center">' +
+          '<span class="pill ok">' + t('No flags this month') + '</span>' +
+          '<span class="note">' + t('Every claim you made matches the performance file. Keep it up!') + '</span></div></div>';
+        return;
+      }
+
+      var perKpi = { served: 0, visit: 0, apk: 0, active: 0 };
+      flRows.forEach(function (f) { if (perKpi[f.kpi] !== undefined) perKpi[f.kpi]++; });
+      /* an empty KPI tab still opens - "0 flags on APK" is the answer he wants,
+       * not a silent bounce back to All */
+      var active = state._myFlagKpi || 'all';
+      if (active !== 'all' && perKpi[active] === undefined) active = 'all';
+      state._myFlagKpi = active;
+
+      var tabs = [{ k: 'all', label: t('All KPI'), n: flRows.length }].concat(
+        ['served', 'visit', 'apk', 'active'].map(function (k) { return { k: k, label: t(KLF[k]), n: perKpi[k] }; })
+      ).map(function (x) {
+        return '<button class="ghost mini' + (x.k === active ? ' on' : '') + '" data-action="myFlagTab" data-kpi="' + x.k + '">' +
+          esc(x.label) + ' <span class="pill ' + (x.n ? 'bad' : 'dim') + '">' + x.n + '</span></button>';
+      }).join(' ');
+
+      var shown = active === 'all' ? flRows : flRows.filter(function (f) { return f.kpi === active; });
+      var body = shown.map(function (f) {
+        var ans = f.bdo_response === 'CONFIRMED'
+            ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
+          : f.bdo_response === 'DISPUTED'
+            ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
+            : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
+              '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
+        return '<tr><td>' + esc(t(KLF[f.kpi] || f.kpi)) + '</td>' +
+          '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
+          '<td class="note">' + esc(f.detail || '') + '</td>' +
+          '<td class="note">' + esc(kpiWhen(f)) + '</td><td>' + ans + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="note">' + t('No flags on this KPI.') + '</td></tr>';
+
+      v.innerHTML = head +
+        '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
+        '<h2>' + svg('alert') + t('Flags against me') +
+        ' <span class="pill ' + (flRows.length ? 'bad' : 'dim') + '">' + flRows.length + ' ' + t('total') + '</span>' +
+        (myfl.pending ? ' <span class="pill bad">' + myfl.pending + ' ' + t('need your answer') + '</span>' : ' <span class="pill ok">' + t('all answered') + '</span>') + '</h2>' +
+        '<div class="row tabrow" style="margin-bottom:8px">' + tabs + '</div>' +
+        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('When I did it') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
+        body + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* OM dashboard alert: unmatched claims waiting for his decision, broken down
@@ -1176,21 +1254,6 @@
         d.achievement == null ? '-' : d.achievement + '%',
         d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
 
-      /* OM: choose visible KPIs + required APK version */
-      var settings = can('dashboard', 'e')
-        ? '<div class="panel"><h2>' + svg('target') + 'Dashboard settings</h2>' +
-          '<div class="row" style="align-items:center">' +
-          OFFICE_DEFS.map(function (t) {
-            return '<label class="tgl' + (shown(t.key) ? ' on' : '') + '" style="cursor:pointer"><input type="checkbox" class="kpivis" value="' + t.key + '"' + (shown(t.key) ? ' checked' : '') + ' style="display:none">' + esc(t.label) + '</label>';
-          }).join('') +
-          '<div class="spacer"></div>' +
-          '<div class="field"><label>Required APK version</label><input id="apkReq" style="width:100px" value="' + esc(d.apkRequired) + '"></div>' +
-          '<div class="field"><label>' + t('Serving receipt') + '</label><select id="srvRec"><option value="optional"' + (d.serveReceipt !== 'required' ? ' selected' : '') + '>' + t('Optional') + '</option><option value="required"' + (d.serveReceipt === 'required' ? ' selected' : '') + '>' + t('Compulsory') + '</option></select></div>' +
-          '<div class="field"><label>' + t('Waking proof') + '</label><select id="wakeRec"><option value="photo"' + (d.wakeReceipt !== 'photo_or_note' ? ' selected' : '') + '>' + t('Photo only') + '</option><option value="photo_or_note"' + (d.wakeReceipt === 'photo_or_note' ? ' selected' : '') + '>' + t('Photo or typed note') + '</option></select></div>' +
-          '<button class="btn" data-action="dashSettingsSave">Save</button></div>' +
-          '<p class="note" style="margin-top:6px">Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads version ' + esc(d.apkRequired) + ' or newer.</p></div>'
-        : '';
-
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
@@ -1201,7 +1264,15 @@
         (d.stations || []).map(function (s) { return '<option value="' + esc(s) + '"' + (d.station === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
         '</select></div>' +
         '<button class="btn" data-action="dashLoad">Load</button>' +
-        (ss ? '<span class="note">cards show ' + esc(d.station) + ' only &middot; target attainment stays office-wide</span>' : '') +
+        (d.station
+          ? '<span class="note">' + t('Everything below reads') + ' <b>' + esc(d.station) + '</b> ' + t('only') +
+            (d.targetsFrom === 'office-fallback'
+              ? ' &middot; <span class="pill gold">' + t('using office-wide targets') + '</span> ' +
+                '<button class="ghost tiny" data-action="tab" data-tab="targets">' + t('Set targets for') + ' ' + esc(d.station) + '</button>'
+              : d.targetsFrom === 'none'
+                ? ' &middot; <span class="pill dim">' + t('no targets set') + '</span>'
+                : '') + '</span>'
+          : '<span class="note">' + t('All stations combined') + '</span>') +
         '</div></div>' +
         '<div id="flagAlert"></div>' +
         /* LIVE: what the team is doing today, with times */
@@ -1220,9 +1291,10 @@
         '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download window') + '</button></div>' +
         '<p class="note">' + t('Every KPI your BDOs ticked inside the chosen time window (EAT).') + '</p>' +
         '<div id="liveBox"></div></div>' +
-        settings +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
-        '<div class="panel"><h2>' + svg('target') + t('Target Attainment') + (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
+        '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
+        (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
+        (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
       liveTodayLoad();
       flagAlertLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -1230,7 +1302,7 @@
   function dashSettingsSave() {
     var kpis = Array.prototype.map.call(document.querySelectorAll('.kpivis:checked'), function (c) { return c.value; });
     api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim(), serveReceipt: elById('srvRec') ? elById('srvRec').value : '', wakeReceipt: elById('wakeRec') ? elById('wakeRec').value : '' } })
-      .then(function () { toast('Dashboard settings saved', 'ok'); renderTab(); })
+      .then(function () { toast(t('Rules saved'), 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function card(icon, title, value, sub) {
@@ -1798,7 +1870,8 @@
           card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
           card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited)) +
           '</div>' +
-          routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '');
+          routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
+          reportDaysPanel(d, base.month || curMonth());
         return;
       }
       v.innerHTML =
@@ -1812,8 +1885,18 @@
         '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
         routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
         '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>';
+        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>' +
+        /* the report-days grid belongs next to where he writes reports, not on
+         * the dashboard - OK / LATE / MISS for every working day of the month */
+        reportDaysPanel(d, base.month || curMonth());
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  function reportDaysPanel(dr, month) {
+    var mx = reportDaysMatrix(dr, month);
+    return '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(month || '') + '</h2>' +
+      '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span> ' +
+      t('working day without a report') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
   }
   function drSave() {
     api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value } })
@@ -2109,7 +2192,13 @@
   function uploadSummary(d) {
     var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) + (d.priorityMode ? ' as <b>PRIORITY base</b>' : '') + ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.';
     if (d.createdBdos && d.createdBdos.length) s += ' New BDO accounts: ' + d.createdBdos.map(esc).join(', ') + ' (password imani123).';
-    if (d.flagged) s += ' <span class="pill bad">' + d.flagged + ' flag' + (d.flagged > 1 ? 's' : '') + ' raised</span> (claimed served but file says NOT served - see Reports & Ranks).';
+    if (d.flagged) s += ' <span class="pill bad">' + d.flagged + ' flag' + (d.flagged > 1 ? 's' : '') + ' raised</span> (a BDO claim the month\'s files do not back - see Flags).';
+    /* blank SA STATION cells were counted into the home station rather than
+     * dropped - say so, so the file can be fixed at source */
+    if (d.blankStation) {
+      s += '<div class="note" style="margin-top:6px"><span class="pill gold">' + fmt(d.blankStation) + ' ' + t('rows had no SA STATION') + '</span> ' +
+        t('counted as') + ' <b>' + esc(d.homeStation || '') + '</b> ' + t('so nothing drops out of that station\'s attainment - fix the column in the file when you can.') + '</div>';
+    }
     return s;
   }
 
@@ -2240,51 +2329,75 @@
     var el = elById('btSum');
     if (el) { el.textContent = s; el.style.color = s === 100 ? 'var(--ok)' : 'var(--bad)'; }
   }
+  /* Office targets are typed per MONTH x SA STATION. Station "" is the
+   * all-stations roll-up; picking ARUSHA edits Arusha's own numbers, which is
+   * what Target Attainment reads when the dashboard is scoped to Arusha.
+   * CAREFUL: never name a local variable `t` in here - `t` is the translator. */
   function viewTargets(v) {
     var m0 = state.month || state.openMonth || curMonth();
     Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 }), api('bdo_performance', { qs: '&month=' + m0 })]).then(function (rr) {
-      var list = rr[0], bt = rr[1], perf = rr[2];
-      var byMonth = {};
-      list.forEach(function (t) { byMonth[t.month] = t; });
+      var list = (rr[0] && rr[0].rows) || [], bt = rr[1], perf = rr[2];
+      var stations = (rr[0] && rr[0].stations) || [];
+      var home = (rr[0] && rr[0].homeStation) || 'ARUSHA';
       var m = m0;
-      var t = byMonth[m] || {};
-      var fields = OFFICE_DEFS.map(function (td) {
-        var val = t[td.key + '_target'];
-        var wv = t[td.key + '_w'];
-        return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
-          '<span class="tg-name">' + esc(td.label) + '</span>' +
-          '<div class="field"><label>Target</label><input id="tg_' + td.key + '" type="number" min="0" style="width:150px" value="' + (val != null ? esc(val) : '') + '" placeholder="0"></div>' +
-          '<div class="field"><label>Weight %</label><input id="tgw_' + td.key + '" type="number" min="0" max="100" style="width:90px" class="tg-w" value="' + (wv != null && Number(wv) > 0 ? esc(wv) : '') + '" placeholder="0"></div>' +
-          '<span class="note" style="flex:1">' + esc(td.hint) + '</span></div>';
+      /* default to the home station - that is the region actually being worked */
+      var st = state.tgStation;
+      if (st === undefined) st = stations.indexOf(home) >= 0 ? home : '';
+      state.tgStation = st;
+
+      var cur = {};
+      list.forEach(function (row) { if (row.month === m && row.station === st) cur = row; });
+
+      var fields = OFFICE_DEFS.map(function (def) {
+        var val = cur[def.key + '_target'];
+        var wv = cur[def.key + '_w'];
+        return '<div class="tg-row"><span class="tg-ic">' + svg(def.icon) + '</span>' +
+          '<span class="tg-name">' + esc(def.label) + '</span>' +
+          '<div class="field"><label>Target</label><input id="tg_' + def.key + '" type="number" min="0" style="width:150px" value="' + (val != null ? esc(val) : '') + '" placeholder="0"></div>' +
+          '<div class="field"><label>Weight %</label><input id="tgw_' + def.key + '" type="number" min="0" max="100" style="width:90px" class="tg-w" value="' + (wv != null && Number(wv) > 0 ? esc(wv) : '') + '" placeholder="0"></div>' +
+          '<span class="note" style="flex:1">' + esc(def.hint) + '</span></div>';
       }).join('');
+
+      var stOpts = '<option value="">' + t('All stations') + '</option>' +
+        stations.map(function (s) { return '<option value="' + esc(s) + '"' + (s === st ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('');
+
       var hist = list.map(function (r) {
-        return '<tr><td>' + esc(r.month) + '</td><td>' + fmt(r.serving_target) + '</td><td>' + fmt(r.float_target) + '</td><td>' + fmt(r.visits_target) + '</td><td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td><td>' + fmt(r.withdraw_target || 0) + '</td></tr>';
-      }).join('') || '<tr><td colspan="6">' + emptyState('target', 'No targets yet', 'Type this month\'s targets above and save.') + '</td></tr>';
+        return '<tr><td>' + esc(r.month) + '</td><td>' + (r.station ? '<span class="pill fire">' + esc(r.station) + '</span>' : '<span class="pill dim">' + t('All stations') + '</span>') + '</td>' +
+          '<td>' + fmt(r.serving_target) + '</td><td>' + fmt(r.float_target) + '</td><td>' + fmt(r.visits_target) + '</td>' +
+          '<td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td><td>' + fmt(r.withdraw_target || 0) + '</td></tr>';
+      }).join('') || '<tr><td colspan="8">' + emptyState('target', 'No targets yet', 'Type this month\'s targets above and save.') + '</td></tr>';
+
       v.innerHTML =
         '<h1 class="page-title">Monthly Targets</h1><p class="page-sub">Type the office targets for the month &mdash; they drive the dashboard and the commission achievement.</p>' +
         '<div class="panel"><h2>' + svg('target') + 'Set Office Targets &amp; KPI Weights</h2>' +
-        '<p class="note">Weights decide the REAL achieved performance (e.g. Withdraw 30%, Visits 10%, APK 10%, Float 20%...). They must total <b>100</b> - or leave all empty for a plain average.</p>' +
+        '<p class="note">Targets belong to one <b>SA Station</b>: pick the region, then type its numbers. The dashboard reads exactly these when it is scoped to that station. Weights must total <b>100</b> - or leave all empty for a plain average.</p>' +
         '<div class="row" style="margin-bottom:8px"><div class="field"><label>Month</label><input id="tgMonth" type="month" value="' + esc(m) + '"></div>' +
-        '<button class="ghost" data-action="tgLoad">Load month</button><div class="spacer"></div>' +
+        '<div class="field"><label>SA Station</label><select id="tgStation" data-change="tgStationPick">' + stOpts + '</select></div>' +
+        '<button class="ghost" data-action="tgLoad">Load</button><div class="spacer"></div>' +
         '<span class="note">Weights total: <b id="tgSum">0</b>%</span>' +
         (can('targets', 'e') ? '<button class="btn" data-action="tgSave">Save targets</button>' : '<span class="note">View only.</span>') + '</div>' +
+        '<p class="note">' + (st ? t('Editing') + ' <b>' + esc(st) + '</b>' : t('Editing the all-stations roll-up')) +
+        (cur.month ? '' : ' &middot; <span class="pill dim">' + t('nothing saved here yet') + '</span>') + '</p>' +
         fields + '</div>' +
         bdoTargetsPanel(bt) +
         bdoPerfPanel(perf) +
         rangeReportPanel() +
-        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function tgSave() {
-    var body = { month: elById('tgMonth').value };
-    OFFICE_DEFS.forEach(function (td) {
-      body[td.key] = elById('tg_' + td.key).value;
-      body[td.key + '_w'] = elById('tgw_' + td.key).value;
+    var body = { month: elById('tgMonth').value, station: elById('tgStation') ? elById('tgStation').value : '' };
+    OFFICE_DEFS.forEach(function (def) {
+      body[def.key] = elById('tg_' + def.key).value;
+      body[def.key + '_w'] = elById('tgw_' + def.key).value;
     });
     api('targets_save', { body: body })
-      .then(function () { toast('Targets saved for ' + body.month, 'ok'); state.month = body.month; renderTab(); })
+      .then(function () {
+        toast(t('Targets saved for') + ' ' + body.month + (body.station ? ' - ' + body.station : ''), 'ok');
+        state.month = body.month; state.tgStation = body.station; renderTab();
+      })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function tgUpdateSum() {
@@ -2721,6 +2834,11 @@
   }
   /* ---------------- Messages (every member's box) ---------------- */
   function viewInbox(v) {
+    /* Opening the tab IS reading them - clear the nav badge. Messages no longer
+     * appear anywhere else, so this badge is the only nudge he gets. */
+    api('messages_seen', { body: {}, silent: true }).then(function () {
+      state.unreadMsgs = 0; paintBadges();
+    }, function () {});
     api('messages_get').then(function (msgs) {
       var rows = (msgs || []).map(function (m2) {
         var kindPill = m2.kind === 'feedback' ? '<span class="pill fire">' + t('MARKET FEEDBACK') + '</span> '
@@ -2752,9 +2870,11 @@
 
   /* ---------------- Data Manager (OM/superadmin) ---------------- */
   function viewData(v) {
-    Promise.all([api('uploads_list'), api('members_list')]).then(function (rr) {
+    Promise.all([api('uploads_list'), api('members_list'),
+                 can('dashboard', 'e') ? api('dashboard') : Promise.resolve(null)]).then(function (rr) {
       var ups = rr[0].rows || [];
       var members = (rr[1] || []).filter(function (m) { return m.username !== state.user.username; });
+      var cfg = rr[2];
       var upRows = ups.map(function (u) {
         return '<tr><td>' + esc((u.at || '').slice(0, 16)) + '</td><td>' + esc(u.month) + '</td><td>' + esc(u.week || '-') + '</td>' +
           '<td>' + esc(u.label) + '</td><td>' + esc(u.by_user) + '</td><td>' + fmt(u.rows_count) + '</td>' +
@@ -2764,9 +2884,34 @@
       var memChecks = members.map(function (m) {
         return '<label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="mSel" value="' + esc(m.username) + '" style="accent-color:var(--fire2);margin-right:5px">' + esc(m.name) + ' (' + esc(m.username) + ')</label>';
       }).join(' ');
+      /* THE RULES OF THE GAME - which KPIs everyone sees, the APK version that
+       * counts, and what proof the field must attach. This is configuration, so
+       * it lives here with the other management controls instead of crowding
+       * the OM's dashboard. (Admin proper is superadmin-only; the OM must be
+       * able to reach these, and he does reach Data Manager.)
+       * NOTE: the loop variable below is `def`, never `t` - `t` is the
+       * translator, and shadowing it blanks the whole page. */
+      var visibleKpis = String((cfg && cfg.visibleKpis) || '').split(',');
+      var rulesPanel = cfg
+        ? '<div class="panel"><h2>' + svg('target') + t('Dashboard & field rules') + '</h2>' +
+          '<p class="note" style="margin-bottom:10px">' + t('Ticked KPIs appear on everyone\'s dashboard. APK counts only when an agent reads the required version or newer.') + '</p>' +
+          '<div class="row" style="align-items:center">' +
+          OFFICE_DEFS.map(function (def) {
+            var on = visibleKpis.indexOf(def.key) >= 0;
+            return '<label class="tgl' + (on ? ' on' : '') + '" style="cursor:pointer">' +
+              '<input type="checkbox" class="kpivis" value="' + def.key + '"' + (on ? ' checked' : '') + ' style="display:none">' + esc(def.label) + '</label>';
+          }).join('') +
+          '<div class="spacer"></div>' +
+          '<div class="field"><label>' + t('Required APK version') + '</label><input id="apkReq" style="width:100px" value="' + esc(cfg.apkRequired) + '"></div>' +
+          '<div class="field"><label>' + t('Serving receipt') + '</label><select id="srvRec"><option value="optional"' + (cfg.serveReceipt !== 'required' ? ' selected' : '') + '>' + t('Optional') + '</option><option value="required"' + (cfg.serveReceipt === 'required' ? ' selected' : '') + '>' + t('Compulsory') + '</option></select></div>' +
+          '<div class="field"><label>' + t('Waking proof') + '</label><select id="wakeRec"><option value="photo"' + (cfg.wakeReceipt !== 'photo_or_note' ? ' selected' : '') + '>' + t('Photo only') + '</option><option value="photo_or_note"' + (cfg.wakeReceipt === 'photo_or_note' ? ' selected' : '') + '>' + t('Photo or typed note') + '</option></select></div>' +
+          '<button class="btn" data-action="dashSettingsSave">' + t('Save') + '</button></div></div>'
+        : '';
+
       v.innerHTML =
-        '<h1 class="page-title">Data Manager</h1>' +
-        '<p class="page-sub">Every eraser in one place. Performance and all reports recalculate instantly after any erase. Everything here is audit-logged.</p>' +
+        '<h1 class="page-title">' + t('Settings & Data') + '</h1>' +
+        '<p class="page-sub">' + t('The rules everyone works by, and every eraser in one place. Performance and all reports recalculate instantly after any erase. Everything here is audit-logged.') + '</p>' +
+        rulesPanel +
 
         '<div class="panel"><h2>' + svg('upload') + 'Uploaded Excel files</h2>' +
         '<p class="note">Every upload is saved with its exact date &amp; time, label and who uploaded it. Erasing one removes its rows and the credits it created; the month\'s office numbers fall back to the latest remaining upload.</p>' +
@@ -3397,6 +3542,7 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'tgStationPick') { state.tgStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }
     if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;

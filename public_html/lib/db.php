@@ -111,12 +111,14 @@ function ensure_schema($pdo) {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   CREATE TABLE IF NOT EXISTS targets (
-    month CHAR(7) PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    station VARCHAR(32) NOT NULL DEFAULT '',
     serving_target BIGINT NOT NULL DEFAULT 0,
     float_target BIGINT NOT NULL DEFAULT 0,
     visits_target BIGINT NOT NULL DEFAULT 0,
     apk_target BIGINT NOT NULL DEFAULT 0,
-    activeness_target BIGINT NOT NULL DEFAULT 0
+    activeness_target BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (month, station)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   CREATE TABLE IF NOT EXISTS months (
@@ -371,6 +373,27 @@ function upgrade_schema($pdo) {
     schema_v13_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "13" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 14) {
+    schema_v14_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "14" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v14: office targets become PER SA STATION, so Target Attainment can read for
+ * Arusha alone instead of rolling every region together. The station column is
+ * added and the primary key widened to (month, station); every existing row
+ * keeps station = '' which now means "All stations" - the office-wide roll-up.
+ * Nothing the OM already typed is lost or reassigned.
+ *
+ * Also: per-user message read marks, so the Messages tab can carry an unread
+ * badge now that messages no longer sit on the dashboard.
+ */
+function schema_v14_apply($pdo) {
+  try { $pdo->exec('ALTER TABLE targets ADD COLUMN station VARCHAR(32) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
+  /* widen the key: month alone -> (month, station) */
+  try { $pdo->exec('ALTER TABLE targets DROP PRIMARY KEY, ADD PRIMARY KEY (month, station)'); } catch (Exception $e) { /* already widened */ }
+  try { $pdo->exec('ALTER TABLE users ADD COLUMN msgs_seen_at DATETIME NULL'); } catch (Exception $e) { /* exists */ }
 }
 
 /*

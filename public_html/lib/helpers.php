@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.23.0');
+define('APP_VERSION', '1.24.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -361,11 +361,21 @@ function parse_commission_row($row) {
  * NET movement: (inactive -> active) MINUS (active -> inactive).
  * Falls back to the ledger for months with no upload yet.
  */
-function month_actuals($month) {
+/*
+ * The month's office actuals. Pass a station to read THAT region alone - the
+ * per-station breakdown is written into the snapshot by every upload, so
+ * Target Attainment can answer for Arusha instead of rolling every region
+ * together. An unknown station reads as zeros, never as the office total.
+ */
+function month_actuals($month, $station = '') {
   $snap = setting_get('month_stats_' . $month, '');
   if ($snap !== '') {
     $s = json_decode($snap, true);
     if (is_array($s)) {
+      if ($station !== '') {
+        $per = isset($s['_stations']) && is_array($s['_stations']) ? $s['_stations'] : array();
+        $s = isset($per[$station]) ? $per[$station] : array();
+      }
       return array(
         'served' => (int)($s['serving'] ?? 0),
         'float' => (float)($s['float'] ?? 0),
@@ -379,16 +389,26 @@ function month_actuals($month) {
       );
     }
   }
-  /* fallback: ledger + float sums (no performance file uploaded yet) */
-  $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? GROUP BY kpi');
-  $st->execute(array($month));
+  /* fallback: ledger + float sums (no performance file uploaded yet). The
+   * station filter rides on the AGENT record, which is where the region lives
+   * before any snapshot exists. Typed daily reports carry no agent, so they
+   * only join the office-wide roll-up. */
+  $stFilter = $station !== '' ? ' AND a.station = ?' : '';
+  $stVals = $station !== '' ? array($station) : array();
+  $st = db()->prepare('SELECT k.kpi, COUNT(*) n FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                       WHERE k.month = ?' . $stFilter . ' GROUP BY k.kpi');
+  $st->execute(array_merge(array($month), $stVals));
   $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0, 'fromUpload' => false);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
-  $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ?');
-  $f->execute(array($month));
-  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
-  $d->execute(array($month));
-  $k['float'] = (float)$f->fetch()['f'] + (float)$d->fetch()['f'];
+  $f = db()->prepare('SELECT COALESCE(SUM(s.float_served),0) f FROM service_history s JOIN agents a ON a.id = s.agent_id
+                      WHERE s.month = ?' . $stFilter);
+  $f->execute(array_merge(array($month), $stVals));
+  $k['float'] = (float)$f->fetch()['f'];
+  if ($station === '') {
+    $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
+    $d->execute(array($month));
+    $k['float'] += (float)$d->fetch()['f'];
+  }
   return $k;
 }
 
@@ -409,11 +429,25 @@ function office_kpi_defs() {
  * (summing 100) the achievement is the weighted average; otherwise the plain
  * average of KPIs that have targets.
  */
-function office_attainment($month) {
-  $a = month_actuals($month);
-  $tg = db()->prepare('SELECT * FROM targets WHERE month = ?');
-  $tg->execute(array($month));
+/*
+ * Office attainment for a month, optionally for ONE SA station. Targets are
+ * stored per (month, station); station '' is the office-wide row. If the OM has
+ * not typed targets for the chosen station yet we fall back to the office row
+ * and say so via targetsFrom, so a station never silently reads 0% against
+ * targets that were never set for it.
+ */
+function office_attainment($month, $station = '') {
+  $a = month_actuals($month, $station);
+  $tg = db()->prepare('SELECT * FROM targets WHERE month = ? AND station = ?');
+  $tg->execute(array($month, $station));
   $t = $tg->fetch();
+  $targetsFrom = $t ? ($station === '' ? 'office' : 'station') : 'none';
+  if (!$t && $station !== '') {
+    $tg2 = db()->prepare('SELECT * FROM targets WHERE month = ? AND station = ""');
+    $tg2->execute(array($month));
+    $t = $tg2->fetch();
+    if ($t) $targetsFrom = 'office-fallback';
+  }
   $att = array(); $wsum = 0; $wacc = 0; $sum = 0; $nn = 0;
   foreach (office_kpi_defs() as $col => $ak) {
     $target = $t ? (float)($t[$col . '_target'] ?? 0) : 0;
@@ -425,7 +459,8 @@ function office_attainment($month) {
   }
   $achievement = $wsum > 0 ? (int)round($wacc / $wsum) : ($nn ? (int)round($sum / $nn) : null);
   return array('attainment' => $att, 'achievement' => $achievement, 'weighted' => $wsum > 0,
-               'fromUpload' => !empty($a['fromUpload']), 'waked' => $a['waked'], 'lost' => $a['lost']);
+               'fromUpload' => !empty($a['fromUpload']), 'waked' => $a['waked'], 'lost' => $a['lost'],
+               'station' => $station, 'targetsFrom' => $targetsFrom);
 }
 
 /* One BDO's actuals for a month: ledger credits + float (uploads + his typed daily reports). */
