@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.24.0');
+define('APP_VERSION', '1.25.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -410,6 +410,27 @@ function month_actuals($month, $station = '') {
     $k['float'] += (float)$d->fetch()['f'];
   }
   return $k;
+}
+
+/*
+ * Where a KPI mark came from, in a shape the agent list can display.
+ *
+ * The field asked for this after a BDO saw an agent go ACTIVE "by partners"
+ * and had no way to tell whether a file had really said so. Every mark now
+ * carries WHEN it was made and, for file marks, WHICH upload produced it -
+ * "partners" is never a person, it is simply a positive row with no BDO named
+ * in that file, and the BDO can now see exactly which file that was.
+ */
+function mark_provenance($r) {
+  return array(
+    'by'    => $r['bdo'],
+    'src'   => $r['source'],
+    'at'    => substr((string)$r['at'], 0, 16),
+    'file'  => (string)($r['up_label'] ?? ''),
+    'fileAt' => substr((string)($r['up_at'] ?? ''), 0, 16),
+    'proof' => ($r['proof'] !== '' || $r['proof_note'] !== ''),
+    'note'  => $r['proof_note'],
+  );
 }
 
 /* KPI catalogue for OFFICE targets/weights (6 KPIs incl. withdraw volume). */

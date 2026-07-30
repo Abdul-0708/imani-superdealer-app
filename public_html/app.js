@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.24.0';
+  var APP_VERSION = '1.25.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -228,6 +228,18 @@
     'Attach the receipt photo of what he transacted as your proof of serving.':
       'Ambatanisha picha ya risiti ya alichofanya kama uthibitisho wa kumhudumia.',
     'Team': 'Timu',
+    'From the performance file': 'Kutoka faili la utendaji',
+    'uploaded': 'lilipakiwa',
+    'no BDO was named on that row': 'hakuna BDO aliyetajwa kwenye safu hiyo',
+    'Ticked in the field by': 'Iliwekwa alama uwandani na',
+    'at': 'saa',
+    'file': 'faili',
+    'Nobody was named in the file - take this over if you did it':
+      'Hakuna aliyetajwa kwenye faili - chukua hii kama ni wewe uliyefanya',
+    'The performance file did not back this - awaiting the BDO answer':
+      'Faili la utendaji halikuunga mkono hili - tunasubiri jibu la BDO',
+    'Flagged - the BDO says he did it': 'Ina alama - BDO anasema alifanya',
+    'Flagged - the BDO agreed with the file': 'Ina alama - BDO amekubaliana na faili',
     'What everyone is doing today, and where you stand.': 'Kila mtu anafanya nini leo, na wewe uko wapi.',
     'Every claim you made matches the performance file. Keep it up!':
       'Kila dai lako linalingana na faili la utendaji. Endelea hivyo!',
@@ -1543,21 +1555,29 @@
     var list = isSpecial() ? KPI_CHIPS.filter(function (c) { return c.key === 'active'; }) : KPI_CHIPS;
     return list.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('') + wontReturnBtn(a);
   }
-  /* specialist info line: last transaction, days inactive, last month vs now */
+  /* Specialist info line: last transaction, days inactive, last month vs now.
+   * The WON'T RETURN badge itself is for everyone - now that any BDO can set it,
+   * every BDO must be able to see it, or two of them walk to the same closed
+   * shop. Only the dormancy detail below stays specialist-only. */
   function actInfoHtml(a) {
-    if (!isSpecial()) return '';
+    var wr = a.wontReturn ? ' <span class="pill bad">' + t('WON\'T RETURN') + '</span>' : '';
+    if (!isSpecial()) return wr;
     var days = '';
     if (a.lastTx) {
       var diff = Math.floor((Date.now() - new Date(a.lastTx + 'T00:00:00').getTime()) / 86400000);
       if (diff >= 0) days = diff + ' ' + t('days ago');
     }
-    var wr = a.wontReturn ? ' <span class="pill bad">' + t('WON\'T RETURN') + '</span>' : '';
     return '<div class="note">' + t('Last tx') + ': ' + (a.lastTx ? esc(a.lastTx) + (days ? ' (' + days + ')' : '') : '-') +
       ' &middot; ' + t('Last month') + ': ' + (a.actPrev || '-') + ' &middot; ' + t('Now') + ': ' + (a.actStatus || '-') + wr + '</div>';
   }
-  /* specialist action: mark/unmark "agent confirmed he will NOT return to work" */
+  /* Mark/unmark "agent confirmed he will NOT return to work".
+   * EVERY BDO gets this, not only the activeness specialist: any of them can
+   * walk up to a dormant agent and be told he has closed shop, and that fact is
+   * worth recording whoever hears it. The server has always allowed it
+   * (wont_return_toggle only asks for mybase:e) - the button was the only thing
+   * hiding it from general BDOs. */
   function wontReturnBtn(a) {
-    if (!isSpecial() || !can('mybase', 'e')) return '';
+    if (!can('mybase', 'e')) return '';
     if (a.wontReturn) {
       return ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '" data-marked="1">' + t('Undo won\'t-return') + '</button>';
     }
@@ -1567,17 +1587,37 @@
   function doneChip(a, c, mark, isOM) {
     var lbl = c.key === 'active' ? 'Active' : (c.key === 'visit' ? 'Visit YES' : (c.key === 'apk' ? 'APK YES' : c.label));
     var mine = state.user && mark.by === state.user.username;
-    /* OM overturns ANY tick; a BDO overturns his OWN live mark OR an UNASSIGNED
-     * orphan only - never a fellow BDO's mark and never a partners mark. */
-    var orphan = (mark.by === 'unassigned');
+    /* OM overturns ANY tick; a BDO overturns his OWN live mark, or claims an
+     * UNCLAIMED one - never a fellow BDO's mark.
+     * "partners" and "unassigned" are not colleagues: both mean the file listed
+     * a positive result with NO BDO named. A BDO who actually did that work can
+     * take it over, and the normal reconciliation still checks his claim against
+     * the file, so he cannot take credit the file does not support. */
+    var orphan = (mark.by === 'unassigned' || mark.by === 'partners');
     var reversible = isOM || (mine && mark.src === 'bdo') || (orphan && can('mybase', 'e'));
-    var xTitle = orphan ? 'Take over / clear this unassigned mark' : 'Reverse this mark';
+    var xTitle = orphan ? t('Nobody was named in the file - take this over if you did it') : 'Reverse this mark';
     var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = ((c.key === 'active' || c.key === 'served') && mark.proof)
       ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
-    return '<span class="kchip done' + (mine ? ' mine' : '') + '" title="Done by ' + esc(mark.by) + (mark.src === 'upload' ? ' (from file)' : '') + '">' +
-      esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' + pr + x + '</span>';
+    /* A flag QUERIES the mark, it does not cancel it. The tick stays; a small
+     * marker carries the state so a queried agent never reads as "not done". */
+    var fl = '';
+    if (mark.flag === 'OPEN') fl = ' <span class="kflag" title="' + esc(t('The performance file did not back this - awaiting the BDO answer')) + '">!</span>';
+    else if (mark.flag === 'DISPUTED') fl = ' <span class="kflag ok" title="' + esc(t('Flagged - the BDO says he did it')) + '">!</span>';
+    else if (mark.flag === 'CONFIRMED') fl = ' <span class="kflag warn" title="' + esc(t('Flagged - the BDO agreed with the file')) + '">!</span>';
+    /* WHERE THIS MARK CAME FROM. A BDO seeing "Active - partners" with no idea
+     * why now gets the answer in the tooltip: the exact file and the moment it
+     * was imported, or the moment the colleague ticked it in the field. */
+    var prov = mark.src === 'upload'
+      ? t('From the performance file') + (mark.file ? ' "' + mark.file + '"' : '') +
+        (mark.fileAt ? ' ' + t('uploaded') + ' ' + mark.fileAt : '') +
+        (mark.by === 'partners' ? ' - ' + t('no BDO was named on that row') : '')
+      : t('Ticked in the field by') + ' ' + mark.by + (mark.at ? ' ' + t('at') + ' ' + mark.at : '');
+    return '<span class="kchip done' + (mine ? ' mine' : '') + (mark.flag ? ' queried' : '') + '" title="' + esc(prov) + '">' +
+      esc(lbl) + ' &#10003; <small>' + esc(mark.by) + '</small>' +
+      (mark.src === 'upload' ? ' <small class="ksrc" title="' + esc(prov) + '">' + t('file') + '</small>' : '') +
+      fl + pr + x + '</span>';
   }
   function todoChip(a, c, label) {
     return '<button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '">' + esc(label || c.label) + '</button>';

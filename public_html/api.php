@@ -489,9 +489,21 @@ try {
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof, proof_note FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT k.agent_id, k.kpi, k.bdo, k.source, k.proof, k.proof_note, k.at, u.label AS up_label, u.at AS up_at
+                             FROM agent_month_kpi k LEFT JOIN uploads u ON u.id = k.upload_id
+                             WHERE k.month = ? AND k.agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
-        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => ($r['proof'] !== '' || $r['proof_note'] !== ''), 'note' => $r['proof_note']);
+        foreach ($kq->fetchAll() as $r) $kpiMap[$r['agent_id']][$r['kpi']] = mark_provenance($r);
+        /* A KPI the file did not back is FLAGGED, not undone. The mark keeps
+         * standing on the list; the chip just carries the query and the BDO's
+         * answer to it, so nobody reads a flagged agent as "nothing was done". */
+        $fq2 = db()->prepare("SELECT agent_id, kpi, bdo_response FROM flags WHERE month = ? AND agent_id IN ($in)");
+        $fq2->execute(array_merge(array($month), $ids));
+        foreach ($fq2->fetchAll() as $r) {
+          if (isset($kpiMap[$r['agent_id']][$r['kpi']])) {
+            $kpiMap[$r['agent_id']][$r['kpi']]['flag'] = $r['bdo_response'] !== '' ? $r['bdo_response'] : 'OPEN';
+          }
+        }
         $tq2 = db()->prepare("SELECT agent_id, MAX(NULLIF(date,'')) d FROM service_history WHERE agent_id IN ($in) GROUP BY agent_id");
         $tq2->execute($ids);
         foreach ($tq2->fetchAll() as $r) $lastTx[$r['agent_id']] = (string)$r['d'];
@@ -567,11 +579,13 @@ try {
       $kpiMap = array(); $servedNow = 0;
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $kq = db()->prepare("SELECT agent_id, kpi, bdo, source, proof, proof_note FROM agent_month_kpi WHERE month = ? AND agent_id IN ($in)");
+        $kq = db()->prepare("SELECT k.agent_id, k.kpi, k.bdo, k.source, k.proof, k.proof_note, k.at, u.label AS up_label, u.at AS up_at
+                             FROM agent_month_kpi k LEFT JOIN uploads u ON u.id = k.upload_id
+                             WHERE k.month = ? AND k.agent_id IN ($in)");
         $kq->execute(array_merge(array($month), $ids));
         foreach ($kq->fetchAll() as $r) {
           if (!isset($kpiMap[$r['agent_id']])) $kpiMap[$r['agent_id']] = array();
-          $kpiMap[$r['agent_id']][$r['kpi']] = array('by' => $r['bdo'], 'src' => $r['source'], 'proof' => ($r['proof'] !== '' || $r['proof_note'] !== ''), 'note' => $r['proof_note']);
+          $kpiMap[$r['agent_id']][$r['kpi']] = mark_provenance($r);
           if ($r['kpi'] === 'served' && $r['bdo'] === $bdo) $servedNow++;
         }
       }
@@ -1511,16 +1525,21 @@ try {
       /* Permission ladder for reversing a KPI tick:
        *  - OM (agents.edit): can overturn ANY tick, any source, no time limit.
        *  - a BDO: can overturn his OWN live (bdo-source) mark within 6 hours,
-       *    OR an UNASSIGNED tick (an orphan nobody owns) at any time - so he can
-       *    take it over and serve the agent himself.
-       *  - a BDO can NEVER touch anyone else's mark: not a FELLOW BDO's, and not
-       *    a PARTNERS mark. Only the OM can. */
+       *    OR an UNCLAIMED tick at any time - so he can take it over and do the
+       *    agent himself.
+       *  - a BDO can NEVER touch a FELLOW BDO's mark. Only the OM can.
+       *
+       * "partners" and "unassigned" both mean the SAME thing: the file reported
+       * a positive result with no BDO named on that row. Neither is a person, so
+       * neither is anyone's work to protect. A BDO who really did that visit was
+       * previously locked out ("a partner woke the agent" with no way to correct
+       * it) - he can now claim it, and the month-wide reconciliation still checks
+       * his claim against the file, so he cannot take credit the file denies. */
       $mineOwn = ($row['source'] === 'bdo' && $row['bdo'] === $u['username']);
-      $orphan = ($row['bdo'] === 'unassigned');
+      $orphan = ($row['bdo'] === 'unassigned' || $row['bdo'] === 'partners');
       if (!$isOM) {
         if (!$orphan && $row['bdo'] !== $u['username']) {
-          $who = $row['bdo'] === 'partners' ? 'the partners' : $row['bdo'];
-          fail('That belongs to ' . $who . ' - only the OM can overturn it', 403);
+          fail('That belongs to ' . $row['bdo'] . ' - only the OM can overturn it', 403);
         }
         if (!$mineOwn && !$orphan) {
           fail('This status came from the uploaded file - only the OM can overturn it', 400);
@@ -1586,9 +1605,32 @@ try {
        * reconciliation block below. */
       /* A fresh performance file is the new truth: wipe this month's flags so
        * old accusations from a superseded file never linger. A priority seed
-       * touches nothing. */
+       * touches nothing.
+       *
+       * BUT the BDO's ANSWERS are his work, not the file's: remember them first
+       * and re-attach them below when the same accusation is raised again.
+       * Without this he had to re-type the same explanation after every weekly
+       * upload, and the OM saw a wall of "no answer yet" that the BDO had in
+       * fact already answered. */
       $cleared = 0;
+      $keptAnswers = array();
+      /* Agents a BDO woke by hand this month - their status must survive a file
+       * that still shows them dormant (see the $updAct call in PASS 2). */
+      $bdoWoke = array();
       if (!$priorityMode) {
+        $wq0 = db()->prepare("SELECT agent_id FROM agent_month_kpi
+                              WHERE month = ? AND kpi = 'active' AND source = 'bdo'");
+        $wq0->execute(array($month));
+        foreach ($wq0->fetchAll() as $r0) $bdoWoke[(int)$r0['agent_id']] = true;
+      }
+      if (!$priorityMode) {
+        $aq = db()->prepare("SELECT agent_id, bdo, kpi, bdo_response, bdo_note, responded_at
+                             FROM flags WHERE month = ? AND bdo_response <> ''");
+        $aq->execute(array($month));
+        foreach ($aq->fetchAll() as $r) {
+          $keptAnswers[$r['agent_id'] . '|' . $r['bdo'] . '|' . $r['kpi']] =
+            array($r['bdo_response'], $r['bdo_note'], $r['responded_at']);
+        }
         $del = db()->prepare('DELETE FROM flags WHERE month = ?');
         $del->execute(array($month));
         $cleared = $del->rowCount();
@@ -1680,8 +1722,18 @@ try {
           $insAgent->execute(array($r['acc'],$r['name'],$r['phone'],$r['branch'],$r['location'],$r['partner'],$r['station']));
           $id = (int)db()->lastInsertId();
         }
-        /* activeness transition snapshot - drives the Inactive Agents panel */
-        if ($r['act_cur'] !== '' || $r['act_prev'] !== '') $updAct->execute(array($r['act_cur'], $r['act_prev'], $month, $id));
+        /* Activeness transition snapshot - drives the Inactive Agents panel.
+         *
+         * An agent the BDO already WOKE this month must not be pushed back onto
+         * the "Inactive - wake up" list by a file that was cut before the wake:
+         * to him it looks like his work was thrown away, and the agent reads as
+         * though nothing was ever done. His wake credit stands, so the agent
+         * stays ACTIVE here. The OFFICE numbers are untouched (they are still
+         * exactly what the file said), and if the file really does disagree the
+         * reconciliation below raises the flag for the OM to judge. */
+        $actCur = $r['act_cur'];
+        if ($actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
+        if ($actCur !== '' || $r['act_prev'] !== '') $updAct->execute(array($actCur, $r['act_prev'], $month, $id));
 
         $agents++;
         /* PRIORITY MODE is a DATABASE SEED, not performance: it only creates or
@@ -1742,12 +1794,24 @@ try {
           'apk'    => 'no file this month shows APK at ' . $apkRequired . ' or above',
           'active' => 'no file this month ever shows the agent ACTIVE',
         );
+        /* Re-attach the answer the BDO already gave for this exact accusation. */
+        $reAnswer = db()->prepare('UPDATE flags SET bdo_response = ?, bdo_note = ?, responded_at = ?
+                                   WHERE month = ? AND agent_id = ? AND bdo = ? AND kpi = ?');
+        $restored = 0;
+        $keepAnswer = function ($aid, $who, $kk) use (&$keptAnswers, $reAnswer, $month, &$restored) {
+          $key = $aid . '|' . $who . '|' . $kk;
+          if (!isset($keptAnswers[$key])) return;
+          $a = $keptAnswers[$key];
+          $reAnswer->execute(array($a[0], $a[1], $a[2], $month, $aid, $who, $kk));
+          $restored++;
+        };
         foreach ($rq2->fetchAll() as $c) {
           $aid = (int)$c['agent_id']; $kk = $c['kpi']; $who = $c['bdo'];
           if (!(int)$c['in_file']) {
             $insFlag->execute(array($month, $aid, $who, $kk,
               'Marked ' . strtoupper($kk) . ' by ' . $who .
               ' but the agent is in NO performance file this month (' . $c['acc'] . ')'));
+            $keepAnswer($aid, $who, $kk);
             $flagged++;
             continue;
           }
@@ -1757,6 +1821,7 @@ try {
           if ($backed) continue;
           $insFlag->execute(array($month, $aid, $who, $kk,
             'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')'));
+          $keepAnswer($aid, $who, $kk);
           $flagged++;
         }
       }
@@ -1766,10 +1831,12 @@ try {
        * A priority seed never writes it. */
       if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
-      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ($blankStation ? ' blankStation=' . $blankStation : ''));
+      $restored = isset($restored) ? $restored : 0;
+      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ' answersKept=' . $restored . ($blankStation ? ' blankStation=' . $blankStation : ''));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
                     'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats,
+                    'answersKept' => $restored,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation));
     }
 

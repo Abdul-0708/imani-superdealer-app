@@ -182,6 +182,17 @@ tbody tr:hover{background:rgba(255,140,26,.07)}
   @keyframes armPulse{from{filter:brightness(1)}to{filter:brightness(1.18)}}
 }
 .kchip.done{background:rgba(143,209,79,.13);color:var(--ok);border-color:rgba(143,209,79,.35)}
+/* A QUERIED mark: the performance file did not back it. The tick stays - the
+   work was done and claimed - the chip just wears a marker so the agent is
+   never misread as "nothing happened here". */
+.kchip.done.queried{border-color:var(--bad);border-style:dashed}
+.kflag{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:4px;
+  border-radius:50%;background:var(--bad);color:#fff;font-size:10px;font-weight:900;line-height:1;flex:none}
+.kflag.ok{background:var(--ok);color:#10240a}
+.kflag.warn{background:var(--gold);color:#2b1000}
+/* "file" tag: this tick came from an uploaded performance file, not the field */
+.ksrc{margin-left:4px;padding:1px 5px;border-radius:6px;background:rgba(216,168,120,.16);
+  color:var(--muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
 .kchip.done.mine{background:var(--grad);color:#2b1000;border-color:transparent;box-shadow:var(--glow)}
 .kchip.off{color:var(--muted);opacity:.55}
 

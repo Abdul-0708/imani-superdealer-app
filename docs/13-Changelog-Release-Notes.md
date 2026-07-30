@@ -5,6 +5,56 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.25.0 — 2026-07-30 · "A BDO's work survives the next upload"
+
+### Release notes
+**The flag answers a BDO writes are no longer thrown away.** Every performance upload clears the
+month's flags before recomputing them — and it was clearing the BDO's *answers* with them. He would
+explain himself on four flags, the next weekly file would land, and all four came back as "no answer
+yet" with his written note gone. He had to re-type the same explanation after every upload, and the
+OM saw a wall of unanswered flags that had in fact been answered.
+Answers are now remembered and re-attached to the same accusation when it is raised again; the
+upload reports how many it kept. **Verified**: BDO answers 4 flags → next upload → `answersKept: 4`,
+pending stayed **0**, notes intact (before the fix: pending went 0 → 4 and every note was lost).
+
+**A wake is no longer undone by a file cut before it happened.** When a BDO woke a dormant agent and
+a later file still showed that agent Inactive, the import wrote him back to INACTIVE — he reappeared
+on the "Inactive – wake up" list and read as though nothing had ever been done. An agent with a BDO
+wake credit for the month now keeps his ACTIVE status. The **office numbers are untouched** (they
+are still exactly what the file said), and if the file genuinely disagrees the reconciliation still
+raises the flag for the OM to judge. Verified: `actStatus` stays `ACTIVE` across the re-upload.
+
+**A flagged KPI is queried, not erased.** The tick stays on the agent list with the BDO's name; the
+chip now wears a small marker — red `!` awaiting his answer, green when he says he did it, gold when
+he agrees with the file — and a dashed border. A queried agent can no longer be misread as "no KPI
+was done here".
+
+**Every tick now says where it came from.** A BDO reported seeing an agent go ACTIVE "by partners"
+with no upload he knew of. `partners` is created in exactly one place — an upload row that reported a
+positive result with **no BDO named on it** — so it always comes from a file, but nothing on screen
+said *which* file. Each chip now carries its provenance in the tooltip: for file marks the upload's
+label and the minute it was imported, for field marks who ticked it and when. A small `FILE` tag
+marks anything that came from a spreadsheet rather than the field.
+Example now shown: *From the performance file "W5 file - 28 July" uploaded 2026-07-30 10:50 - no BDO
+was named on that row*.
+
+**And a BDO can claim work the file left unnamed.** `partners` and `unassigned` both mean "nobody was
+named on that row" — neither is a colleague, so neither is anyone's work to protect. A BDO who
+actually made that visit was previously locked out with "that belongs to the partners". He can now
+take it over (client *and* server — they disagreed before, so the button appeared but the API
+refused). His claim still goes through the normal reconciliation, so he cannot take credit the file
+denies.
+
+**"Won't return" is for every BDO.** Any BDO can walk up to a dormant agent and be told he has closed
+shop; that is worth recording whoever hears it. The button was hidden from everyone except the
+activeness specialist — the server had always allowed it (`wont_return_toggle` only asks for
+`mybase: Edit`). The WON'T RETURN badge is now visible to every BDO too, so two of them don't walk to
+the same closed shop.
+
+- Assets `?v=39`, SW `imani-v39`
+
+---
+
 ## v1.24.0 — 2026-07-26 · "Attainment per SA station, calmer dashboards" — schema v14
 
 ### Release notes
