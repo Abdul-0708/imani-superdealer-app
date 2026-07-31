@@ -5,6 +5,46 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.28.0 — 2026-07-31 · "One rule for a partner-served agent a BDO also claims"
+
+An agent the file credits to the **PARTNER** and a BDO also marks was resolved by **timing**, not by
+a rule, and the two outcomes were opposites:
+
+- **BDO tapped first** → the upload's `INSERT IGNORE` was dropped, he kept the credit, and because
+  the flag check only asked *"was this agent served at all?"* the partner's own row **vindicated
+  him**. No flag, no receipt, no record of the dispute.
+- **File landed first** → his tap was refused outright with *"Already done by partners"*.
+
+Both now follow the decision the OM made: **the BDO keeps the credit, and the OM is told.**
+
+- **Serving is only "backed" when the file names an officer.** A row the file attributes to the
+  partner no longer vindicates a BDO who claims the same agent — he is flagged:
+  *"Marked SERVED by john but the performance file credits the PARTNER with serving this agent."*
+  This applies to **serving only**, which is where the partner concept lives; visits/APK/activeness
+  are unchanged, so there is no flag storm.
+- **The flag is raised the moment he claims**, not at the next upload, so the dispute reaches the OM
+  while the visit is fresh.
+- **The receipt photo is compulsory for this claim** whatever the global Serving-receipt setting
+  says — this is the one case where evidence is the whole argument. The serve dialog warns him
+  before he types anything: *"The file says the PARTNER served this agent… your OM is told so he can
+  decide."*
+- **Once claimed, the agent leaves the "Special agents — served by PARTNERS" list** and appears in
+  that BDO's My Agent Base. (Both already followed the ledger, so this fell out correctly.)
+
+**Verified both orderings produce the identical result** — same credit holder, same flag text:
+file-first (take over → refused without photo → accepted with photo → flag + moved off the partner
+list) and BDO-first (tap → upload credits partner → same flag). A control agent whose file row
+**names** the BDO is still backed with **no flag**.
+
+**Bug found while building this:** taking over a partner mark deleted the file's own
+`service_history` row, erasing the evidence that the partner had served the agent — which silently
+disabled both the receipt requirement and the flag. Only an **OM overturning** may now delete a file
+row; a BDO claiming an unnamed one leaves the office record intact.
+
+- Assets `?v=43`, SW `imani-v43`
+
+---
+
 ## v1.27.0 — 2026-07-30 · "Activeness is a net, and a losing month costs the score"
 
 Activeness in Real Performance was a **tally of wakes**, so it could only ever go up. The agents who

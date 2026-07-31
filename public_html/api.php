@@ -673,23 +673,42 @@ try {
        * it has been through the dialog by sending confirmed=1; the photo itself
        * stays optional unless the OM made it compulsory. */
       $proofFile = ''; $proofNote = '';
+      /* Did the office file put THIS agent down to the partner this month?
+       * Claiming such an agent is the one case where evidence matters most, so
+       * the receipt photo is demanded whatever the global setting says, and the
+       * OM is told about the claim the moment it is made. */
+      $partnerServed = false;
+      if ($kpi === 'served') {
+        $psq = db()->prepare("SELECT 1 FROM service_history
+                              WHERE agent_id = ? AND month = ? AND source <> 'bdo'
+                                AND served_status = 'SERVED' AND bdo = 'partners' LIMIT 1");
+        $psq->execute(array($agentId, $month));
+        $partnerServed = (bool)$psq->fetch();
+      }
+
       if ($kpi === 'served') {
         $loc = trim((string)bval('location'));
         $confirmed = (string)bval('confirmed') !== '';
+        $rule = $partnerServed ? 'required' : setting_get('serve_receipt', 'optional');
         if (!$confirmed) {
           fail('Confirm the location and attach the serving receipt', 400,
-               array('needLocation' => true,
-                     'receiptRule' => setting_get('serve_receipt', 'optional'),
+               array('needLocation' => true, 'receiptRule' => $rule,
+                     'partnerServed' => $partnerServed,
                      'agentLoc' => (string)$agent['physical_location']));
         }
         if ($loc !== '') {
           db()->prepare('UPDATE agents SET physical_location = ? WHERE id = ?')->execute(array($loc, $agentId));
         } elseif (trim((string)$agent['physical_location']) === '') {
           fail('Physical location required before marking served', 400,
-               array('needLocation' => true, 'receiptRule' => setting_get('serve_receipt', 'optional')));
+               array('needLocation' => true, 'receiptRule' => $rule, 'partnerServed' => $partnerServed));
         }
         $img = (string)bval('proof');
         if ($img !== '') $proofFile = save_proof_image($img);
+        elseif ($partnerServed) {
+          fail('The file credits the PARTNER with serving this agent - attach the receipt photo to claim him', 400,
+               array('needLocation' => true, 'receiptRule' => 'required', 'partnerServed' => true,
+                     'agentLoc' => (string)$agent['physical_location']));
+        }
         elseif (setting_get('serve_receipt', 'optional') === 'required') {
           fail('Attach the serving receipt photo - the OM has made it compulsory', 400,
                array('needLocation' => true, 'receiptRule' => 'required', 'agentLoc' => (string)$agent['physical_location']));
@@ -749,9 +768,19 @@ try {
         db()->prepare('UPDATE agents SET act_current = "ACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
       }
       db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
+      /* Claiming an agent the file credits to the PARTNER raises the flag right
+       * now, not at the next upload: the OM should see the dispute while the
+       * visit is fresh, and the BDO keeps the credit meanwhile. */
+      if ($partnerServed) {
+        db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?, "served", ?)')
+            ->execute(array($month, $agentId, $bdo,
+              'Marked SERVED by ' . $bdo . ' but the performance file credits the PARTNER with serving this agent (' . $agent['acc'] . ')'));
+        audit($u['id'], 'partner_claim', $bdo . ' claimed partner-served agent=' . $agentId . ' ' . $month);
+      }
       specialist_touch_report($u);
       audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
-      respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo));
+      respond(array('ok' => true, 'kpi' => $kpi, 'month' => $month, 'by' => $bdo,
+                    'partnerClaim' => $partnerServed));
     }
 
     /* Serve a wake-proof photo (auth-checked; files are blocked from direct URL access). */
@@ -1551,11 +1580,16 @@ try {
 
       db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')->execute(array($month, $agentId, $kpi));
       if ($kpi === 'served') {
-        /* live serve: remove his bdo service row; file serve (OM overturn):
-         * remove the file's rows for this agent+bdo so his float drops too */
+        /* live serve: remove his bdo service row.
+         * file serve: only the OM overturning may delete the FILE's own row -
+         * that is the office record the month's totals are built from. When a
+         * BDO merely CLAIMS an unnamed ("partners") row, the file's record must
+         * survive, or the take-over would erase the very evidence that the
+         * partner served the agent - and with it the receipt requirement and
+         * the flag that are supposed to follow the claim. */
         if ($row['source'] === 'bdo') {
           db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ? AND source = "bdo"')->execute(array($month, $agentId, $row['bdo']));
-        } else {
+        } elseif ($isOM) {
           db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ?')->execute(array($month, $agentId, $row['bdo']));
         }
       }
@@ -1775,9 +1809,19 @@ try {
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
                                               AND s.source <> 'bdo') AS in_file,
+                                     /* SERVED, and the file did NOT put it down to
+                                        the partner. Serving is only 'backed' when
+                                        the file credits a named officer - a row the
+                                        file attributes to the partner does not
+                                        vindicate a BDO who claims the same agent. */
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
-                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED') AS f_served,
+                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED'
+                                              AND s.bdo <> 'partners') AS f_served,
+                                     EXISTS(SELECT 1 FROM service_history s
+                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
+                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED'
+                                              AND s.bdo = 'partners') AS f_partner_served,
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
                                               AND s.source <> 'bdo' AND s.odk = 'YES') AS f_visit,
@@ -1819,8 +1863,15 @@ try {
                   : ($kk === 'visit' ? (int)$c['f_visit']
                   : ($kk === 'apk'   ? (int)$c['f_apk'] : (int)$c['f_active']));
           if ($backed) continue;
-          $insFlag->execute(array($month, $aid, $who, $kk,
-            'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')'));
+          /* PARTNER-SERVED AGENT CLAIMED BY A BDO. He keeps the credit - his
+           * month is not cut on the strength of a spreadsheet column - but the
+           * OM is told, and decides. This makes the outcome the same whichever
+           * came first, the tap or the upload; before, tapping first won the
+           * credit silently and tapping second was refused outright. */
+          $detail = ($kk === 'served' && (int)$c['f_partner_served'])
+            ? 'Marked SERVED by ' . $who . ' but the performance file credits the PARTNER with serving this agent (' . $c['acc'] . ')'
+            : 'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')';
+          $insFlag->execute(array($month, $aid, $who, $kk, $detail));
           $keepAnswer($aid, $who, $kk);
           $flagged++;
         }

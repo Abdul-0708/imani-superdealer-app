@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.27.0';
+  var APP_VERSION = '1.28.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -227,6 +227,9 @@
     'Only management can download the live board': 'Ni menejimenti pekee wanaoweza kupakua bodi ya mubashara',
     'Attach the receipt photo of what he transacted as your proof of serving.':
       'Ambatanisha picha ya risiti ya alichofanya kama uthibitisho wa kumhudumia.',
+    'The file says the PARTNER served this agent': 'Faili linasema MSHIRIKA ndiye alimhudumia wakala huyu',
+    'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
+      'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
     'Real Performance': 'Utendaji Halisi',
     'The uploaded file PLUS the work your BDOs did in the field, added together and counted once.':
@@ -2074,7 +2077,7 @@
         swapChip(node, kpi, state.user.username);
       })
       .catch(function (e) {
-        if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node, e.data.receiptRule || 'optional', e.data.agentLoc || ''); return; }
+        if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node, e.data.receiptRule || 'optional', e.data.agentLoc || '', e.data.partnerServed); return; }
         if (e.data && e.data.needProof) { proofModal(id, name, node, e.data.agentLoc || ''); return; }
         toast(e.message, 'err');
         /* someone else already did it - show their name on the chip, in place */
@@ -2086,9 +2089,18 @@
   /* Serving modal: physical location (required for the base count) + serving
    * RECEIPT photo (optional or compulsory per the OM's setting). Separate from
    * the wake-up receipt. */
-  function locationModal(id, kpi, name, node, receiptRule, knownLoc) {
+  function locationModal(id, kpi, name, node, receiptRule, knownLoc, partnerServed) {
     var required = receiptRule === 'required';
     openModal('<h2>' + svg('pin') + ' ' + t('Serve') + ' ' + esc(name) + '</h2>' +
+      /* Claiming an agent the file gave to the partner: say so plainly BEFORE he
+       * fills anything in, so he knows the receipt is the whole case and that
+       * the OM will be told. */
+      (partnerServed
+        ? '<div class="panel" style="border-color:var(--bad);margin-bottom:10px;padding:12px">' +
+          '<b>' + svg('alert') + ' ' + t('The file says the PARTNER served this agent') + '</b>' +
+          '<p class="note" style="margin:6px 0 0">' +
+          t('You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.') + '</p></div>'
+        : '') +
       '<p class="note">' + t('Confirm the agent\'s physical location - it becomes his known location and counts him into your base.') + ' ' +
       t('Attach the receipt photo of what he transacted as your proof of serving.') + '</p>' +
       '<div class="field"><label>' + t('Physical location') + '</label><input id="locInput" value="' + esc(knownLoc || '') + '" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
