@@ -2380,27 +2380,48 @@ try {
        * weight and how each one contributed. Serving/visits/APK/activeness and
        * float have a file half and a field half; withdraw volume exists only in
        * the file (no BDO taps a withdraw), so its field half is always 0. */
+      /*
+       * ACTIVENESS IS A NET, NOT A TALLY. Waking agents is only half of it: the
+       * same month also puts agents to sleep, and a month that woke 5 while
+       * losing 8 went BACKWARDS. So activeness = waked - slept, and when that
+       * deviation is negative the KPI scores negative and DRAGS THE WEIGHTED
+       * AVERAGE DOWN rather than being floored at zero - a real loss must cost
+       * the office score, not merely fail to add to it.
+       *
+       * "Slept" is read from the agents' own transition snapshot (ACTIVE last
+       * month, INACTIVE now) rather than the upload blob, so it respects the
+       * rule that an agent a BDO woke stays awake.
+       */
+      $slq = db()->prepare("SELECT COUNT(*) c FROM agents a
+                            WHERE a.act_month = ? AND a.act_current = 'INACTIVE'
+                              AND a.act_prev = 'ACTIVE'" . $stFilter);
+      $slq->execute(array_merge(array($month), $stVals));
+      $slept = (int)$slq->fetch()['c'];
+
       $tMap = array('serving' => 'served', 'visits' => 'visit', 'apk' => 'apk', 'activeness' => 'active');
       $rows = array();
       foreach (office_kpi_defs() as $col => $ak) {
         $target = isset($tgt[$col]) ? (float)$tgt[$col]['target'] : 0;
         $weight = isset($tgt[$col]) ? (int)$tgt[$col]['weight'] : 0;
+        $lost = 0;
         if (isset($tMap[$col])) {
           $file = (float)$per[$tMap[$col]]['file'];
           $live = (float)$per[$tMap[$col]]['live'];
+          if ($col === 'activeness') $lost = $slept;
         } elseif ($col === 'float') {
           $file = $floatFile; $live = $floatLive;
         } else {                       /* withdraw: file only */
           $file = isset($tgt[$col]) ? (float)$tgt[$col]['actual'] : 0; $live = 0;
         }
-        $total = $file + $live;
+        $total = $file + $live - $lost;   /* $lost is 0 for every KPI but activeness */
         $rows[$col] = array(
-          'key' => $col, 'file' => $file, 'live' => $live, 'total' => $total,
+          'key' => $col, 'file' => $file, 'live' => $live, 'lost' => $lost, 'total' => $total,
           'target' => $target, 'weight' => $weight,
-          /* capped at 100 exactly like office_attainment, so the two screens
-           * cannot report different achievements for the same numbers */
+          /* Capped at 100 above, exactly like office_attainment, so the two
+           * screens cannot report different achievements. NOT floored below:
+           * a negative deviation has to be able to pull the average down. */
           'pct'     => $target > 0 ? min(100, (int)round($total / $target * 100)) : null,
-          'filePct' => $target > 0 ? min(100, (int)round($file / $target * 100)) : null,
+          'filePct' => $target > 0 ? min(100, (int)round(($file - $lost) / $target * 100)) : null,
         );
       }
 
@@ -2501,6 +2522,7 @@ try {
                      * "file alone" column means. */
                     'officeAchievement' => $oa['achievement'],
                     'fromUpload' => $oa['fromUpload'],
+                    'slept' => $slept,
                     'weighted' => $wsum > 0, 'weightTotal' => $wsum,
                     'byBdo' => $byBdo, 'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
     }

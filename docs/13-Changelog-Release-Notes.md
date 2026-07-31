@@ -5,6 +5,33 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.27.0 — 2026-07-30 · "Activeness is a net, and a losing month costs the score"
+
+Activeness in Real Performance was a **tally of wakes**, so it could only ever go up. The agents who
+fell asleep during the same month were never subtracted, and a month that woke 4 while losing 9 still
+read as positive progress.
+
+- **Activeness = waked − slept.** The window now subtracts the agents whose status went ACTIVE →
+  INACTIVE this month, and shows the arithmetic on the row (`4 waked − 9 slept`) so a bad month is
+  explained rather than merely reported. "Slept" is read from the agents' own transition snapshot,
+  not the upload blob, so it still respects the v1.25 rule that an agent a BDO woke stays awake.
+- **A negative deviation now SUBTRACTS from the total weighted KPI.** Per-KPI percentages are capped
+  at 100 above (as before) but deliberately **not floored at 0**, so a real loss pulls the weighted
+  average down instead of merely failing to add to it.
+  **Verified**: 4 waked − 9 slept = **−5** against a target of 5 = **−100%**, which at a weight of 10
+  took the weighted average from what would have been 90% down to **72%** — an 18-point cost.
+  Hand-calculation `(100×30 + 100×20 + 100×20 + 40×10 + (−100)×10 + 80×10) / 100 = 72` matched the
+  server exactly.
+- **A negative KPI renders as an empty red track** with a `GOING BACKWARDS` pill, and the combined
+  figure turns red. (A negative bar width is invalid CSS and browsers paint it *full*, which would
+  have read as "target smashed" when the truth was the opposite — the same trap fixed on the
+  dashboard in v1.19.)
+- The Excel export gained a **Slept (subtracted)** column so the arithmetic survives the download.
+
+- Assets `?v=42`, SW `imani-v42`
+
+---
+
 ## v1.26.1 — 2026-07-30 · "Real Performance shows the weighted average"
 
 Real Performance listed each KPI's own attainment but never rolled them up, so there was no single

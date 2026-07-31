@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.26.1';
+  var APP_VERSION = '1.27.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -249,6 +249,10 @@
     'Weight': 'Uzito',
     'weighted': 'yenye uzito',
     'WEIGHTED AVERAGE': 'WASTANI WENYE UZITO',
+    'Activeness is a NET: agents waked minus agents that fell asleep this month. A negative month scores negative and pulls the weighted average down.':
+      'Uhai ni JUMLA HALISI: mawakala walioamshwa toa waliolala mwezi huu. Mwezi hasi hupata alama hasi na hushusha wastani wenye uzito.',
+    'waked': 'walioamshwa',
+    'slept': 'waliolala',
     'From file': 'Kutoka faili',
     'From field': 'Kutoka uwandani',
     'Combined': 'Jumla',
@@ -2779,7 +2783,11 @@
       state._combined = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
 
+      /* A negative KPI gets an EMPTY red track, never a filled one - a negative
+       * width is invalid CSS and the browser paints it full, which read as
+       * "target smashed" when the truth was the opposite. */
       function bar(pct) {
+        if (pct != null && pct < 0) return '<div class="bar neg"></div>';
         var p = Math.max(0, Math.min(100, pct == null ? 0 : pct));
         return '<div class="bar"><i style="display:block;height:100%;width:' + p + '%;background:var(--grad)"></i></div>';
       }
@@ -2788,15 +2796,22 @@
       var LBL = {};
       OFFICE_DEFS.forEach(function (def) { LBL[def.key] = def.label; });
       var kpiRows = (d.rows || []).map(function (r) {
-        return '<tr><td><b>' + esc(t(LBL[r.key] || r.key)) + '</b></td>' +
+        var neg = r.pct != null && r.pct < 0;
+        return '<tr><td><b>' + esc(t(LBL[r.key] || r.key)) + '</b>' +
+          /* activeness carries its own arithmetic - show it, so a negative
+             month is explained rather than merely reported */
+          (r.lost ? '<div class="note">' + fmt(r.file + r.live) + ' ' + t('waked') + ' &minus; ' +
+                    fmt(r.lost) + ' ' + t('slept') + '</div>' : '') + '</td>' +
           '<td>' + (r.weight ? '<span class="pill gold">' + r.weight + '%</span>' : '<span class="note">-</span>') + '</td>' +
           '<td>' + fmt(r.file) + '</td>' +
-          '<td>' + (r.live ? '<span class="pill ok">+' + fmt(r.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
-          '<td><b>' + fmt(r.total) + '</b></td>' +
+          '<td>' + (r.live ? '<span class="pill ok">+' + fmt(r.live) + '</span>' : '<span class="note">0</span>') +
+            (r.lost ? ' <span class="pill bad">&minus;' + fmt(r.lost) + '</span>' : '') + '</td>' +
+          '<td><b' + (r.total < 0 ? ' style="color:var(--bad)"' : '') + '>' + fmt(r.total) + '</b></td>' +
           '<td>' + (r.target ? fmt(r.target) : '<span class="note">-</span>') + '</td>' +
           '<td style="min-width:150px">' + bar(r.pct) +
-            '<span class="note">' + (r.pct == null ? t('no target') : r.pct + '%') +
-            (r.filePct != null && r.pct != null && r.pct > r.filePct ? ' &middot; ' + t('file alone') + ' ' + r.filePct + '%' : '') +
+            '<span class="note' + (neg ? ' tg-pct bad' : '') + '">' + (r.pct == null ? t('no target') : r.pct + '%') +
+            (neg ? ' <span class="pill bad">' + t('GOING BACKWARDS') + '</span>' : '') +
+            (!neg && r.filePct != null && r.pct != null && r.pct > r.filePct ? ' &middot; ' + t('file alone') + ' ' + r.filePct + '%' : '') +
             '</span></td></tr>';
       }).join('');
 
@@ -2858,13 +2873,15 @@
         '<div class="panel"><h2>' + svg('percent') + t('Combined against target') +
         (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
         (d.weighted ? ' <span class="pill gold">' + t('weighted') + '</span>' : '') + '</h2>' +
-        '<p class="note">' + t('Every KPI that carries a weight, and how each one feeds the score above.') + '</p>' +
+        '<p class="note">' + t('Every KPI that carries a weight, and how each one feeds the score above.') + ' ' +
+        t('Activeness is a NET: agents waked minus agents that fell asleep this month. A negative month scores negative and pulls the weighted average down.') + '</p>' +
         '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Weight') + '</th><th>' + t('From file') + '</th><th>' + t('From field') + '</th>' +
         '<th>' + t('Combined') + '</th><th>' + t('Target') + '</th><th>' + t('Attainment') + '</th></tr></thead><tbody>' +
         kpiRows +
         '<tr><td><b>' + t('WEIGHTED AVERAGE') + '</b></td>' +
         '<td><b>' + (d.weightTotal || 0) + '%</b></td><td></td><td></td><td></td><td></td>' +
-        '<td><b>' + (d.achievement == null ? '-' : d.achievement + '%') + '</b></td></tr>' +
+        '<td><b' + (d.achievement != null && d.achievement < 0 ? ' style="color:var(--bad)"' : '') + '>' +
+        (d.achievement == null ? '-' : d.achievement + '%') + '</b></td></tr>' +
         '</tbody></table></div></div>' +
 
         '<div class="panel"><h2>' + svg('users') + t('Per BDO - what each one really produced') + '</h2>' +
@@ -2902,13 +2919,16 @@
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
       return { 'KPI': LBL[r.key] || r.key, 'Weight %': r.weight, 'From file': r.file, 'From field': r.live,
+               'Slept (subtracted)': r.lost || 0,
                'Combined': r.total, 'Target': r.target, 'Attainment %': r.pct == null ? '' : r.pct,
                'File alone %': r.filePct == null ? '' : r.filePct };
     }).concat([
       { 'KPI': 'WEIGHTED AVERAGE (file + field)', 'Weight %': d.weightTotal, 'From file': '', 'From field': '',
-        'Combined': '', 'Target': '', 'Attainment %': d.achievement == null ? '' : d.achievement, 'File alone %': '' },
+        'Slept (subtracted)': '', 'Combined': '', 'Target': '',
+        'Attainment %': d.achievement == null ? '' : d.achievement, 'File alone %': '' },
       { 'KPI': 'OFFICE SCORE (what the dashboard shows)', 'Weight %': '', 'From file': '', 'From field': '',
-        'Combined': '', 'Target': '', 'Attainment %': d.officeAchievement == null ? '' : d.officeAchievement, 'File alone %': '' }
+        'Slept (subtracted)': '', 'Combined': '', 'Target': '',
+        'Attainment %': d.officeAchievement == null ? '' : d.officeAchievement, 'File alone %': '' }
     ])), 'Combined');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.byBdo || []).map(function (b) {
       return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active,
