@@ -5,6 +5,42 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.26.0 — 2026-07-30 · "Real Performance: file + field, counted once" — schema v15
+
+### Release notes
+**A new OM window that answers "what did we actually do".** The dashboard answers "what did the
+office file say" — main KPIs come from the uploaded Excel and always will. **Real Performance** adds
+the work the BDOs did in the field on top of it and shows the combined result against target, per
+KPI and per BDO, with an Excel export.
+
+**Nothing is counted twice, and that is structural rather than arithmetic.** The ledger
+`agent_month_kpi` carries `UNIQUE(month, agent_id, kpi)`, so an agent can hold exactly **one** credit
+for a KPI in a month no matter how many uploads mention him or how many times he is tapped — the
+first credit wins, the rest are ignored. So "From file" and "From field" are disjoint sets by
+construction and their sum is the true figure, not an estimate. The window states this rule on
+screen so it can be trusted rather than taken on faith.
+**Verified** on a deliberate overlap: an agent claimed by *both* a BDO's field tap and the uploaded
+file holds **1** served credit, and across the test set `from file (1) + from field (3) = 4` exactly
+equalled the 4 distinct agents holding that KPI — no repetition.
+
+Each row also shows what the file alone reached, so the OM can see how much the field work adds:
+*Served — file 4, field +14, combined 18, target 1,700 → 1% (file alone 0%)*.
+
+**Recruitment now reflects the real month.** The app only ever saw the new-agent forms a BDO opened
+inside it; files walked straight to the bank were invisible, so the month always under-read. The OM
+can now type **Submitted to bank** per BDO per month with an optional note. It is kept in its own
+column beside the pipeline figure — one is evidence the app holds, the other is the OM's own count —
+and the two are added only in the Total column, so they can never be mistaken for each other.
+Verified: John 2 forms in app / 1 became an agent / 6 to the bank → total 8.
+
+The window is month- and **SA-station-scoped** like the dashboard, and reads the same per-station
+targets, so the two screens never disagree. Both new endpoints are management-only — verified a BDO
+gets 403 on each.
+
+- Assets `?v=40`, SW `imani-v40`
+
+---
+
 ## v1.25.0 — 2026-07-30 · "A BDO's work survives the next upload"
 
 ### Release notes

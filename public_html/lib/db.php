@@ -377,6 +377,31 @@ function upgrade_schema($pdo) {
     schema_v14_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "14" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 15) {
+    schema_v15_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "15" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v15: recruitment that happened OUTSIDE the app. A BDO's new-agent forms live
+ * in `recruits`, but the real month also contains files walked straight to the
+ * bank that never passed through the pipeline. The OM types that count per BDO
+ * per month so the monthly picture is the true one, and it is kept apart from
+ * the pipeline figure so the two can never be confused for each other.
+ */
+function schema_v15_apply($pdo) {
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS bank_recruits (
+    month CHAR(7) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    submitted INT NOT NULL DEFAULT 0,
+    note VARCHAR(255) NOT NULL DEFAULT "",
+    by_user VARCHAR(64) NOT NULL DEFAULT "",
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (month, bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
 }
 
 /*

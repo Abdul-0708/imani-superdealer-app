@@ -2320,6 +2320,152 @@ try {
     /* ================= FLAGS (upload cross-check) & RANKINGS ================= */
 
     /* Visible to ALL members; ranked most-flagged first. */
+    /* ================= COMBINED ("virtual") PERFORMANCE =================
+     * ONE window that puts the office file and the BDOs' live field work side
+     * by side and adds them up WITHOUT counting anything twice.
+     *
+     * The no-double-count guarantee is structural, not arithmetic: the ledger
+     * `agent_month_kpi` carries UNIQUE(month, agent_id, kpi), so a given agent
+     * can hold ONE credit for a KPI in a month no matter how many uploads
+     * mention him or how many times he is tapped. The first credit wins and the
+     * rest are ignored. Counting ledger rows is therefore already the union of
+     * both worlds - `file` and `live` below are disjoint sets whose sum is the
+     * true combined figure.
+     *
+     * Read this next to the plain dashboard: that one answers "what did the
+     * office file say", this one answers "what did we actually do".
+     */
+    case 'combined_performance': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+
+      $stFilter = $station !== '' ? ' AND a.station = ?' : '';
+      $stVals = $station !== '' ? array($station) : array();
+
+      /* per KPI: how many credits came from the file vs from the field */
+      $kq = db()->prepare("SELECT k.kpi, k.source, COUNT(*) n
+                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                           WHERE k.month = ?" . $stFilter . "
+                           GROUP BY k.kpi, k.source");
+      $kq->execute(array_merge(array($month), $stVals));
+      $per = array();
+      foreach (array('served', 'visit', 'apk', 'active') as $kk) $per[$kk] = array('file' => 0, 'live' => 0, 'total' => 0);
+      foreach ($kq->fetchAll() as $r) {
+        if (!isset($per[$r['kpi']])) continue;
+        $per[$r['kpi']][$r['source'] === 'bdo' ? 'live' : 'file'] += (int)$r['n'];
+      }
+      foreach ($per as $kk => $v) $per[$kk]['total'] = $v['file'] + $v['live'];
+
+      /* float: the file's served float plus what BDOs typed in daily reports */
+      $fq = db()->prepare("SELECT COALESCE(SUM(s.float_served),0) f FROM service_history s JOIN agents a ON a.id = s.agent_id
+                           WHERE s.month = ? AND s.source <> 'bdo'" . $stFilter);
+      $fq->execute(array_merge(array($month), $stVals));
+      $floatFile = (float)$fq->fetch()['f'];
+      $floatLive = 0.0;
+      if ($station === '') {   /* typed reports carry no agent, so no station */
+        $dq = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
+        $dq->execute(array($month));
+        $floatLive = (float)$dq->fetch()['f'];
+      }
+
+      /* targets for this station (falls back to the office row - same rule the
+       * dashboard uses, so the two screens never disagree) */
+      $oa = office_attainment($month, $station);
+      $tgt = $oa['attainment'];
+      $tMap = array('served' => 'serving', 'visit' => 'visits', 'apk' => 'apk', 'active' => 'activeness');
+      foreach ($per as $kk => $v) {
+        $col = $tMap[$kk];
+        $target = isset($tgt[$col]) ? (float)$tgt[$col]['target'] : 0;
+        $per[$kk]['target'] = $target;
+        $per[$kk]['pct'] = $target > 0 ? (int)round($v['total'] / $target * 100) : null;
+        $per[$kk]['filePct'] = $target > 0 ? (int)round($v['file'] / $target * 100) : null;
+      }
+      $floatTarget = isset($tgt['float']) ? (float)$tgt['float']['target'] : 0;
+
+      /* per BDO: his file credits, his field credits, and the honest sum */
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
+      $bq = db()->prepare("SELECT k.bdo, k.source, k.kpi, COUNT(*) n
+                           FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                           WHERE k.month = ?" . $stFilter . "
+                           GROUP BY k.bdo, k.source, k.kpi");
+      $bq->execute(array_merge(array($month), $stVals));
+      $byBdo = array();
+      foreach ($bq->fetchAll() as $r) {
+        $b = $r['bdo'];
+        if (!isset($byBdo[$b])) $byBdo[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b,
+          'file' => 0, 'live' => 0, 'total' => 0,
+          'served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+        $n = (int)$r['n'];
+        $byBdo[$b][$r['source'] === 'bdo' ? 'live' : 'file'] += $n;
+        $byBdo[$b]['total'] += $n;
+        if (isset($byBdo[$b][$r['kpi']])) $byBdo[$b][$r['kpi']] += $n;
+      }
+      $byBdo = array_values($byBdo);
+      usort($byBdo, function ($x, $y) { return $y['total'] - $x['total']; });
+
+      /* RECRUITMENT: the app's pipeline plus the files the OM knows went to the
+       * bank outside it. Kept as separate columns - one is evidence, the other
+       * is the OM's own count - and summed only in the 'total' column. */
+      $rq = db()->prepare('SELECT bdo, COUNT(*) n, SUM(agent_id > 0) became
+                           FROM recruits WHERE submitted_at LIKE ? GROUP BY bdo');
+      $rq->execute(array($month . '%'));
+      $rec = array();
+      foreach ($rq->fetchAll() as $r) {
+        $rec[$r['bdo']] = array('bdo' => $r['bdo'], 'name' => isset($names[$r['bdo']]) ? $names[$r['bdo']] : $r['bdo'],
+          'pipeline' => (int)$r['n'], 'became' => (int)$r['became'], 'bank' => 0, 'note' => '', 'total' => (int)$r['n']);
+      }
+      $mq = db()->prepare('SELECT bdo, submitted, note FROM bank_recruits WHERE month = ?');
+      $mq->execute(array($month));
+      foreach ($mq->fetchAll() as $r) {
+        $b = $r['bdo'];
+        if (!isset($rec[$b])) $rec[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b,
+          'pipeline' => 0, 'became' => 0, 'bank' => 0, 'note' => '', 'total' => 0);
+        $rec[$b]['bank'] = (int)$r['submitted'];
+        $rec[$b]['note'] = $r['note'];
+        $rec[$b]['total'] = $rec[$b]['pipeline'] + (int)$r['submitted'];
+      }
+      $rec = array_values($rec);
+      usort($rec, function ($x, $y) { return $y['total'] - $x['total']; });
+      $recTotals = array('pipeline' => 0, 'became' => 0, 'bank' => 0, 'total' => 0);
+      foreach ($rec as $r) foreach ($recTotals as $k2 => $v2) $recTotals[$k2] += $r[$k2];
+
+      /* every BDO, so the OM can type a bank count against someone with no rows yet */
+      $allBdos = array();
+      foreach (db()->query("SELECT username, name FROM users WHERE role = 'bdo' AND active = 1 ORDER BY name")->fetchAll() as $r)
+        $allBdos[] = array('username' => $r['username'], 'name' => $r['name']);
+
+      $snapStations = json_decode(setting_get('month_stats_' . $month, '{}'), true);
+      $stations = (isset($snapStations['_stations']) && is_array($snapStations['_stations'])) ? array_keys($snapStations['_stations']) : array();
+      sort($stations);
+
+      respond(array('month' => $month, 'station' => $station, 'stations' => $stations,
+                    'perKpi' => $per, 'targetsFrom' => $oa['targetsFrom'],
+                    'float' => array('file' => $floatFile, 'live' => $floatLive,
+                                     'total' => $floatFile + $floatLive, 'target' => $floatTarget,
+                                     'pct' => $floatTarget > 0 ? (int)round(($floatFile + $floatLive) / $floatTarget * 100) : null),
+                    'byBdo' => $byBdo, 'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
+    }
+
+    /* OM types how many recruit files really reached the bank this month. */
+    case 'bank_recruits_save': {
+      $u = require_auth(); require_manager($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
+      $bdo = strtolower(trim((string)bval('bdo')));
+      if ($bdo === '') fail('Choose the BDO');
+      $n = (int)num(bval('submitted'));
+      if ($n < 0 || $n > 100000) fail('Enter a number between 0 and 100000');
+      $note = mb_substr(trim((string)bval('note')), 0, 255);
+      db()->prepare('INSERT INTO bank_recruits (month, bdo, submitted, note, by_user) VALUES (?,?,?,?,?)
+                     ON DUPLICATE KEY UPDATE submitted = VALUES(submitted), note = VALUES(note),
+                       by_user = VALUES(by_user), at = NOW()')
+          ->execute(array($month, $bdo, $n, $note, $u['username']));
+      audit($u['id'], 'bank_recruits_save', $month . ' ' . $bdo . ' = ' . $n);
+      respond(array('ok' => true, 'month' => $month, 'bdo' => $bdo, 'submitted' => $n));
+    }
+
     case 'flags_get': {
       $u = require_auth();
       /* flags detail is management-only: it names other BDOs and their misses */

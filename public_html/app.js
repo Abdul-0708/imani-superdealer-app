@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.25.0';
+  var APP_VERSION = '1.26.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -228,6 +228,35 @@
     'Attach the receipt photo of what he transacted as your proof of serving.':
       'Ambatanisha picha ya risiti ya alichofanya kama uthibitisho wa kumhudumia.',
     'Team': 'Timu',
+    'Real Performance': 'Utendaji Halisi',
+    'The uploaded file PLUS the work your BDOs did in the field, added together and counted once.':
+      'Faili lililopakiwa PAMOJA na kazi BDO walizofanya uwandani, zimejumlishwa na kuhesabiwa mara moja.',
+    'No double counting: an agent can hold only ONE credit per KPI per month, so a KPI already in the file is never added again when a BDO also ticked it. "From field" is only the work the file does not contain.':
+      'Hakuna kuhesabu mara mbili: wakala anaweza kuwa na sifa MOJA tu kwa kila KPI kwa mwezi, hivyo KPI iliyopo kwenye faili haiongezwi tena hata kama BDO naye aliweka alama. "Kutoka uwandani" ni kazi ambayo faili halina.',
+    'Combined against target': 'Jumla dhidi ya lengo',
+    'From file': 'Kutoka faili',
+    'From field': 'Kutoka uwandani',
+    'Combined': 'Jumla',
+    'Target': 'Lengo',
+    'Attainment': 'Ufikiaji',
+    'file alone': 'faili peke yake',
+    'no target': 'hakuna lengo',
+    'Per BDO - what each one really produced': 'Kwa kila BDO - kila mmoja alizalisha nini hasa',
+    'Nothing credited this month yet.': 'Hakuna kilichowekwa mwezi huu bado.',
+    'Recruitment - the real monthly picture': 'Uandikishaji - picha halisi ya mwezi',
+    'The app only sees the forms your BDOs opened in it. Type the files that reached the bank outside the app so the month reads true.':
+      'Mfumo unaona tu fomu ambazo BDO walifungua ndani yake. Andika faili zilizofika benki nje ya mfumo ili mwezi usomeke kwa ukweli.',
+    'Submitted to bank': 'Zilizopelekwa benki',
+    'Forms in app': 'Fomu ndani ya mfumo',
+    'Became agents': 'Walioanza kuwa mawakala',
+    'No recruitment recorded this month yet.': 'Hakuna uandikishaji uliorekodiwa mwezi huu bado.',
+    'e.g. 6 files handed over at the branch on the 12th': 'mf. faili 6 zilikabidhiwa tawini tarehe 12',
+    'Note': 'Maelezo',
+    'Total': 'Jumla',
+    'TOTAL': 'JUMLA',
+    'Saved': 'Imehifadhiwa',
+    'Downloaded': 'Imepakuliwa',
+    'Download Excel': 'Pakua Excel',
     'From the performance file': 'Kutoka faili la utendaji',
     'uploaded': 'lilipakiwa',
     'no BDO was named on that row': 'hakuna BDO aliyetajwa kwenye safu hiyo',
@@ -662,6 +691,7 @@
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
+    { key: 'combined', label: 'Real Performance', icon: 'percent' },
     { key: 'team', label: 'Team', icon: 'chart' },
     { key: 'field', label: 'Field Activity', icon: 'pin' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
@@ -798,6 +828,7 @@
       /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
        * (viewFlags branches on the role). Both need the tab. */
       if (m.key === 'flags') return isManager() || can('mybase', 'v');
+      if (m.key === 'combined') return isManager(); // OM / super admin only
       /* Team: the read-only live board + ranking, for field users. Managers get
        * the same thing inside their own Dashboard / Reports. */
       if (m.key === 'team') return isFieldUser();
@@ -846,6 +877,7 @@
     else if (state.tab === 'inbox') viewInbox(v);
     else if (state.tab === 'field') viewField(v);
     else if (state.tab === 'team') viewTeam(v);
+    else if (state.tab === 'combined') viewCombined(v);
     /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
     else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
     else if (state.tab === 'upload') viewUpload(v);
@@ -2718,6 +2750,138 @@
    * carry the tap time in .at. */
   function kpiWhen(r) { return String(r.kpi_at || r.at || '').slice(0, 16); }
 
+  /* ---------------- REAL PERFORMANCE (OM): file + field, counted once --------
+   * The plain dashboard answers "what did the office file say". This one
+   * answers "what did we actually do" by adding the BDOs' live field work to
+   * the file WITHOUT counting anything twice - the ledger's UNIQUE(month,
+   * agent, kpi) key makes the two columns disjoint by construction, so their
+   * sum is the honest combined figure rather than an estimate. */
+  function viewCombined(v) {
+    var m = state._cbMonth || state.openMonth || curMonth();
+    var st = state._cbStation === undefined ? '' : state._cbStation;
+    state._cbMonth = m;
+    api('combined_performance', { qs: '&month=' + m + '&station=' + encodeURIComponent(st) }).then(function (d) {
+      state._combined = d;
+      var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+
+      function bar(pct) {
+        var p = Math.max(0, Math.min(100, pct == null ? 0 : pct));
+        return '<div class="bar"><i style="display:block;height:100%;width:' + p + '%;background:var(--grad)"></i></div>';
+      }
+      var kpiRows = ['served', 'visit', 'apk', 'active'].map(function (k) {
+        var r = d.perKpi[k] || { file: 0, live: 0, total: 0 };
+        return '<tr><td><b>' + esc(t(KL[k])) + '</b></td>' +
+          '<td>' + fmt(r.file) + '</td>' +
+          '<td>' + (r.live ? '<span class="pill ok">+' + fmt(r.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
+          '<td><b>' + fmt(r.total) + '</b></td>' +
+          '<td>' + (r.target ? fmt(r.target) : '<span class="note">-</span>') + '</td>' +
+          '<td style="min-width:150px">' + bar(r.pct) +
+            '<span class="note">' + (r.pct == null ? t('no target') : r.pct + '%') +
+            (r.filePct != null && r.pct != null && r.pct > r.filePct ? ' &middot; ' + t('file alone') + ' ' + r.filePct + '%' : '') +
+            '</span></td></tr>';
+      }).join('');
+      var f = d.float || {};
+      kpiRows += '<tr><td><b>Float</b></td><td>' + fmt(f.file || 0) + '</td>' +
+        '<td>' + ((f.live || 0) ? '<span class="pill ok">+' + fmt(f.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
+        '<td><b>' + fmt(f.total || 0) + '</b></td>' +
+        '<td>' + (f.target ? fmt(f.target) : '<span class="note">-</span>') + '</td>' +
+        '<td>' + bar(f.pct) + '<span class="note">' + (f.pct == null ? t('no target') : f.pct + '%') + '</span></td></tr>';
+
+      var bdoRows = (d.byBdo || []).map(function (b) {
+        return '<tr><td><b>' + esc(b.name) + '</b></td>' +
+          '<td>' + fmt(b.served) + '</td><td>' + fmt(b.visit) + '</td><td>' + fmt(b.apk) + '</td><td>' + fmt(b.active) + '</td>' +
+          '<td>' + fmt(b.file) + '</td>' +
+          '<td>' + (b.live ? '<span class="pill ok">+' + fmt(b.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
+          '<td><b>' + fmt(b.total) + '</b></td></tr>';
+      }).join('') || '<tr><td colspan="8" class="note">' + t('Nothing credited this month yet.') + '</td></tr>';
+
+      var rt = d.recruitTotals || { pipeline: 0, became: 0, bank: 0, total: 0 };
+      var recRows = (d.recruits || []).map(function (r) {
+        return '<tr><td><b>' + esc(r.name) + '</b></td>' +
+          '<td>' + fmt(r.pipeline) + '</td><td>' + fmt(r.became) + '</td>' +
+          '<td>' + (r.bank ? '<span class="pill gold">' + fmt(r.bank) + '</span>' : '<span class="note">0</span>') + '</td>' +
+          '<td><b>' + fmt(r.total) + '</b></td>' +
+          '<td class="note">' + esc(r.note || '') + '</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="note">' + t('No recruitment recorded this month yet.') + '</td></tr>';
+
+      var bdoOpts = (d.bdos || []).map(function (b) {
+        return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>';
+      }).join('');
+      var stOpts = '<option value="">' + t('All stations') + '</option>' + (d.stations || []).map(function (s) {
+        return '<option value="' + esc(s) + '"' + (s === d.station ? ' selected' : '') + '>' + esc(s) + '</option>';
+      }).join('');
+
+      v.innerHTML =
+        greetingLine() + '<h1 class="page-title">' + t('Real Performance') + '</h1>' +
+        '<p class="page-sub">' + t('The uploaded file PLUS the work your BDOs did in the field, added together and counted once.') + '</p>' +
+
+        '<div class="panel"><div class="row">' +
+        '<div class="field"><label>' + t('Month') + '</label><input id="cbMonth" type="month" value="' + esc(m) + '"></div>' +
+        '<div class="field"><label>SA Station</label><select data-change="cbStation">' + stOpts + '</select></div>' +
+        '<button class="btn" data-action="cbLoad">' + t('Load') + '</button>' +
+        '<div class="spacer"></div>' +
+        '<button class="ghost" data-action="cbDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
+        '</div>' +
+        '<p class="note" style="margin-top:8px">' + svg('check') + ' ' +
+        t('No double counting: an agent can hold only ONE credit per KPI per month, so a KPI already in the file is never added again when a BDO also ticked it. "From field" is only the work the file does not contain.') +
+        (d.targetsFrom === 'office-fallback' ? ' <span class="pill gold">' + t('using office-wide targets') + '</span>' : '') + '</p></div>' +
+
+        '<div class="panel"><h2>' + svg('percent') + t('Combined against target') +
+        (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('From file') + '</th><th>' + t('From field') + '</th>' +
+        '<th>' + t('Combined') + '</th><th>' + t('Target') + '</th><th>' + t('Attainment') + '</th></tr></thead><tbody>' +
+        kpiRows + '</tbody></table></div></div>' +
+
+        '<div class="panel"><h2>' + svg('users') + t('Per BDO - what each one really produced') + '</h2>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Activeness</th>' +
+        '<th>' + t('From file') + '</th><th>' + t('From field') + '</th><th>' + t('Combined') + '</th></tr></thead><tbody>' +
+        bdoRows + '</tbody></table></div></div>' +
+
+        '<div class="panel"><h2>' + svg('check') + t('Recruitment - the real monthly picture') + '</h2>' +
+        '<p class="note">' + t('The app only sees the forms your BDOs opened in it. Type the files that reached the bank outside the app so the month reads true.') + '</p>' +
+        '<div class="row" style="margin-bottom:10px">' +
+        '<div class="field"><label>BDO</label><select id="brBdo">' + bdoOpts + '</select></div>' +
+        '<div class="field"><label>' + t('Submitted to bank') + '</label><input id="brN" type="number" min="0" style="width:130px" placeholder="0"></div>' +
+        '<div class="field" style="flex:1;min-width:170px"><label>' + t('Note') + ' (' + t('optional') + ')</label><input id="brNote" maxlength="255" placeholder="' + esc(t('e.g. 6 files handed over at the branch on the 12th')) + '"></div>' +
+        '<button class="btn" data-action="brSave">' + t('Save') + '</button></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>' + t('Forms in app') + '</th><th>' + t('Became agents') + '</th>' +
+        '<th>' + t('Submitted to bank') + '</th><th>' + t('Total') + '</th><th>' + t('Note') + '</th></tr></thead><tbody>' +
+        recRows +
+        '<tr><td><b>' + t('TOTAL') + '</b></td><td><b>' + fmt(rt.pipeline) + '</b></td><td><b>' + fmt(rt.became) + '</b></td>' +
+        '<td><b>' + fmt(rt.bank) + '</b></td><td><b>' + fmt(rt.total) + '</b></td><td></td></tr>' +
+        '</tbody></table></div></div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  function brSave() {
+    api('bank_recruits_save', { body: {
+      month: elById('cbMonth').value, bdo: elById('brBdo').value,
+      submitted: elById('brN').value, note: elById('brNote').value
+    } }).then(function () { toast(t('Saved'), 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function cbDownload() {
+    var d = state._combined;
+    if (!d) { toast(t('Load a month first'), 'warn'); return; }
+    var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(['served', 'visit', 'apk', 'active'].map(function (k) {
+      var r = d.perKpi[k] || {};
+      return { 'KPI': KL[k], 'From file': r.file, 'From field': r.live, 'Combined': r.total,
+               'Target': r.target, 'Attainment %': r.pct == null ? '' : r.pct };
+    }).concat([{ 'KPI': 'Float', 'From file': d.float.file, 'From field': d.float.live,
+                 'Combined': d.float.total, 'Target': d.float.target, 'Attainment %': d.float.pct == null ? '' : d.float.pct }])), 'Combined');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.byBdo || []).map(function (b) {
+      return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active,
+               'From file': b.file, 'From field': b.live, 'Combined': b.total };
+    })), 'Per BDO');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.recruits || []).map(function (r) {
+      return { 'BDO': r.name, 'Forms in app': r.pipeline, 'Became agents': r.became,
+               'Submitted to bank': r.bank, 'Total': r.total, 'Note': r.note };
+    })), 'Recruitment');
+    XLSX.writeFile(wb, 'real_performance_' + (d.month || '') + (d.station ? '_' + d.station : '') + '.xlsx');
+    toast(t('Downloaded'), 'ok');
+  }
+
   /* ---------------- Flags (OM / management): all KPI, all BDO, live search ----- */
   function viewFlags(v) {
     var m = state._flagsMonth || state.openMonth || curMonth();
@@ -3212,6 +3376,9 @@
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
+    if (a === 'cbLoad') { state._cbMonth = elById('cbMonth').value; renderTab(); return; }
+    if (a === 'cbDownload') { cbDownload(); return; }
+    if (a === 'brSave') { brSave(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {
@@ -3583,6 +3750,7 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'tgStationPick') { state.tgStation = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'cbStation') { state._cbStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }
     if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
