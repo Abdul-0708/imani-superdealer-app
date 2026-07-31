@@ -5,6 +5,39 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.26.1 — 2026-07-30 · "Real Performance shows the weighted average"
+
+Real Performance listed each KPI's own attainment but never rolled them up, so there was no single
+weighted score for the station — only individual KPI percentages.
+
+- **All six weighted office KPIs** are now in the table (serving, float, visits, APK, activeness,
+  withdraw), each with its **Weight %** column, so it is visible how each one feeds the score.
+  Withdraw volume has no field half — no BDO taps a withdraw — so its "from field" is always 0.
+- **A WEIGHTED AVERAGE row** closes the table, and three headline cards sit above it:
+  **Weighted achievement** (file + field), **Office score**, and the **Difference** between them.
+  Percentages are capped at 100 per KPI exactly as `office_attainment` does, and weights renormalise
+  over the KPIs that actually have a target — with no weights set it degrades to a plain average.
+- **Verified against a hand calculation**: (50×30 + 0×20 + 30×20 + 40×10 + 40×10 + 0×10) / 100 =
+  **29%**, matching the server exactly, with the file-only share at 3%.
+- **The two screens are now provably consistent**: the Office score is taken from
+  `office_attainment` itself rather than recomputed, so it cannot drift from the dashboard. Verified
+  with a real uploaded file: dashboard **33%**, Office score **33%**, combined **62%**.
+
+Two fixes found while building it:
+
+- **The station picker was empty before the month's first upload.** It was populated only from the
+  uploaded snapshot, so the OM could not scope the window at all early in the month — even with
+  per-station targets typed and BDOs already working. It now offers the union of the snapshot, the
+  agents' own regions, the month's target rows and the home station.
+- **A mislabelled comparison.** The card read "From the file alone — what the dashboard shows", but
+  that figure is the file's *share of the combined credits*, which is not the same number once a
+  snapshot exists. The card now shows the dashboard's actual figure and says plainly whether it came
+  from an uploaded file or from the live-marks fallback.
+
+- Assets `?v=41`, SW `imani-v41`
+
+---
+
 ## v1.26.0 — 2026-07-30 · "Real Performance: file + field, counted once" — schema v15
 
 ### Release notes

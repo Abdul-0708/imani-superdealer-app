@@ -2374,15 +2374,49 @@ try {
        * dashboard uses, so the two screens never disagree) */
       $oa = office_attainment($month, $station);
       $tgt = $oa['attainment'];
-      $tMap = array('served' => 'serving', 'visit' => 'visits', 'apk' => 'apk', 'active' => 'activeness');
-      foreach ($per as $kk => $v) {
-        $col = $tMap[$kk];
+
+      /* ALL SIX weighted office KPIs in one table, so the weighted average
+       * underneath is legible: the reader can see every KPI that carries a
+       * weight and how each one contributed. Serving/visits/APK/activeness and
+       * float have a file half and a field half; withdraw volume exists only in
+       * the file (no BDO taps a withdraw), so its field half is always 0. */
+      $tMap = array('serving' => 'served', 'visits' => 'visit', 'apk' => 'apk', 'activeness' => 'active');
+      $rows = array();
+      foreach (office_kpi_defs() as $col => $ak) {
         $target = isset($tgt[$col]) ? (float)$tgt[$col]['target'] : 0;
-        $per[$kk]['target'] = $target;
-        $per[$kk]['pct'] = $target > 0 ? (int)round($v['total'] / $target * 100) : null;
-        $per[$kk]['filePct'] = $target > 0 ? (int)round($v['file'] / $target * 100) : null;
+        $weight = isset($tgt[$col]) ? (int)$tgt[$col]['weight'] : 0;
+        if (isset($tMap[$col])) {
+          $file = (float)$per[$tMap[$col]]['file'];
+          $live = (float)$per[$tMap[$col]]['live'];
+        } elseif ($col === 'float') {
+          $file = $floatFile; $live = $floatLive;
+        } else {                       /* withdraw: file only */
+          $file = isset($tgt[$col]) ? (float)$tgt[$col]['actual'] : 0; $live = 0;
+        }
+        $total = $file + $live;
+        $rows[$col] = array(
+          'key' => $col, 'file' => $file, 'live' => $live, 'total' => $total,
+          'target' => $target, 'weight' => $weight,
+          /* capped at 100 exactly like office_attainment, so the two screens
+           * cannot report different achievements for the same numbers */
+          'pct'     => $target > 0 ? min(100, (int)round($total / $target * 100)) : null,
+          'filePct' => $target > 0 ? min(100, (int)round($file / $target * 100)) : null,
+        );
       }
-      $floatTarget = isset($tgt['float']) ? (float)$tgt['float']['target'] : 0;
+
+      /* THE WEIGHTED AVERAGE for this station - one headline number built from
+       * the COMBINED figures, next to the file-only one the dashboard shows, so
+       * the OM sees what the field work is worth in the score. Same rule as
+       * office_attainment: weights renormalise over the KPIs that actually have
+       * a target, and with no weights at all it degrades to a plain average. */
+      $wsum = 0; $wacc = 0; $wFileAcc = 0; $sum = 0; $sumFile = 0; $nn = 0;
+      foreach ($rows as $r2) {
+        if ($r2['pct'] === null) continue;
+        $sum += $r2['pct']; $sumFile += $r2['filePct']; $nn++;
+        if ($r2['weight'] > 0) { $wacc += $r2['pct'] * $r2['weight']; $wFileAcc += $r2['filePct'] * $r2['weight']; $wsum += $r2['weight']; }
+      }
+      $achievement     = $wsum > 0 ? (int)round($wacc / $wsum)     : ($nn ? (int)round($sum / $nn) : null);
+      $achievementFile = $wsum > 0 ? (int)round($wFileAcc / $wsum) : ($nn ? (int)round($sumFile / $nn) : null);
 
       /* per BDO: his file credits, his field credits, and the honest sum */
       $names = array();
@@ -2437,15 +2471,37 @@ try {
       foreach (db()->query("SELECT username, name FROM users WHERE role = 'bdo' AND active = 1 ORDER BY name")->fetchAll() as $r)
         $allBdos[] = array('username' => $r['username'], 'name' => $r['name']);
 
+      /* Stations to offer. NOT just the ones in this month's uploaded snapshot -
+       * before the first file of the month there would be none at all and the
+       * OM could not scope the window, even though he has per-station targets
+       * typed and BDOs already working. Union of: the snapshot, the regions the
+       * agents live in, the months' target rows, and the home station. */
       $snapStations = json_decode(setting_get('month_stats_' . $month, '{}'), true);
-      $stations = (isset($snapStations['_stations']) && is_array($snapStations['_stations'])) ? array_keys($snapStations['_stations']) : array();
+      $stSet = array();
+      if (isset($snapStations['_stations']) && is_array($snapStations['_stations'])) {
+        foreach (array_keys($snapStations['_stations']) as $s) $stSet[strtoupper($s)] = true;
+      }
+      foreach (db()->query('SELECT DISTINCT station FROM agents WHERE station <> ""')->fetchAll() as $r) $stSet[strtoupper(trim($r['station']))] = true;
+      $tq3 = db()->prepare('SELECT DISTINCT station FROM targets WHERE month = ? AND station <> ""');
+      $tq3->execute(array($month));
+      foreach ($tq3->fetchAll() as $r) $stSet[strtoupper($r['station'])] = true;
+      $stSet[strtoupper(setting_get('home_station', 'ARUSHA'))] = true;
+      unset($stSet['']);
+      $stations = array_keys($stSet);
       sort($stations);
 
       respond(array('month' => $month, 'station' => $station, 'stations' => $stations,
-                    'perKpi' => $per, 'targetsFrom' => $oa['targetsFrom'],
-                    'float' => array('file' => $floatFile, 'live' => $floatLive,
-                                     'total' => $floatFile + $floatLive, 'target' => $floatTarget,
-                                     'pct' => $floatTarget > 0 ? (int)round(($floatFile + $floatLive) / $floatTarget * 100) : null),
+                    'rows' => array_values($rows), 'targetsFrom' => $oa['targetsFrom'],
+                    'achievement' => $achievement, 'achievementFile' => $achievementFile,
+                    /* EXACTLY the number the dashboard prints for this station -
+                     * taken from office_attainment itself rather than
+                     * recomputed, so the two screens can never drift apart.
+                     * achievementFile above is a different thing: the file's
+                     * SHARE of the combined credits, which is what the per-row
+                     * "file alone" column means. */
+                    'officeAchievement' => $oa['achievement'],
+                    'fromUpload' => $oa['fromUpload'],
+                    'weighted' => $wsum > 0, 'weightTotal' => $wsum,
                     'byBdo' => $byBdo, 'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
     }
 

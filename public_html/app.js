@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.26.0';
+  var APP_VERSION = '1.26.1';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -234,6 +234,21 @@
     'No double counting: an agent can hold only ONE credit per KPI per month, so a KPI already in the file is never added again when a BDO also ticked it. "From field" is only the work the file does not contain.':
       'Hakuna kuhesabu mara mbili: wakala anaweza kuwa na sifa MOJA tu kwa kila KPI kwa mwezi, hivyo KPI iliyopo kwenye faili haiongezwi tena hata kama BDO naye aliweka alama. "Kutoka uwandani" ni kazi ambayo faili halina.',
     'Combined against target': 'Jumla dhidi ya lengo',
+    'Weighted achievement': 'Ufikiaji wenye uzito',
+    'Achievement (plain average)': 'Ufikiaji (wastani wa kawaida)',
+    'weights total': 'jumla ya uzito',
+    'no weights set - set them in Monthly Targets': 'hakuna uzito uliowekwa - weka kwenye Malengo ya Mwezi',
+    'Office score': 'Alama ya ofisi',
+    'from the uploaded file - the dashboard number': 'kutoka faili lililopakiwa - namba ya dashibodi',
+    'no file uploaded yet - the dashboard falls back to live marks':
+      'hakuna faili lililopakiwa bado - dashibodi inatumia alama za moja kwa moja',
+    'Difference': 'Tofauti',
+    'what counting the field work changes': 'kinachobadilika ukihesabu kazi ya uwandani',
+    'Every KPI that carries a weight, and how each one feeds the score above.':
+      'Kila KPI yenye uzito, na jinsi kila moja inavyochangia alama iliyo juu.',
+    'Weight': 'Uzito',
+    'weighted': 'yenye uzito',
+    'WEIGHTED AVERAGE': 'WASTANI WENYE UZITO',
     'From file': 'Kutoka faili',
     'From field': 'Kutoka uwandani',
     'Combined': 'Jumla',
@@ -2768,9 +2783,13 @@
         var p = Math.max(0, Math.min(100, pct == null ? 0 : pct));
         return '<div class="bar"><i style="display:block;height:100%;width:' + p + '%;background:var(--grad)"></i></div>';
       }
-      var kpiRows = ['served', 'visit', 'apk', 'active'].map(function (k) {
-        var r = d.perKpi[k] || { file: 0, live: 0, total: 0 };
-        return '<tr><td><b>' + esc(t(KL[k])) + '</b></td>' +
+      /* label per office KPI column, taken from the same catalogue the Targets
+       * screen uses so the two always read the same */
+      var LBL = {};
+      OFFICE_DEFS.forEach(function (def) { LBL[def.key] = def.label; });
+      var kpiRows = (d.rows || []).map(function (r) {
+        return '<tr><td><b>' + esc(t(LBL[r.key] || r.key)) + '</b></td>' +
+          '<td>' + (r.weight ? '<span class="pill gold">' + r.weight + '%</span>' : '<span class="note">-</span>') + '</td>' +
           '<td>' + fmt(r.file) + '</td>' +
           '<td>' + (r.live ? '<span class="pill ok">+' + fmt(r.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
           '<td><b>' + fmt(r.total) + '</b></td>' +
@@ -2780,12 +2799,6 @@
             (r.filePct != null && r.pct != null && r.pct > r.filePct ? ' &middot; ' + t('file alone') + ' ' + r.filePct + '%' : '') +
             '</span></td></tr>';
       }).join('');
-      var f = d.float || {};
-      kpiRows += '<tr><td><b>Float</b></td><td>' + fmt(f.file || 0) + '</td>' +
-        '<td>' + ((f.live || 0) ? '<span class="pill ok">+' + fmt(f.live) + '</span>' : '<span class="note">0</span>') + '</td>' +
-        '<td><b>' + fmt(f.total || 0) + '</b></td>' +
-        '<td>' + (f.target ? fmt(f.target) : '<span class="note">-</span>') + '</td>' +
-        '<td>' + bar(f.pct) + '<span class="note">' + (f.pct == null ? t('no target') : f.pct + '%') + '</span></td></tr>';
 
       var bdoRows = (d.byBdo || []).map(function (b) {
         return '<tr><td><b>' + esc(b.name) + '</b></td>' +
@@ -2826,11 +2839,33 @@
         t('No double counting: an agent can hold only ONE credit per KPI per month, so a KPI already in the file is never added again when a BDO also ticked it. "From field" is only the work the file does not contain.') +
         (d.targetsFrom === 'office-fallback' ? ' <span class="pill gold">' + t('using office-wide targets') + '</span>' : '') + '</p></div>' +
 
+        /* THE HEADLINE: one weighted score for this station, built from the
+         * combined figures, beside the file-only score the dashboard shows. */
+        '<div class="grid cards" style="margin-bottom:16px">' +
+        card('percent', (d.weighted ? t('Weighted achievement') : t('Achievement (plain average)')) +
+             (d.station ? ' - ' + d.station : ''),
+             d.achievement == null ? '-' : d.achievement + '%',
+             d.weighted ? t('weights total') + ' ' + d.weightTotal + '%' : t('no weights set - set them in Monthly Targets')) +
+        card('upload', t('Office score'), d.officeAchievement == null ? '-' : d.officeAchievement + '%',
+             d.fromUpload ? t('from the uploaded file - the dashboard number')
+                          : t('no file uploaded yet - the dashboard falls back to live marks')) +
+        card('zap', t('Difference'),
+             (d.achievement == null || d.officeAchievement == null) ? '-'
+               : (d.achievement >= d.officeAchievement ? '+' : '') + (d.achievement - d.officeAchievement) + '%',
+             t('what counting the field work changes')) +
+        '</div>' +
+
         '<div class="panel"><h2>' + svg('percent') + t('Combined against target') +
-        (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('From file') + '</th><th>' + t('From field') + '</th>' +
+        (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
+        (d.weighted ? ' <span class="pill gold">' + t('weighted') + '</span>' : '') + '</h2>' +
+        '<p class="note">' + t('Every KPI that carries a weight, and how each one feeds the score above.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Weight') + '</th><th>' + t('From file') + '</th><th>' + t('From field') + '</th>' +
         '<th>' + t('Combined') + '</th><th>' + t('Target') + '</th><th>' + t('Attainment') + '</th></tr></thead><tbody>' +
-        kpiRows + '</tbody></table></div></div>' +
+        kpiRows +
+        '<tr><td><b>' + t('WEIGHTED AVERAGE') + '</b></td>' +
+        '<td><b>' + (d.weightTotal || 0) + '%</b></td><td></td><td></td><td></td><td></td>' +
+        '<td><b>' + (d.achievement == null ? '-' : d.achievement + '%') + '</b></td></tr>' +
+        '</tbody></table></div></div>' +
 
         '<div class="panel"><h2>' + svg('users') + t('Per BDO - what each one really produced') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Activeness</th>' +
@@ -2862,14 +2897,19 @@
   function cbDownload() {
     var d = state._combined;
     if (!d) { toast(t('Load a month first'), 'warn'); return; }
-    var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+    var LBL = {};
+    OFFICE_DEFS.forEach(function (def) { LBL[def.key] = def.label; });
     var wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(['served', 'visit', 'apk', 'active'].map(function (k) {
-      var r = d.perKpi[k] || {};
-      return { 'KPI': KL[k], 'From file': r.file, 'From field': r.live, 'Combined': r.total,
-               'Target': r.target, 'Attainment %': r.pct == null ? '' : r.pct };
-    }).concat([{ 'KPI': 'Float', 'From file': d.float.file, 'From field': d.float.live,
-                 'Combined': d.float.total, 'Target': d.float.target, 'Attainment %': d.float.pct == null ? '' : d.float.pct }])), 'Combined');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
+      return { 'KPI': LBL[r.key] || r.key, 'Weight %': r.weight, 'From file': r.file, 'From field': r.live,
+               'Combined': r.total, 'Target': r.target, 'Attainment %': r.pct == null ? '' : r.pct,
+               'File alone %': r.filePct == null ? '' : r.filePct };
+    }).concat([
+      { 'KPI': 'WEIGHTED AVERAGE (file + field)', 'Weight %': d.weightTotal, 'From file': '', 'From field': '',
+        'Combined': '', 'Target': '', 'Attainment %': d.achievement == null ? '' : d.achievement, 'File alone %': '' },
+      { 'KPI': 'OFFICE SCORE (what the dashboard shows)', 'Weight %': '', 'From file': '', 'From field': '',
+        'Combined': '', 'Target': '', 'Attainment %': d.officeAchievement == null ? '' : d.officeAchievement, 'File alone %': '' }
+    ])), 'Combined');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.byBdo || []).map(function (b) {
       return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active,
                'From file': b.file, 'From field': b.live, 'Combined': b.total };
