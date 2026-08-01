@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.29.0');
+define('APP_VERSION', '1.30.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -215,6 +215,25 @@ function maybe_roll_month() {
   db()->prepare('UPDATE months SET status = "AWAITING" WHERE status = "OPEN" AND month < ?')->execute(array($cur));
   db()->prepare('INSERT INTO months (month, status) VALUES (?, "OPEN")
                  ON DUPLICATE KEY UPDATE status = "OPEN"')->execute(array($cur));
+
+  /*
+   * ACTIVENESS CARRIES ACROSS THE BOUNDARY.
+   *
+   * KPI counters reset - that is the point of a new month - but an agent's
+   * STATE is not a counter. Someone woken in the month that just ended (by a
+   * BDO's tap or by the office file) is an ACTIVE agent on the 1st; only the
+   * ones who finished the month still dormant belong on the "wake up" list.
+   * Without this the stamp still pointed at the old month, so every agent read
+   * blank and the whole base turned up as needing a wake.
+   *
+   * The status the agent ENDED on becomes both his standing now and his
+   * "previous month" reading, which is what the Inactive panel and the
+   * waked/slept deviation compare against. The first performance file of the
+   * new month overwrites all three from its own current/previous columns and
+   * takes over as the base for the rest of the month.
+   */
+  db()->prepare('UPDATE agents SET act_prev = act_current, act_month = ?
+                 WHERE act_current <> "" AND act_month <> ?')->execute(array($cur, $cur));
 
   month_start_messages($ended, $cur);
 

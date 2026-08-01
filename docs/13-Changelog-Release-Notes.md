@@ -5,6 +5,37 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.30.0 — 2026-08-01 · "Activeness carries across the month, KPI counters do not"
+
+v1.29 reset everything on the 1st — including the thing that should not reset. KPI counters are
+counters and start at zero; an agent's activeness is a **state**, and someone woken in the month
+that just ended is an active agent on the 1st. Because the activeness stamp still pointed at the old
+month, every agent read blank and **the entire base turned up as needing a wake**.
+
+- **The status the agent ended on carries into the new month.** Woken by a BDO's tap, or reported
+  active by the office file — either way he starts the month ACTIVE and off the wake-up list. Only
+  the agents who finished the month still dormant appear as wake-up candidates.
+- **Current *and* previous readings both carry**, so the Inactive panel's ordering and the
+  waked-minus-slept deviation compare against the right baseline. An agent who fell asleep in July is
+  not counted as sleeping again in August.
+- **The first performance file of the new month takes over completely** and becomes the base for the
+  rest of it — its current/previous activeness columns overwrite the carried state, whichever way
+  they point.
+- **The chip says which of the two it is.** "Active — carried from last month; no file has covered
+  him yet this month" (with a small `CARRIED` tag) versus "Active — confirmed by this month's
+  performance file". Those are different facts and the OM should not have to guess.
+
+**Verified across all four end-of-month states.** After the roll: agent woken by a BDO → ACTIVE, no
+wake needed; woken by the file → ACTIVE; never woken → needs waking; fell asleep mid-month → needs
+waking. The wake-up list contained exactly the latter two, and the month's `slept` count was **0**.
+Then the first August file was uploaded deliberately contradicting the carried state — the
+BDO-woken agent flipped to INACTIVE and the never-woken one to ACTIVE, every agent switching to
+`from file`, proving the file becomes the new base.
+
+- Assets `?v=45`, SW `imani-v45`
+
+---
+
 ## v1.29.0 — 2026-08-01 · "The month turns itself over"
 
 **The new month opens by itself.** Everything is already keyed by month — the KPI ledger, the bases,

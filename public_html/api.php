@@ -497,7 +497,7 @@ try {
       $rows = $st->fetchAll();
 
       /* Current-month KPI status for the page's agents (who did what + source). */
-      $kpiMap = array(); $lastTx = array(); $wr = array();
+      $kpiMap = array(); $lastTx = array(); $wr = array(); $inFile = array();
       if ($rows) {
         $ids = array_map(function ($r) { return (int)$r['id']; }, $rows);
         $in = implode(',', array_fill(0, count($ids), '?'));
@@ -519,6 +519,13 @@ try {
         $tq2 = db()->prepare("SELECT agent_id, MAX(NULLIF(date,'')) d FROM service_history WHERE agent_id IN ($in) GROUP BY agent_id");
         $tq2->execute($ids);
         foreach ($tq2->fetchAll() as $r) $lastTx[$r['agent_id']] = (string)$r['d'];
+        /* Has a performance file covered this agent THIS month yet? Until one
+         * does, his activeness is the state carried over from the month that
+         * ended - true, but not yet re-confirmed by the office. */
+        $ifq = db()->prepare("SELECT DISTINCT agent_id FROM service_history
+                              WHERE month = ? AND source <> 'bdo' AND agent_id IN ($in)");
+        $ifq->execute(array_merge(array($month), $ids));
+        foreach ($ifq->fetchAll() as $r) $inFile[$r['agent_id']] = true;
         $wq = db()->prepare("SELECT agent_id, bdo FROM wont_return WHERE agent_id IN ($in)");
         $wq->execute($ids);
         foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
@@ -533,6 +540,8 @@ try {
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
           'actStatus' => ($r['act_month'] === $month ? strtoupper($r['act_current']) : ''),
           'actPrev' => strtoupper((string)$r['act_prev']),
+          /* false = the status is carried from last month, no file has spoken yet */
+          'actFromFile' => isset($inFile[$id]),
           'lastTx' => isset($lastTx[$id]) ? $lastTx[$id] : '',
           'wontReturn' => isset($wr[$id]),
           'band' => he_band($r['acc']), /* LIST A..E, or F when not on the list */
@@ -603,12 +612,18 @@ try {
       }
 
       /* activeness-specialist extras: last transaction date + won't-return marks */
-      $lastTx = array(); $wr = array();
+      $lastTx = array(); $wr = array(); $inFile = array();
       if ($ids) {
         $in2 = implode(',', array_fill(0, count($ids), '?'));
         $tq2 = db()->prepare("SELECT agent_id, MAX(NULLIF(date,'')) d FROM service_history WHERE agent_id IN ($in2) GROUP BY agent_id");
         $tq2->execute($ids);
         foreach ($tq2->fetchAll() as $r) $lastTx[$r['agent_id']] = (string)$r['d'];
+        /* has a performance file covered him THIS month, or is his activeness
+         * still the state carried over from the month that ended? */
+        $ifq = db()->prepare("SELECT DISTINCT agent_id FROM service_history
+                              WHERE month = ? AND source <> 'bdo' AND agent_id IN ($in2)");
+        $ifq->execute(array_merge(array($month), $ids));
+        foreach ($ifq->fetchAll() as $r) $inFile[$r['agent_id']] = true;
         $wq = db()->prepare("SELECT agent_id, bdo FROM wont_return WHERE agent_id IN ($in2)");
         $wq->execute($ids);
         foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
@@ -620,6 +635,7 @@ try {
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
         $a['actStatus'] = ($a['act_month'] === $month ? strtoupper($a['act_current']) : '');
         $a['actPrev'] = strtoupper((string)$a['act_prev']);
+        $a['actFromFile'] = isset($inFile[$id]);
         $a['lastTx'] = isset($lastTx[$id]) ? $lastTx[$id] : '';
         $a['wontReturn'] = isset($wr[$id]);
         $a['band'] = he_band($a['acc']); /* LIST A..E, or F */

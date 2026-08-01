@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.29.0';
+  var APP_VERSION = '1.30.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -244,6 +244,10 @@
     'These months ended and the new one opened automatically. Upload their final file to settle the achievement and commission.':
       'Miezi hii imeisha na mwezi mpya umefunguliwa wenyewe. Pakia faili lao la mwisho ili kukamilisha ufikiaji na kamisheni.',
     'Go to Weekly Upload': 'Nenda Kupakia Wiki',
+    'Active - confirmed by this month\'s performance file': 'Hai - imethibitishwa na faili la utendaji la mwezi huu',
+    'Active - carried from last month; no file has covered him yet this month':
+      'Hai - imebebwa kutoka mwezi uliopita; hakuna faili lililomgusa mwezi huu bado',
+    'carried': 'imebebwa',
     'Real Performance': 'Utendaji Halisi',
     'The uploaded file PLUS the work your BDOs did in the field, added together and counted once.':
       'Faili lililopakiwa PAMOJA na kazi BDO walizofanya uwandani, zimejumlishwa na kuhesabiwa mara moja.',
@@ -1703,10 +1707,21 @@
   function kpiChip(a, c, editable, isOM) {
     var mark = a.kpi && a.kpi[c.key];
     if (c.key === 'active' && !mark) {
-      /* ONLY a real ACTIVE status from the file shows the green tick. INACTIVE
-       * and unknown both read "Inactive (wake up)" - an orange "Active" button
-       * was misleading (it looked like a claim), so it is gone. */
-      if (a.actStatus === 'ACTIVE') return '<span class="kchip done" title="Active (from uploaded file)">Active &#10003;</span>';
+      /* ONLY a real ACTIVE status shows the green tick. INACTIVE and unknown
+       * both read "Inactive (wake up)" - an orange "Active" button was
+       * misleading (it looked like a claim), so it is gone.
+       *
+       * At the turn of the month the status is CARRIED from the month that
+       * ended: an agent woken then is active now, and only those who finished
+       * dormant need waking. Say which of the two it is, because "active
+       * because we woke him in July" and "active because this month's file says
+       * so" are different facts and the OM should not have to guess. */
+      if (a.actStatus === 'ACTIVE') {
+        return '<span class="kchip done" title="' + esc(a.actFromFile
+          ? t('Active - confirmed by this month\'s performance file')
+          : t('Active - carried from last month; no file has covered him yet this month')) + '">Active &#10003;' +
+          (a.actFromFile ? '' : ' <small class="ksrc">' + t('carried') + '</small>') + '</span>';
+      }
       return editable ? todoChip(a, c, 'Inactive - wake up') : '<span class="kchip bad-off">Inactive (wake up)</span>';
     }
     if (c.key === 'visit' && !mark) {
