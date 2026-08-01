@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.28.0');
+define('APP_VERSION', '1.29.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -172,11 +172,99 @@ function next_month($ym) {
   return sprintf('%04d-%02d', $y, $m);
 }
 function open_month() {
+  maybe_roll_month();
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
   if ($r) return $r['month'];
   $cur = date('Y-m');
   db()->prepare('INSERT IGNORE INTO months (month, status) VALUES (?, "OPEN")')->execute(array($cur));
   return $cur;
+}
+
+/*
+ * THE MONTH TURNS ITSELF OVER (EAT).
+ *
+ * On the 1st the team must start clean: every agent reads 0 on every KPI and
+ * every base is empty. That falls out for free because the ledger, the bases,
+ * the history and the flags are all keyed by month - what was missing was
+ * anybody OPENING the new month, so the app sat on the old one until the OM
+ * remembered to press a button.
+ *
+ * The month that just ended goes to AWAITING, not CLOSED: its final performance
+ * file has not arrived yet, and the OM still has to upload it and settle the
+ * final achievement and commission. AWAITING months stay fully uploadable.
+ *
+ * There is no cron on shared hosting, so this runs lazily on the first request
+ * of the new month. A one-shot marker row claims the work, so of two requests
+ * arriving together only one performs the roll.
+ */
+function maybe_roll_month() {
+  static $checked = false;
+  if ($checked) return;
+  $checked = true;
+
+  $cur = date('Y-m');
+  $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
+  if (!$r || $r['month'] >= $cur) return;      /* already on this month */
+  $ended = $r['month'];
+
+  $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+  $lock->execute(array('rolled_' . $cur, date('Y-m-d H:i:s')));
+  if ($lock->rowCount() !== 1) return;         /* another request is doing it */
+
+  /* everything still open and older than today becomes AWAITING its final file */
+  db()->prepare('UPDATE months SET status = "AWAITING" WHERE status = "OPEN" AND month < ?')->execute(array($cur));
+  db()->prepare('INSERT INTO months (month, status) VALUES (?, "OPEN")
+                 ON DUPLICATE KEY UPDATE status = "OPEN"')->execute(array($cur));
+
+  month_start_messages($ended, $cur);
+
+  /* user_id NULL: nobody pressed anything, the calendar did it */
+  db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "month_auto_roll", ?)')
+      ->execute(array($ended . ' -> AWAITING, ' . $cur . ' opened automatically'));
+}
+
+/*
+ * First morning of the month: tell every BDO which HIGH EARNERS he served last
+ * month so he re-serves them in week one. Only lists A-D - the money bands the
+ * OM asked to chase - and names a few accounts before falling back to counts,
+ * because a message is 500 characters and a wall of numbers is not read.
+ */
+function month_start_messages($ended, $cur) {
+  $bands = he_band_map();
+  if (!$bands) return;                          /* no high-earner list uploaded */
+
+  $q = db()->prepare("SELECT k.bdo, a.acc, a.name
+                      FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                      WHERE k.month = ? AND k.kpi = 'served'
+                        AND k.bdo NOT IN ('partners','unassigned')
+                      ORDER BY k.bdo, a.name");
+  $q->execute(array($ended));
+
+  $perBdo = array();
+  foreach ($q->fetchAll() as $row) {
+    $b = isset($bands[$row['acc']]) ? $bands[$row['acc']] : 'F';
+    if (!in_array($b, array('A', 'B', 'C', 'D'), true)) continue;
+    if (!isset($perBdo[$row['bdo']])) $perBdo[$row['bdo']] = array('A' => array(), 'B' => array(), 'C' => array(), 'D' => array());
+    $perBdo[$row['bdo']][$b][] = $row['acc'];
+  }
+  if (!$perBdo) return;
+
+  $ins = db()->prepare('INSERT INTO messages (from_user, to_user, kind, body) VALUES ("system", ?, "", ?)');
+  foreach ($perBdo as $bdo => $byBand) {
+    $total = 0; $parts = array();
+    foreach (array('A', 'B', 'C', 'D') as $b) {
+      $n = count($byBand[$b]);
+      if (!$n) continue;
+      $total += $n;
+      $show = array_slice($byBand[$b], 0, 3);
+      $parts[] = 'LIST ' . $b . ': ' . $n . ' (' . implode(', ', $show) . ($n > count($show) ? ', +' . ($n - count($show)) . ' more' : '') . ')';
+    }
+    if (!$total) continue;
+    $body = 'NEW MONTH ' . $cur . '. Last month you served ' . $total . ' high earners on lists A-D. '
+          . 'Serve them again in the FIRST WEEK so they are not lost: ' . implode(' | ', $parts)
+          . '. Open My Agent Base to work through them.';
+    $ins->execute(array($bdo, mb_substr($body, 0, 500)));
+  }
 }
 function month_status($ym) {
   $st = db()->prepare('SELECT status FROM months WHERE month = ?');

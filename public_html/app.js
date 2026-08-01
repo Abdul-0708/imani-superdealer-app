@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.28.0';
+  var APP_VERSION = '1.29.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -231,6 +231,19 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
+    'Apply these to ALL BDOs': 'Weka hizi kwa BDO WOTE',
+    'Only fill BDOs with no targets yet': 'Jaza tu BDO wasio na malengo bado',
+    'Set everyone in one entry, then adjust the exceptions above.':
+      'Weka wote kwa mara moja, kisha rekebisha wachache tofauti hapo juu.',
+    'Overwrite the targets of EVERY BDO for': 'Badilisha malengo ya KILA BDO kwa',
+    'Individual changes made so far will be replaced.': 'Mabadiliko ya mtu mmoja mmoja yaliyofanyika yatafutwa.',
+    'Give these targets to every BDO who has none set for': 'Toa malengo haya kwa kila BDO asiye na malengo kwa',
+    'BDOs set': 'BDO wamewekewa',
+    'left untouched': 'hawakuguswa',
+    'Waiting for the final performance file': 'Tunasubiri faili la mwisho la utendaji',
+    'These months ended and the new one opened automatically. Upload their final file to settle the achievement and commission.':
+      'Miezi hii imeisha na mwezi mpya umefunguliwa wenyewe. Pakia faili lao la mwisho ili kukamilisha ufikiaji na kamisheni.',
+    'Go to Weekly Upload': 'Nenda Kupakia Wiki',
     'Real Performance': 'Utendaji Halisi',
     'The uploaded file PLUS the work your BDOs did in the field, added together and counted once.':
       'Faili lililopakiwa PAMOJA na kazi BDO walizofanya uwandani, zimejumlishwa na kuhesabiwa mara moja.',
@@ -539,10 +552,10 @@
   }
   function fmt(n) { n = Math.round(Number(n) || 0); return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function toast(msg, kind) {
-    var t = document.createElement('div');
-    t.className = 'toast' + (kind ? ' ' + kind : '');
-    t.textContent = msg;
-    elById('toasts').appendChild(t);
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = msg;
+    elById('toasts').appendChild(el);
     setTimeout(function () { t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 400); }, 3400);
   }
   /* Top progress bar: any request in flight keeps it visible, so a slow phone
@@ -752,8 +765,8 @@
   }
   function defaultTab() {
     if (state.user && state.user.role === 'superadmin') return 'admin';
-    var t = visibleModules();
-    return t.length ? t[0].key : 'dashboard';
+    var tabs = visibleModules();
+    return tabs.length ? tabs[0].key : 'dashboard';
   }
   function render() {
     if (!state.user) { renderLogin(); return; }
@@ -1286,7 +1299,7 @@
       var stTag = ss ? ' - ' + esc(d.station) : '';
       var visible = (d.visibleKpis || '').split(',');
       function shown(k) { return visible.indexOf(k) >= 0; }
-      var defs = OFFICE_DEFS.filter(function (t) { return shown(t.key) && att[t.key]; });
+      var defs = OFFICE_DEFS.filter(function (def) { return shown(def.key) && att[def.key]; });
 
       /* NB: the loop variable must NOT be called `t` - that shadows the t()
        * translation helper used inside the body. */
@@ -1340,6 +1353,17 @@
                 : '') + '</span>'
           : '<span class="note">' + t('All stations combined') + '</span>') +
         '</div></div>' +
+        /* The calendar opened this month by itself. Anything it rolled past is
+         * AWAITING its final performance file - say so loudly, because the
+         * month's achievement and commission cannot be settled until it lands. */
+        ((d.awaiting || []).length
+          ? '<div class="panel" style="border-color:var(--fire2)"><div class="row" style="align-items:center">' +
+            '<b>' + svg('upload') + ' ' + t('Waiting for the final performance file') + '</b>' +
+            (d.awaiting).map(function (mm) { return ' <span class="pill fire">' + esc(mm) + '</span>'; }).join('') +
+            '<span class="note">' + t('These months ended and the new one opened automatically. Upload their final file to settle the achievement and commission.') + '</span>' +
+            '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="upload">' + t('Go to Weekly Upload') + '</button>' +
+            '</div></div>'
+          : '') +
         '<div id="flagAlert"></div>' +
         /* LIVE: what the team is doing today, with times */
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
@@ -2307,19 +2331,22 @@
 
   /* ---------------- targets (typed) + per-BDO targets & weights ---------------- */
   var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15 };
+  /* CAREFUL: `t` is the global translator. Never name a local that, here or in
+   * any callback below - shadowing it turns every t('...') in this function
+   * into "t is not a function" and blanks the whole page. */
   function bdoTargetsPanel(bt) {
     var m = bt.month;
     var byBdo = {};
-    (bt.targets || []).forEach(function (t) { byBdo[t.bdo] = t; });
+    (bt.targets || []).forEach(function (row) { byBdo[row.bdo] = row; });
     var sel = state._btBdo && bt.bdos.some(function (b) { return b.username === state._btBdo; }) ? state._btBdo : (bt.bdos[0] ? bt.bdos[0].username : '');
     state._btBdo = sel;
-    var t = byBdo[sel] || {};
+    var cur = byBdo[sel] || {};
     var opts = bt.bdos.map(function (b) {
       return '<option value="' + esc(b.username) + '"' + (b.username === sel ? ' selected' : '') + '>' + esc(b.name) + (byBdo[b.username] ? ' ✓' : '') + '</option>';
     }).join('');
     var rows = TARGET_DEFS.map(function (td) {
       var col = td.key;
-      var tv = t[col + '_target'], wv = t[col + '_w'];
+      var tv = cur[col + '_target'], wv = cur[col + '_w'];
       return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
         '<span class="tg-name">' + esc(td.label) + '</span>' +
         '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
@@ -2331,6 +2358,15 @@
       '<div class="row" style="margin:10px 0 4px"><div class="field"><label>BDO</label><select id="btBdo">' + opts + '</select></div>' +
       '<div class="spacer"></div><span class="note">Weights total: <b id="btSum">?</b>%</span>' +
       (can('targets', 'e') ? '<button class="btn" data-action="btSave">Save BDO targets</button>' : '') + '</div>' +
+      /* Start-of-month shortcut: write these numbers to EVERY BDO in one go,
+       * then tailor the exceptions individually. Typing the same five figures
+       * officer by officer was the slowest job of the month. */
+      (can('targets', 'e')
+        ? '<div class="row" style="margin:0 0 10px;align-items:center">' +
+          '<button class="ghost" data-action="btSaveAll">' + svg('users') + ' ' + t('Apply these to ALL BDOs') + '</button>' +
+          '<button class="ghost" data-action="btSaveMissing">' + t('Only fill BDOs with no targets yet') + '</button>' +
+          '<span class="note">' + t('Set everyone in one entry, then adjust the exceptions above.') + '</span></div>'
+        : '') +
       rows + '</div>';
   }
   /* OM: download BDO performance for any date range with hand-picked KPIs. */
@@ -2409,10 +2445,10 @@
   }
   function bdoPerfPanel(perf) {
     var rows = (perf.rows || []).map(function (r, i) {
-      var mini = TARGET_DEFS.map(function (t) {
-        var k = r.kpis[t.key];
+      var mini = TARGET_DEFS.map(function (def) {
+        var k = r.kpis[def.key];
         var cls = !k || k.pct == null ? 'dim' : (k.pct < 50 ? 'bad' : (k.pct >= 80 ? 'ok' : 'gold'));
-        return '<span class="pill ' + cls + '" title="' + esc(t.label) + ': ' + (k ? fmt(k.actual) + '/' + fmt(k.target) : '-') + '">' + esc(t.label.split(' ')[0]) + ' ' + (k && k.pct != null ? k.pct + '%' : '-') + '</span>';
+        return '<span class="pill ' + cls + '" title="' + esc(def.label) + ': ' + (k ? fmt(k.actual) + '/' + fmt(k.target) : '-') + '">' + esc(def.label.split(' ')[0]) + ' ' + (k && k.pct != null ? k.pct + '%' : '-') + '</span>';
       }).join(' ');
       return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td><td><div class="kchips">' + mini + '</div></td></tr>';
     }).join('') || '<tr><td colspan="4" class="note">No BDOs yet.</td></tr>';
@@ -2424,6 +2460,24 @@
     TARGET_DEFS.forEach(function (td) { body[td.key] = elById('bt_' + td.key).value; body[td.key + '_w'] = elById('btw_' + td.key).value; });
     api('bdo_targets_save', { body: body })
       .then(function () { toast('Targets & weights saved for ' + body.bdo, 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  /* Write the typed targets to EVERY active BDO. Overwriting other people's
+   * numbers is not something to do by accident, so it confirms first and says
+   * exactly how many officers it will touch. */
+  function btSaveAll(onlyMissing) {
+    var body = { month: elById('tgMonth') ? elById('tgMonth').value : (state.month || state.openMonth) };
+    TARGET_DEFS.forEach(function (td) { body[td.key] = elById('bt_' + td.key).value; body[td.key + '_w'] = elById('btw_' + td.key).value; });
+    if (onlyMissing) body.onlyMissing = '1';
+    var ask = onlyMissing
+      ? t('Give these targets to every BDO who has none set for') + ' ' + body.month + '?'
+      : t('Overwrite the targets of EVERY BDO for') + ' ' + body.month + '? ' + t('Individual changes made so far will be replaced.');
+    if (!window.confirm(ask)) return;
+    api('bdo_targets_save_all', { body: body })
+      .then(function (d) {
+        toast(d.set + ' ' + t('BDOs set') + (d.kept ? ' - ' + d.kept + ' ' + t('left untouched') : ''), 'ok');
+        renderTab();
+      })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function btUpdateSum() {
@@ -3770,6 +3824,8 @@
     if (a === 'dashSettingsSave') { dashSettingsSave(); return; }
     if (a === 'inactMode') { state._inactMode = node.getAttribute('data-m'); inactivePanelLoad(); return; }
     if (a === 'btSave') { btSave(); return; }
+    if (a === 'btSaveAll') { btSaveAll(false); return; }
+    if (a === 'btSaveMissing') { btSaveAll(true); return; }
     if (a === 'doUpload') { doUpload(); return; }
     if (a === 'loadDemo') { loadDemo(); return; }
     if (a === 'tgLoad') { state.month = elById('tgMonth').value; renderTab(); return; }

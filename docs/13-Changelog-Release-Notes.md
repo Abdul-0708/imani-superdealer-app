@@ -5,6 +5,53 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.29.0 — 2026-08-01 · "The month turns itself over"
+
+**The new month opens by itself.** Everything is already keyed by month — the KPI ledger, the bases,
+the history, the flags — so a fresh month reads zero for free. What was missing was anybody *opening*
+it, so the app sat on the old month until the OM remembered to press a button. On the first request
+of a new calendar month (EAT) the app now rolls itself: every agent reads **0 on every KPI**, every
+**BDO base is empty**, and the team starts clean.
+
+The ended month goes to **AWAITING, not CLOSED** — its final performance file has not arrived, and
+the OM still has to upload it to settle the achievement and commission. AWAITING months stay fully
+uploadable, and the dashboard now carries a banner naming every month still owing its final file
+with a jump straight to Weekly Upload.
+
+There is no cron on shared hosting, so the roll runs lazily on the first request. A one-shot marker
+row claims the work so two simultaneous requests cannot both perform it.
+**Verified**: app parked on 2026-06 with a calendar of 2026-08 → one request produced
+`2026-06 AWAITING · 2026-08 OPEN`; all six test agents read **0 KPIs** with blank activeness; My
+Agent Base **0** on every count; and six further requests produced **no duplicate** work.
+
+**Every BDO is told what to chase on day one.** As the month opens, each BDO is messaged the high
+earners he served last month on **lists A–D** so he re-serves them inside the first week:
+*"NEW MONTH 2026-08. Last month you served 4 high earners on lists A-D. Serve them again in the FIRST
+WEEK so they are not lost: LIST A: 1 (…) | LIST B: 1 (…) …"*. Lists E and F are deliberately left
+out, and the message lands with the unread badge from v1.24. Verified E and F were excluded.
+
+**Targets for every BDO in one entry.** Typing the same five figures officer by officer was the
+slowest job of the month. The BDO Targets panel gained **"Apply these to ALL BDOs"** (confirms first,
+since it overwrites) and **"Only fill BDOs with no targets yet"**, which leaves anything already
+tailored by hand alone. Individual officers are still adjusted in their own card afterwards.
+Verified: one call set all 3 BDOs; after hand-tailoring John to 99, the *only-missing* run reported
+`set 0, kept 3` and John's 99 survived.
+
+**A first-request ordering bug, found in testing:** rolling lazily inside `open_month()` was not
+enough — a handler that reads month data *before* calling it (the months list did exactly that)
+answered from the old month on the very first request of a new one. The roll now runs at the top of
+the API router, so every handler in the request sees the same already-rolled state.
+
+**And the `t` shadowing trap, disarmed for good.** Adding translated strings to the BDO Targets panel
+blanked the tab with *"t is not a function"* — the panel declared `var t` for its target row,
+shadowing the global translator. This is the third time this trap has fired in this codebase, so
+rather than fix only the one site, all remaining shadows were renamed (`toast`, `defaultTab`, the
+attainment filter, the per-KPI mini-pills). A sweep now reports **0 shadowing sites** in `app.js`.
+
+- Assets `?v=44`, SW `imani-v44`
+
+---
+
 ## v1.28.0 — 2026-07-31 · "One rule for a partner-served agent a BDO also claims"
 
 An agent the file credits to the **PARTNER** and a BDO also marks was resolved by **timing**, not by

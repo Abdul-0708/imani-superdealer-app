@@ -13,6 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
 
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 
+/* Turn the calendar over BEFORE anything is read. Doing it lazily inside
+ * open_month() was not enough: a handler that queries month data first (the
+ * months list did exactly that) would answer from the old month on the very
+ * first request of a new one. Running it here means every handler in the
+ * request sees the same, already-rolled state. Cheap after the first hit - one
+ * indexed read that returns immediately once the month is current. */
+try { maybe_roll_month(); } catch (Exception $e) { /* never block the request */ }
+
 try {
   switch ($action) {
 
@@ -350,6 +358,10 @@ try {
 
       respond(array(
         'month' => $month, 'status' => month_status($month), 'openMonth' => open_month(),
+        /* months the calendar rolled past that still owe their final file - the
+         * OM must upload those to settle the achievement and commission */
+        'awaiting' => array_map(function ($r) { return $r['month']; },
+            db()->query('SELECT month FROM months WHERE status = "AWAITING" ORDER BY month DESC LIMIT 6')->fetchAll()),
         'totalAgents' => $tot, 'attainment' => $oa['attainment'], 'achievement' => $oa['achievement'],
         'weighted' => $oa['weighted'], 'fromUpload' => $oa['fromUpload'],
         'waked' => $oa['waked'], 'lost' => $oa['lost'],
@@ -1982,6 +1994,52 @@ try {
                           $vals['visits_w'], $vals['apk_w'], $vals['activeness_w']));
       audit($u['id'], 'bdo_targets_save', $month . ' ' . $bdo);
       respond(array('ok' => true));
+    }
+
+    /*
+     * SET EVERY BDO AT ONCE. Typing the same five numbers for each officer in
+     * turn was the slowest job of the month; this writes one set of targets to
+     * every active BDO, after which any individual can be adjusted in his own
+     * card. `onlyMissing` fills in the ones nobody has been given yet without
+     * touching targets already tailored by hand.
+     */
+    case 'bdo_targets_save_all': {
+      $u = require_auth(); require_perm($u, 'targets', 'e');
+      $month = (string)bval('month');
+      if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
+      $onlyMissing = (string)bval('onlyMissing') !== '';
+      $vals = array(); $wsum = 0;
+      foreach (array_keys(kpi_defs()) as $col) {
+        $vals[$col . '_target'] = (int)num(bval($col));
+        $w = (int)num(bval($col . '_w'));
+        $vals[$col . '_w'] = $w; $wsum += $w;
+      }
+      if ($wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%)');
+
+      $bdos = db()->query('SELECT username FROM users WHERE role = "bdo" AND active = 1')->fetchAll();
+      if (!$bdos) fail('There are no active BDO accounts to set');
+      $have = array();
+      $hq = db()->prepare('SELECT bdo FROM bdo_targets WHERE month = ?');
+      $hq->execute(array($month));
+      foreach ($hq->fetchAll() as $r) $have[$r['bdo']] = true;
+
+      $ins = db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
+                              serving_w, float_w, visits_w, apk_w, activeness_w)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                            ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
+                              visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
+                              serving_w=VALUES(serving_w), float_w=VALUES(float_w), visits_w=VALUES(visits_w),
+                              apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w)');
+      $set = 0; $skipped = 0;
+      foreach ($bdos as $b) {
+        if ($onlyMissing && isset($have[$b['username']])) { $skipped++; continue; }
+        $ins->execute(array($month, $b['username'], $vals['serving_target'], $vals['float_target'], $vals['visits_target'],
+                            $vals['apk_target'], $vals['activeness_target'], $vals['serving_w'], $vals['float_w'],
+                            $vals['visits_w'], $vals['apk_w'], $vals['activeness_w']));
+        $set++;
+      }
+      audit($u['id'], 'bdo_targets_save_all', $month . ' set=' . $set . ' kept=' . $skipped . ($onlyMissing ? ' [only missing]' : ''));
+      respond(array('ok' => true, 'month' => $month, 'set' => $set, 'kept' => $skipped, 'total' => count($bdos)));
     }
 
     /* Weighted scores for every BDO with targets in the month (OM/MD view). */
