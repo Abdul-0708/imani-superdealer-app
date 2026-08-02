@@ -5,6 +5,33 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.32.0 — 2026-08-02 · "A BDO's dashboard is his day, and nothing else"
+
+**A permission tick was handing a BDO the whole office board.** `viewDashboard` chose the personal
+dashboard only when a user *lacked* `dashboard: View`. Tick that box for the BDO role in Access
+Control and he received the full OM screen: **Total Agents 2,881, office-wide Withdraw Volume, the
+whole team's live feed and its Download button, and the SA-station picker.**
+
+A field user now gets his own dashboard **by role**, never by which boxes happen to be ticked —
+the same rule that already protects `is_manager()` and `is_field_user()`. Verified with
+`dashboard: View` deliberately switched ON for the BDO role: no Total Agents card, no Withdraw
+Volume, no "office-wide" text, **0** download buttons and **0** station pickers.
+
+**And his dashboard is now only his day.** It carries his four KPI cards and "My day so far" —
+today's Served / Visits / APK / Activeness plus his timestamped feed. Nothing else. The
+month-long panels moved one tap away to **Team**, which is his "where do I stand" page and now
+reads *"Your month so far, and where you stand against the rest"*: his weighted **My Performance**,
+the **High earners I served** day/week/month table, the read-only team board and the ranking.
+
+Verified: the BDO dashboard renders exactly one panel ("My day so far") with 8 cards — his four
+month counters and his four today counters — and **fits one screen with no scrolling** at 1826×810.
+The OM's dashboard is untouched: office cards, withdraw volume, station picker and download all
+still present.
+
+- Assets `?v=48`, SW `imani-v48`
+
+---
+
 ## v1.31.0 — 2026-08-02 · "A BDO's round follows him into the new month"
 
 **Counters reset on the 1st; a BDO's agents do not.** He was opening the new month looking at an

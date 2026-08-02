@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.31.0';
+  var APP_VERSION = '1.32.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -309,6 +309,8 @@
     'Flagged - the BDO says he did it': 'Ina alama - BDO anasema alifanya',
     'Flagged - the BDO agreed with the file': 'Ina alama - BDO amekubaliana na faili',
     'What everyone is doing today, and where you stand.': 'Kila mtu anafanya nini leo, na wewe uko wapi.',
+    'Your month so far, and where you stand against the rest.':
+      'Mwezi wako hadi sasa, na uko wapi ukilinganisha na wenzako.',
     'Every claim you made matches the performance file. Keep it up!':
       'Kila dai lako linalingana na faili la utendaji. Endelea hivyo!',
     'Settings & Data': 'Mipangilio na Data',
@@ -1039,6 +1041,48 @@
         (liveFeed || '<div class="note">' + t('Nothing yet today - your first tick will show here the moment you make it. Twende kazi! 💪') + '</div>') +
         '</div>';
 
+      var cards;
+      if (sum) {
+        /* activeness specialist: computed straight from his taps + forms */
+        cards = card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
+          card('zap', t('Waked up'), fmt(sum.waked)) +
+          card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
+          card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited));
+      } else {
+        cards = card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
+          card('users', t('Total Base'), fmt(d.counts.total)) +
+          card('check', t('My Served'), fmt(d.counts.served)) +
+          card('cal', t('Month'), d.month + (d.monthStatus ? ' · ' + d.monthStatus : ''));
+      }
+      /* HIS DASHBOARD IS HIS DAY. Nothing else belongs on it: no office totals,
+       * no team feed, no month-long tables. Just his own counters and what he
+       * has done since this morning. The monthly weighted score and the
+       * high-earner value he built sit on the Team tab, one tap away, under
+       * "where you stand". */
+      v.innerHTML =
+        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
+        livePanel;
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+
+  /* ---------------- Team (field users): the live board + the ranking --------
+   * Read-only by design: he watches the day and sees where he stands, but the
+   * export stays with management. */
+  function viewTeam(v) {
+    Promise.all([api('bdo_rank_public'), api('base'), api('my_live_today')]).then(function (rr) {
+      var wrk = rr[0], d = rr[1], live = rr[2];
+
+      /* HIS OWN MONTH - moved off the dashboard, which is now strictly his day.
+       * This is the "where do I stand" page, so his weighted score belongs here
+       * beside the ranking it feeds. */
+      var perf = d.performance;
+      var mePanel = perf
+        ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
+          perfBars(perf.kpis) + '</div>'
+        : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>';
+
       /* HIGH EARNERS he served - day / week / month, per list. The money view
        * of his effort: not just "how many", but "how valuable". */
       var B = live.bands || {};
@@ -1059,39 +1103,6 @@
         '<tr><td><b>' + t('This month') + '</b></td>' + bandCells('month') + '</tr>' +
         '</tbody></table></div></div>';
 
-      var perf = d.performance;
-      var cards;
-      if (sum) {
-        /* activeness specialist: computed straight from his taps + forms */
-        cards = card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
-          card('zap', t('Waked up'), fmt(sum.waked)) +
-          card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
-          card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited));
-      } else {
-        cards = card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
-          card('users', t('Total Base'), fmt(d.counts.total)) +
-          card('check', t('My Served'), fmt(d.counts.served)) +
-          card('cal', t('Month'), d.month + (d.monthStatus ? ' · ' + d.monthStatus : ''));
-      }
-      v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
-        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
-        livePanel +
-        '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
-        (perf
-          ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
-            (sum ? '<p class="note">' + t('Your target: inactive agents waked + new agents recruited. Nothing else counts.') + '</p>' : '') +
-            perfBars(perf.kpis) + '</div>'
-          : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>') +
-        heScorePanel;
-    }).catch(function (e) { v.innerHTML = errBox(e); });
-  }
-
-  /* ---------------- Team (field users): the live board + the ranking --------
-   * Read-only by design: he watches the day and sees where he stands, but the
-   * export stays with management. */
-  function viewTeam(v) {
-    api('bdo_rank_public').then(function (wrk) {
       var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
         (((wrk && wrk.rows) || []).map(function (r, i) {
@@ -1102,7 +1113,8 @@
 
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('Team') + '</h1>' +
-        '<p class="page-sub">' + t('What everyone is doing today, and where you stand.') + '</p>' +
+        '<p class="page-sub">' + t('Your month so far, and where you stand against the rest.') + '</p>' +
+        mePanel + heScorePanel +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
         '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
@@ -1307,7 +1319,12 @@
     toast(rows.length + ' ' + t('ticks exported'), 'ok');
   }
   function viewDashboard(v) {
-    if (!can('dashboard', 'v')) { personalDashboard(v); return; }
+    /* A FIELD USER ALWAYS GETS HIS OWN DASHBOARD - by role, never by which
+     * permission boxes happen to be ticked. Ticking "Dashboard: View" for the
+     * BDO role used to hand him the entire office board: total agents, office
+     * withdraw volume, the whole team's live feed and its download button. He
+     * sees his own day here; the team board lives on the Team tab, read-only. */
+    if (isFieldUser() || !can('dashboard', 'v')) { personalDashboard(v); return; }
     var m = state.month || '';
     api('dashboard', { qs: (m ? '&month=' + m : '') + (state._dashStation ? '&station=' + encodeURIComponent(state._dashStation) : '') }).then(function (d) {
       state.month = d.month;
