@@ -5,6 +5,41 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.30.1 — 2026-08-01 · "Activeness stops depending on a date stamp"
+
+Two reports — active agents all reading as "wake up", and the Active/Inactive search filter
+returning nothing — turned out to be **one root cause**: every read of activeness was gated on
+`act_month = the current month`. The moment the month turned, that stamp named the old month, so the
+status resolved to blank (→ "Inactive, wake up" for the entire base) and the filter matched no rows
+at all.
+
+v1.30.0's carry-forward did not rescue it, because that ran **only at the moment of rollover** and
+production had already rolled under v1.29 — the one-shot marker was set, so the carry never
+executed and never would.
+
+The fix removes the dependency instead of patching around it: **`act_current` IS the latest known
+state**, so it is read directly, with no date gate, everywhere status is displayed, filtered or
+listed. This is self-healing — it gives the right answer whether or not any rollover ran, and
+whichever version performed it. `act_month` is now only ever *written* (recording when a status was
+last set) and read for one genuinely month-scoped figure: how many agents fell asleep *this* month.
+
+Corrected in six places: the Inactive-agents panel, the Active/Inactive search filter, the status on
+both agent lists, the "already awake, cannot wake again" guard, and reversing a wake (which silently
+did nothing once the month had turned).
+
+**Verified against production's exact state** — month already open, rollover marker already set,
+every agent still stamped with the old month:
+- active-by-file and active-by-BDO both read **ACTIVE**; never-woken and fell-asleep both read
+  **INACTIVE** and appear on the wake list;
+- the **Active filter** returned exactly the two active agents and the **Inactive filter** exactly
+  the two inactive — both previously returned nothing;
+- a BDO waking an agent still flips him to ACTIVE, and a file still moves an agent **either way**
+  (one active agent turned INACTIVE and one inactive agent turned ACTIVE by the same upload).
+
+- Assets `?v=46`, SW `imani-v46`
+
+---
+
 ## v1.30.0 — 2026-08-01 · "Activeness carries across the month, KPI counters do not"
 
 v1.29 reset everything on the 1st — including the thing that should not reset. KPI counters are

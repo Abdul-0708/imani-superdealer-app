@@ -407,7 +407,7 @@ try {
       if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
       $month = open_month();
       $st = db()->prepare('SELECT id, acc, name, phone, branch, station, physical_location, act_prev
-                           FROM agents WHERE act_month = ? AND act_current = "INACTIVE"
+                           FROM agents WHERE act_current = "INACTIVE"
                            ORDER BY station, (act_prev = "ACTIVE") DESC, name LIMIT 500');
       $st->execute(array($month));
       $all = $st->fetchAll();
@@ -463,8 +463,8 @@ try {
         }
       }
       $fa = (string)($_GET['factive'] ?? '');
-      if ($fa === 'active') { $conds[] = '(act_month = ? AND act_current = "ACTIVE")'; $vals[] = $month; }
-      elseif ($fa === 'inactive') { $conds[] = '(act_month = ? AND act_current = "INACTIVE")'; $vals[] = $month; }
+      if ($fa === 'active') { $conds[] = 'act_current = "ACTIVE"'; }
+      elseif ($fa === 'inactive') { $conds[] = 'act_current = "INACTIVE"'; }
 
       /* Region: a field user only ever sees his home station. The OM may pass
        * &station= to inspect any region (empty = everything). */
@@ -538,7 +538,7 @@ try {
           'id' => $id, 'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
           'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
-          'actStatus' => ($r['act_month'] === $month ? strtoupper($r['act_current']) : ''),
+          'actStatus' => strtoupper((string)$r['act_current']),
           'actPrev' => strtoupper((string)$r['act_prev']),
           /* false = the status is carried from last month, no file has spoken yet */
           'actFromFile' => isset($inFile[$id]),
@@ -633,7 +633,7 @@ try {
         $id = (int)$a['id'];
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
-        $a['actStatus'] = ($a['act_month'] === $month ? strtoupper($a['act_current']) : '');
+        $a['actStatus'] = strtoupper((string)$a['act_current']);
         $a['actPrev'] = strtoupper((string)$a['act_prev']);
         $a['actFromFile'] = isset($inFile[$id]);
         $a['lastTx'] = isset($lastTx[$id]) ? $lastTx[$id] : '';
@@ -745,7 +745,7 @@ try {
 
       /* Real-status guard: an agent already ACTIVE (from the file) cannot be
        * "waked" again. (served/visit/apk are guarded by the ledger below.) */
-      if ($kpi === 'active' && $agent['act_month'] === $month && strtoupper($agent['act_current']) === 'ACTIVE') {
+      if ($kpi === 'active' && strtoupper($agent['act_current']) === 'ACTIVE') {
         fail('Agent is already Active this month - nothing to wake', 409);
       }
 
@@ -1622,7 +1622,7 @@ try {
         }
       }
       if ($kpi === 'active') {
-        db()->prepare('UPDATE agents SET act_current = "INACTIVE" WHERE id = ? AND act_month = ?')->execute(array($agentId, $month));
+        db()->prepare('UPDATE agents SET act_current = "INACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
       }
       audit($u['id'], 'kpi_unmark', $u['username'] . ' reversed ' . $kpi . ' agent=' . $agentId . ' (was ' . $row['bdo'] . ')');
       respond(array('ok' => true, 'kpi' => $kpi, 'reversedFrom' => $row['bdo']));
