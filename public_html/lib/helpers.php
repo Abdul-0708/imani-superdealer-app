@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.30.1');
+define('APP_VERSION', '1.31.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -183,11 +183,14 @@ function open_month() {
 /*
  * THE MONTH TURNS ITSELF OVER (EAT).
  *
- * On the 1st the team must start clean: every agent reads 0 on every KPI and
- * every base is empty. That falls out for free because the ledger, the bases,
- * the history and the flags are all keyed by month - what was missing was
- * anybody OPENING the new month, so the app sat on the old one until the OM
- * remembered to press a button.
+ * On the 1st the team must start clean: every agent reads 0 on every KPI. That
+ * falls out for free because the ledger, the history and the flags are all
+ * keyed by month - what was missing was anybody OPENING the new month, so the
+ * app sat on the old one until the OM remembered to press a button.
+ *
+ * COUNTERS reset; a BDO's ROSTER and an agent's STATE do not. His agents are
+ * carried by ensure_base_carry() and activeness is carried below, so he opens
+ * the 1st with his own round in front of him at zero KPIs.
  *
  * The month that just ended goes to AWAITING, not CLOSED: its final performance
  * file has not arrived yet, and the OM still has to upload it and settle the
@@ -197,6 +200,39 @@ function open_month() {
  * of the new month. A one-shot marker row claims the work, so of two requests
  * arriving together only one performs the roll.
  */
+/*
+ * A BDO'S ROSTER FOLLOWS HIM INTO THE NEW MONTH.
+ *
+ * KPI counters reset - his agents do not. The men he served last month are the
+ * men he works first this month, so they are seeded into the new month's base
+ * as PRIORITY. Without this he opened the 1st looking at an empty list with
+ * nothing to work from and had to rediscover his own round on the Agents tab.
+ *
+ * Deliberately separate from the rollover and guarded by its own marker: a
+ * month that already rolled under an older build still gets its carry the next
+ * time anybody opens the app, instead of staying empty until the month ends.
+ */
+function ensure_base_carry($cur) {
+  $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+  $lock->execute(array('basecarry_' . $cur, date('Y-m-d H:i:s')));
+  if ($lock->rowCount() !== 1) return;          /* already carried for this month */
+
+  $y = (int)substr($cur, 0, 4); $m = (int)substr($cur, 5, 2);
+  $m--; if ($m < 1) { $m = 12; $y--; }
+  $prev = sprintf('%04d-%02d', $y, $m);
+
+  /* whoever he served last month becomes his priority round this month */
+  $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
+                        SELECT ?, k.bdo, k.agent_id, 'priority'
+                        FROM agent_month_kpi k
+                        WHERE k.month = ? AND k.kpi = 'served'
+                          AND k.bdo NOT IN ('partners','unassigned')");
+  $ins->execute(array($cur, $prev));
+  $n = $ins->rowCount();
+  db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "base_carry", ?)')
+      ->execute(array($prev . ' -> ' . $cur . ': ' . $n . ' agents carried into their BDO base'));
+}
+
 function maybe_roll_month() {
   static $checked = false;
   if ($checked) return;
@@ -204,7 +240,9 @@ function maybe_roll_month() {
 
   $cur = date('Y-m');
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
-  if (!$r || $r['month'] >= $cur) return;      /* already on this month */
+  /* Already on this month - but it may have been opened by an older build that
+   * did not carry the bases, so make sure that has happened before leaving. */
+  if (!$r || $r['month'] >= $cur) { ensure_base_carry($cur); return; }
   $ended = $r['month'];
 
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
@@ -236,6 +274,7 @@ function maybe_roll_month() {
                  WHERE act_current <> "" AND act_month <> ?')->execute(array($cur, $cur));
 
   month_start_messages($ended, $cur);
+  ensure_base_carry($cur);
 
   /* user_id NULL: nobody pressed anything, the calendar did it */
   db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "month_auto_roll", ?)')

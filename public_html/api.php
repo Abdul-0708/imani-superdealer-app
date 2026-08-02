@@ -571,14 +571,20 @@ try {
       $prio = array(); $uploaded = array();
       foreach ($st->fetchAll() as $r) { if ($r['kind'] === 'priority') $prio[$r['agent_id']] = true; else $uploaded[$r['agent_id']] = true; }
 
-      /* MY AGENT BASE = the agents HE actually served this month (and whose
-       * physical location is therefore captured). Everything he has not served
-       * yet lives on the Agents tab; this list is "these are mine now", where he
-       * finishes the remaining KPIs (visit / APK / activeness). */
+      /* MY AGENT BASE = his round for the month:
+       *   - the agents CARRIED from last month (his priority round), plus
+       *   - anyone he has served this month, plus
+       *   - agents he recruited or an upload put under him.
+       * He opens the 1st with his own men already listed and works down them,
+       * rather than an empty page he has to rebuild from the Agents tab. The
+       * KPI chips are month-scoped, so everyone still starts the month at zero.
+       */
       $mineQ = db()->prepare('SELECT agent_id FROM agent_month_kpi WHERE month = ? AND bdo = ? AND kpi = "served"');
       $mineQ->execute(array($month, $bdo));
       $ids = array();
       foreach ($mineQ->fetchAll() as $r) $ids[] = (int)$r['agent_id'];
+      foreach ($prio as $aid => $x) $ids[] = (int)$aid;
+      foreach ($uploaded as $aid => $x) $ids[] = (int)$aid;
       $ids = array_values(array_unique($ids));
 
       $agents = array();

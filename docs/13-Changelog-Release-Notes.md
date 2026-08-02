@@ -5,6 +5,43 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.31.0 — 2026-08-02 · "A BDO's round follows him into the new month"
+
+**Counters reset on the 1st; a BDO's agents do not.** He was opening the new month looking at an
+empty My Agent Base with nothing to work from, having to rediscover his own round on the Agents tab.
+The men he served last month are now seeded into the new month as his **priority round** — listed on
+day one, all at **zero KPIs**.
+
+Two things were wrong and both are fixed: nothing was carried at rollover, and the base list ignored
+the `base` table entirely (it only ever showed agents served *this* month, so even a carry would not
+have appeared). My Agent Base is now his whole round — carried agents, anyone he serves now, and
+anyone an upload or a recruitment put under him — with a `N carried from last month` badge.
+
+The carry is **deliberately separate from the rollover and has its own marker**, so a month that
+already opened under an older build still gets its agents the next time anyone opens the app,
+instead of staying empty until the month ends.
+**Verified**: 5 agents served in July → August opens with all 5 present, `level=priority`, **0 KPIs
+each**, counts reading `priority 5 / total 5 / served 0`.
+
+**Every practical search switch on My Agent Base.** Search now has a **Search in** selector (all
+fields, or just agent / acc / phone / branch / location) beside the existing KPI filter, plus
+**Served** (not served yet · already served), **Location** (missing · captured), **Branch** (only
+the branches actually in his round), and **Sort by** (high-earner list · agent · branch · most still
+to do). Clear resets all of them. Each was exercised: location-missing, branch, sort-by-name,
+already-served and not-served-yet all returned the right rows.
+
+**The work now fits on one screen.** The layout was tuned for a spacious desktop and pushed the
+actual agent table below the fold behind a wall of stat cards. Chrome is tightened throughout —
+cards (168px → 85px tall, more per row), panel padding, table rows, and the filter bank — **without
+shrinking anything below comfortable reading size**: body copy stays 12.5–13px and no contrast ratio
+changed. Only empty space was removed.
+**Verified at both 1280×720 and 1826×810: no vertical scrolling and no horizontal overflow** on My
+Agent Base, with the table fully visible.
+
+- Assets `?v=47`, SW `imani-v47`
+
+---
+
 ## v1.30.1 — 2026-08-01 · "Activeness stops depending on a date stamp"
 
 Two reports — active agents all reading as "wake up", and the Active/Inactive search filter

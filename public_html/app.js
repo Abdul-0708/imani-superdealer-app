@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.30.1';
+  var APP_VERSION = '1.31.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -365,6 +365,22 @@
     'Attach the receipt photo - a typed note is not accepted for waking':
       'Ambatanisha picha ya risiti - maandishi hayakubaliki kwa kuamsha',
     'KPI still to do': 'KPI iliyobaki',
+    'Search in': 'Tafuta katika',
+    'Everything': 'Kila kitu',
+    'Served': 'Amehudumiwa',
+    'Not served yet': 'Hajahudumiwa bado',
+    'Already served': 'Tayari amehudumiwa',
+    'Missing': 'Haipo',
+    'Captured': 'Imechukuliwa',
+    'Sort by': 'Panga kwa',
+    'High-earner list': 'Orodha ya wanaolipa zaidi',
+    'Most still to do': 'Waliobaki zaidi',
+    'name, acc, phone, branch, location...': 'jina, acc, simu, tawi, mahali...',
+    'carried from last month': 'wamebebwa kutoka mwezi uliopita',
+    'No agent matches these filters - clear them to see your whole round.':
+      'Hakuna wakala anayelingana na vichujio hivi - viondoe uone mzunguko wako wote.',
+    'Your round for this month - agents carried from last month plus anyone you serve now.':
+      'Mzunguko wako wa mwezi huu - mawakala waliobebwa kutoka mwezi uliopita pamoja na unaowahudumia sasa.',
     'Visit not done': 'Visit haijafanyika',
     'APK not done': 'APK haijafanyika',
     'Not active': 'Si active',
@@ -1756,16 +1772,48 @@
         if (key === 'active') return a.actStatus === 'ACTIVE' || !!(a.kpi && a.kpi.active);
         return !!(a.kpi && a.kpi[key]);
       }
+      /* Extra switches so he can cut his round the way he actually works it:
+       * still-to-serve, missing location, which branch, and how to sort. */
+      var fs = state._baseServed || '';        /* '' | 'yes' | 'no'            */
+      var fl = state._baseLoc || '';           /* '' | 'has' | 'missing'       */
+      var fbr = state._baseBranch || '';       /* branch name                  */
+      var fld = state._baseField || '';        /* which column the text hits   */
+      var so = state._baseSort || 'band';      /* band | name | branch | todo  */
+
+      function fieldText(a) {
+        if (fld === 'name') return a.name || '';
+        if (fld === 'acc') return a.acc || '';
+        if (fld === 'phone') return a.phone || '';
+        if (fld === 'branch') return a.branch || '';
+        if (fld === 'location') return a.physical_location || '';
+        return (a.name || '') + ' ' + (a.acc || '') + ' ' + (a.phone || '') + ' ' +
+               (a.branch || '') + ' ' + (a.physical_location || '') + ' LIST' + (a.band || 'F');
+      }
+      function todoCount(a) {
+        var n = 0;
+        ['served', 'visit', 'apk', 'active'].forEach(function (k) { if (!kpiDone(a, k)) n++; });
+        return n;
+      }
       var list = all.filter(function (a) {
         if (fb && (a.band || 'F') !== fb) return false;
+        if (fs) { var done = kpiDone(a, 'served'); if (done !== (fs === 'yes')) return false; }
+        if (fl === 'missing' && (a.physical_location || '').trim() !== '') return false;
+        if (fl === 'has' && (a.physical_location || '').trim() === '') return false;
+        if (fbr && (a.branch || '') !== fbr) return false;
         if (fk) {
           var parts = fk.split(':');           /* e.g. "visit:no" */
           var want = parts[1] === 'yes';
           if (kpiDone(a, parts[0]) !== want) return false;
         }
         if (!q) return true;
-        return ((a.name || '') + ' ' + (a.acc || '') + ' ' + (a.branch || '') + ' ' +
-                (a.physical_location || '') + ' LIST' + (a.band || 'F')).toLowerCase().indexOf(q) >= 0;
+        return fieldText(a).toLowerCase().indexOf(q) >= 0;
+      });
+      var BANDORD = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5 };
+      list.sort(function (x, y) {
+        if (so === 'name') return (x.name || '').localeCompare(y.name || '');
+        if (so === 'branch') return (x.branch || '').localeCompare(y.branch || '') || (x.name || '').localeCompare(y.name || '');
+        if (so === 'todo') return todoCount(y) - todoCount(x) || (x.name || '').localeCompare(y.name || '');
+        return (BANDORD[x.band || 'F'] - BANDORD[y.band || 'F']) || (x.name || '').localeCompare(y.name || '');
       });
       var rows = list.map(function (a) {
         return '<tr><td class="c-level">' + bandPill(a.band) + '</td>' +
@@ -1775,11 +1823,16 @@
           '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
           '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td></tr>';
       }).join('') || '<tr><td colspan="6">' + emptyState('phone', t('Nothing here yet'),
-        t('Agents join this list the moment you serve them on the Agents tab.')) + '</td></tr>';
+        all.length ? t('No agent matches these filters - clear them to see your whole round.')
+                   : t('Agents join this list the moment you serve them on the Agents tab.')) + '</td></tr>';
 
       /* how many of each high-earner list he already owns */
       var byBand = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
       all.forEach(function (a) { byBand[a.band || 'F']++; });
+      /* branches actually present in his round - no point offering the rest */
+      var branches = [];
+      all.forEach(function (a) { if (a.branch && branches.indexOf(a.branch) < 0) branches.push(a.branch); });
+      branches.sort();
       var bandChips = ['A', 'B', 'C', 'D', 'E', 'F'].map(function (b) {
         if (!byBand[b]) return '';
         return '<button class="role-chip' + (fb === b ? ' active' : '') + '" data-action="baseBand" data-b="' + b + '">' +
@@ -1790,7 +1843,8 @@
         '<h1 class="page-title">' + t('My Agent Base') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
-        ' &middot; ' + t('the agents you served - finish their other KPIs right here') + '</p>' +
+        ' &middot; ' + t('Your round for this month - agents carried from last month plus anyone you serve now.') +
+        (d.counts.priority ? ' &middot; <span class="pill fire">' + d.counts.priority + ' ' + t('carried from last month') + '</span>' : '') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' +
         card('check', t('My agents'), fmt(all.length)) +
         card('flame', t('High earners'), fmt(all.length - byBand.F), t('LIST A-E')) +
@@ -1799,16 +1853,37 @@
         '</div>' +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
         '<h2 style="margin:0">' + svg('phone') + t('My agents') + ' (' + list.length + ')</h2></div>' +
-        '<div class="row" style="margin-bottom:8px">' +
-        '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label>' +
-        '<input id="baseSearch" placeholder="' + esc(t('name, acc, branch, location, LIST A...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
+        '<div class="row filters" style="margin-bottom:6px">' +
+        '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
+        '<input id="baseSearch" placeholder="' + esc(t('name, acc, phone, branch, location...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
+        '<div class="field"><label>' + t('Search in') + '</label><select data-change="baseField">' +
+        [['', t('Everything')], ['name', t('Agent')], ['acc', 'Acc'], ['phone', t('Phone')],
+         ['branch', t('Branch')], ['location', t('Location')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (fld === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
         '<div class="field"><label>' + t('KPI still to do') + '</label><select data-change="baseKpi">' +
         [['', t('Any')], ['visit:no', t('Visit not done')], ['apk:no', t('APK not done')],
          ['active:no', t('Not active')], ['visit:yes', t('Visit done')], ['apk:yes', t('APK done')],
          ['active:yes', t('Active')]].map(function (o) {
           return '<option value="' + o[0] + '"' + (fk === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         }).join('') + '</select></div>' +
-        (fk || fb || q ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
+        '<div class="field"><label>' + t('Served') + '</label><select data-change="baseServed">' +
+        [['', t('Any')], ['no', t('Not served yet')], ['yes', t('Already served')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (fs === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
+        '<div class="field"><label>' + t('Location') + '</label><select data-change="baseLoc">' +
+        [['', t('Any')], ['missing', t('Missing')], ['has', t('Captured')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (fl === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
+        '<div class="field"><label>' + t('Branch') + '</label><select data-change="baseBranch">' +
+        ['<option value="">' + t('All') + '</option>'].concat(branches.map(function (b) {
+          return '<option value="' + esc(b) + '"' + (fbr === b ? ' selected' : '') + '>' + esc(b) + '</option>';
+        })).join('') + '</select></div>' +
+        '<div class="field"><label>' + t('Sort by') + '</label><select data-change="baseSort">' +
+        [['band', t('High-earner list')], ['name', t('Agent')], ['branch', t('Branch')], ['todo', t('Most still to do')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (so === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
+        (fk || fb || q || fs || fl || fbr || fld ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
         '</div>' +
         (bandChips ? '<div class="row" style="margin-bottom:10px">' + bandChips + '</div>' : '') +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
@@ -3513,7 +3588,11 @@
       return;
     }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
-    if (a === 'baseClear') { state._baseBand = ''; state._baseKpi = ''; state._baseSearch = ''; renderTab(); return; }
+    if (a === 'baseClear') {
+      state._baseBand = ''; state._baseKpi = ''; state._baseSearch = '';
+      state._baseServed = ''; state._baseLoc = ''; state._baseBranch = ''; state._baseField = '';
+      renderTab(); return;
+    }
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
@@ -3895,6 +3974,11 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'tgStationPick') { state.tgStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'cbStation') { state._cbStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseServed') { state._baseServed = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseLoc') { state._baseLoc = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseBranch') { state._baseBranch = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseField') { state._baseField = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseSort') { state._baseSort = n.value; renderTab(); return; }
     if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
       state.agentPage = 1; agentsBodyLoad(); return;
