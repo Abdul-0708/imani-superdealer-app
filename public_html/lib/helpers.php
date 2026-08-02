@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.32.0');
+define('APP_VERSION', '1.33.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -201,6 +201,63 @@ function open_month() {
  * arriving together only one performs the roll.
  */
 /*
+ * RECOVER FIELD WORK THAT WAS FILED UNDER THE WRONG MONTH.
+ *
+ * Before the month rolled itself over, the app stayed on whatever month was
+ * last opened by hand. So a BDO working on the 1st and 2nd had every tap
+ * stamped with the OLD month, because kpi_mark files against open_month(). His
+ * live feed still showed the taps (that reads by DATE), but his served count,
+ * his base and the agent list all read empty - to him his work had vanished.
+ *
+ * Nothing was ever deleted. The `at` timestamp records the moment the tap
+ * actually happened, so it - not the month column - is the truth, and the rows
+ * are re-filed into the month their own timestamp names. A tap can only ever be
+ * filed against the open month, so a mismatch is by definition a misfile and
+ * never a deliberate back-date.
+ *
+ * Collisions are skipped rather than forced: if the agent already holds that
+ * KPI in the correct month, the older credit stands and the stray row is left
+ * alone for the OM to see.
+ */
+function repair_misfiled_marks($cur) {
+  $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+  $lock->execute(array('repairmarks_' . $cur, date('Y-m-d H:i:s')));
+  if ($lock->rowCount() !== 1) return;
+
+  $moved = 0; $clashed = 0;
+  $q = db()->query("SELECT id, DATE_FORMAT(at, '%Y-%m') AS real_month
+                    FROM agent_month_kpi
+                    WHERE source = 'bdo' AND at IS NOT NULL
+                      AND month <> DATE_FORMAT(at, '%Y-%m')");
+  $upd = db()->prepare('UPDATE agent_month_kpi SET month = ? WHERE id = ?');
+  foreach ($q->fetchAll() as $r) {
+    try { $upd->execute(array($r['real_month'], (int)$r['id'])); $moved++; }
+    catch (Exception $e) { $clashed++; }      /* already credited that month */
+  }
+
+  /* the serve rows and the typed reports carry the same stamp problem */
+  $s = db()->prepare("UPDATE service_history SET month = SUBSTRING(date, 1, 7)
+                      WHERE source = 'bdo' AND date <> '' AND month <> SUBSTRING(date, 1, 7)");
+  $s->execute();
+  $svc = $s->rowCount();
+  $d = db()->prepare("UPDATE daily_reports SET month = SUBSTRING(report_date, 1, 7)
+                      WHERE report_date <> '' AND month <> SUBSTRING(report_date, 1, 7)");
+  $d->execute();
+  $rep = $d->rowCount();
+
+  /* put every recovered agent back into the BDO base of the right month */
+  db()->exec("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
+              SELECT month, bdo, agent_id, 'uploaded' FROM agent_month_kpi
+              WHERE source = 'bdo' AND kpi = 'served' AND bdo NOT IN ('partners','unassigned')");
+
+  if ($moved || $svc || $rep || $clashed) {
+    db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "repair_misfiled", ?)')
+        ->execute(array('re-filed by timestamp: ' . $moved . ' KPI marks, ' . $svc . ' serve rows, ' .
+                        $rep . ' daily reports' . ($clashed ? ', ' . $clashed . ' skipped (already credited)' : '')));
+  }
+}
+
+/*
  * A BDO'S ROSTER FOLLOWS HIM INTO THE NEW MONTH.
  *
  * KPI counters reset - his agents do not. The men he served last month are the
@@ -242,7 +299,7 @@ function maybe_roll_month() {
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
   /* Already on this month - but it may have been opened by an older build that
    * did not carry the bases, so make sure that has happened before leaving. */
-  if (!$r || $r['month'] >= $cur) { ensure_base_carry($cur); return; }
+  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); return; }
   $ended = $r['month'];
 
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
@@ -273,6 +330,7 @@ function maybe_roll_month() {
   db()->prepare('UPDATE agents SET act_prev = act_current, act_month = ?
                  WHERE act_current <> "" AND act_month <> ?')->execute(array($cur, $cur));
 
+  repair_misfiled_marks($cur);
   month_start_messages($ended, $cur);
   ensure_base_carry($cur);
 

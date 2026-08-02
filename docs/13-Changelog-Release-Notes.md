@@ -5,6 +5,44 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.33.0 — 2026-08-02 · "Recover the work filed under the wrong month + the team's day"
+
+### The work was never lost — it was filed under the old month
+
+BDOs reported serving agents this month and finding the work gone. **Nothing was deleted.** Before
+the month began rolling itself over (v1.29), the app sat on whatever month was last opened by hand,
+and `kpi_mark` files against `open_month()`. So every tap made on the 1st and 2nd of August was
+stamped **2026-07**. His live feed still showed it — that reads by DATE — but his served count, his
+base and the agent list are all month-filtered, so to him the day's work had vanished.
+
+Reproduced exactly before fixing: 4 agents served with August timestamps but filed under July read
+as **0 served, 0 in base, 0 KPIs on every agent**.
+
+The `at` timestamp records when the tap actually happened, so it — not the month column — is the
+truth, and rows are re-filed into the month their own timestamp names. A tap can only ever be filed
+against the open month, so a mismatch is by definition a misfile, never a deliberate back-date. The
+same correction is applied to the serve rows and typed daily reports, and every recovered agent is
+put back into his BDO base. Collisions are **skipped, not forced**: if the agent already holds that
+KPI in the correct month the existing credit stands.
+
+**Verified: 0 → 4 served, 4 back in his base, both KPIs credited to him on all four agents.** The
+repair runs once per month, automatically, on the next request after deploying.
+
+### The team's day, next to his own
+
+His live dashboard now shows what the whole team has done today beside his own tally — a number
+climbing next to yours does more than any reminder:
+
+> **TEAM TODAY** — 8 KPIs done by the team *(you 2 · 3 BDOs out today)* — Served 1 · Visit 1 · APK 4
+> · Activeness 2 — **#2 of 3 · Mary (BDO) 5**
+
+Top of the board swaps the rank pill for **"You are leading today 🔥"**. Counts only — no money, and
+no other BDO's agent names. Both states verified, and the dashboard still fits one screen.
+
+- Assets `?v=49`, SW `imani-v49`
+
+---
+
 ## v1.32.0 — 2026-08-02 · "A BDO's dashboard is his day, and nothing else"
 
 **A permission tick was handing a BDO the whole office board.** `viewDashboard` chose the personal

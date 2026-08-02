@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.32.0';
+  var APP_VERSION = '1.33.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -231,6 +231,12 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
+    'TEAM TODAY': 'TIMU LEO',
+    'KPIs done by the team': 'KPI zilizofanywa na timu',
+    'you': 'wewe',
+    'BDOs out today': 'BDO waliopo kazini leo',
+    'You are leading today': 'Unaongoza leo',
+    'of': 'kati ya',
     'Apply these to ALL BDOs': 'Weka hizi kwa BDO WOTE',
     'Only fill BDOs with no targets yet': 'Jaza tu BDO wasio na malengo bado',
     'Set everyone in one entry, then adjust the exceptions above.':
@@ -1039,6 +1045,31 @@
         card('zap', t('Activeness today'), fmt(live.perKpi.active)) +
         '</div>' +
         (liveFeed || '<div class="note">' + t('Nothing yet today - your first tick will show here the moment you make it. Twende kazi! 💪') + '</div>') +
+        /* THE TEAM'S DAY beside his own. A number climbing next to yours is
+         * worth more than any reminder - he can see the office total, how many
+         * colleagues are out, and where he sits among them. */
+        (function () {
+          var T = live.team;
+          if (!T || !T.workers) return '';
+          var lead = T.myRank === 1 && T.myTotal > 0;
+          return '<div class="tg-row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">' +
+            '<span class="pill fire">' + t('TEAM TODAY') + '</span>' +
+            '<span style="flex:1">' +
+              '<b>' + fmt(T.total) + '</b> ' + t('KPIs done by the team') +
+              ' <span class="note">(' + t('you') + ' ' + fmt(T.myTotal) + ' &middot; ' +
+              T.workers + ' ' + t('BDOs out today') + ')</span>' +
+              '<div class="note">' +
+                t('Served') + ' ' + fmt(T.perKpi.served) + ' &middot; ' +
+                t('Visit') + ' ' + fmt(T.perKpi.visit) + ' &middot; APK ' + fmt(T.perKpi.apk) + ' &middot; ' +
+                t('Activeness') + ' ' + fmt(T.perKpi.active) +
+              '</div>' +
+            '</span>' +
+            (lead
+              ? '<span class="pill ok">' + t('You are leading today') + ' 🔥</span>'
+              : '<span class="pill ' + (T.myRank <= 3 ? 'gold' : 'dim') + '">#' + T.myRank + ' ' + t('of') + ' ' + T.workers +
+                (T.top && !T.top.me ? ' &middot; ' + esc(T.top.name) + ' ' + fmt(T.top.total) : '') + '</span>') +
+            '</div>';
+        })() +
         '</div>';
 
       var cards;

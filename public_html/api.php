@@ -1457,8 +1457,37 @@ try {
         }
         $bands[$key] = $b;
       }
+      /* THE WHOLE TEAM'S DAY, beside his own. Seeing the office total climb -
+       * and where he sits in it - is what turns a quiet morning into a race.
+       * Counts only, no money and no other BDO's agent names. */
+      $tq = db()->prepare("SELECT bdo, kpi, COUNT(*) n FROM agent_month_kpi
+                           WHERE DATE(at) = CURDATE() AND source = 'bdo'
+                             AND bdo NOT IN ('partners','unassigned')
+                           GROUP BY bdo, kpi");
+      $tq->execute();
+      $teamPer = array('served'=>0,'visit'=>0,'apk'=>0,'active'=>0);
+      $byBdo = array();
+      foreach ($tq->fetchAll() as $r) {
+        if (isset($teamPer[$r['kpi']])) $teamPer[$r['kpi']] += (int)$r['n'];
+        if (!isset($byBdo[$r['bdo']])) $byBdo[$r['bdo']] = 0;
+        $byBdo[$r['bdo']] += (int)$r['n'];
+      }
+      $teamTotal = array_sum($teamPer);
+      $mine = array_sum($per);
+      /* where he stands today: 1 = most done. Ties share the better place. */
+      $rank = 1;
+      foreach ($byBdo as $b => $n) if ($b !== $u['username'] && $n > $mine) $rank++;
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n2) $names[$n2['username']] = $n2['name'];
+      arsort($byBdo);
+      $top = null;
+      foreach ($byBdo as $b => $n) { $top = array('name' => isset($names[$b]) ? $names[$b] : $b, 'total' => $n, 'me' => ($b === $u['username'])); break; }
+
       respond(array('date' => date('Y-m-d'), 'now' => date('H:i'), 'marks' => $marks,
-                    'perKpi' => $per, 'bands' => $bands));
+                    'perKpi' => $per, 'bands' => $bands,
+                    'team' => array('perKpi' => $teamPer, 'total' => $teamTotal,
+                                    'workers' => count($byBdo), 'myRank' => $rank,
+                                    'myTotal' => $mine, 'top' => $top)));
     }
 
     case 'wont_return_list': {
