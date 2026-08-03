@@ -2687,6 +2687,58 @@ try {
                     'byBdo' => $byBdo, 'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
     }
 
+    /*
+     * WHERE IS EVERY BDO'S WORK FILED? The answer to "he served agents but the
+     * app shows zero". Shows what each BDO holds in the open month, what he
+     * holds in neighbouring months, and any row whose own timestamp disagrees
+     * with the month it is filed under - the signature of work recorded before
+     * the month rolled over.
+     */
+    case 'filing_check': {
+      $u = require_auth(); require_manager($u);
+      $month = open_month();
+
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
+
+      /* served credits per BDO, per month, for the last few months */
+      $q = db()->prepare("SELECT bdo, month, COUNT(*) n FROM agent_month_kpi
+                          WHERE source = 'bdo' AND kpi = 'served' AND month >= ?
+                          GROUP BY bdo, month ORDER BY bdo, month");
+      $q->execute(array(date('Y-m', strtotime('-3 months'))));
+      $perBdo = array();
+      foreach ($q->fetchAll() as $r) {
+        $b = $r['bdo'];
+        if (!isset($perBdo[$b])) $perBdo[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b, 'months' => array(), 'thisMonth' => 0);
+        $perBdo[$b]['months'][$r['month']] = (int)$r['n'];
+        if ($r['month'] === $month) $perBdo[$b]['thisMonth'] = (int)$r['n'];
+      }
+
+      /* rows whose timestamp says one month and whose month column says another */
+      $mis = db()->query("SELECT COUNT(*) c FROM agent_month_kpi
+                          WHERE source = 'bdo' AND at IS NOT NULL
+                            AND month <> DATE_FORMAT(at, '%Y-%m')")->fetch();
+      $misBy = db()->query("SELECT bdo, month, DATE_FORMAT(at, '%Y-%m') AS real_month, COUNT(*) n
+                            FROM agent_month_kpi
+                            WHERE source = 'bdo' AND at IS NOT NULL
+                              AND month <> DATE_FORMAT(at, '%Y-%m')
+                            GROUP BY bdo, month, real_month ORDER BY n DESC LIMIT 20")->fetchAll();
+
+      respond(array('month' => $month, 'perBdo' => array_values($perBdo),
+                    'misfiled' => (int)$mis['c'], 'misfiledBy' => $misBy,
+                    'lastRepair' => setting_get('lastrepair_note', '')));
+    }
+
+    /* Re-file BDO work by its own timestamp, on demand. */
+    case 'filing_repair': {
+      $u = require_auth(); require_manager($u);
+      $cur = open_month();
+      db()->prepare('DELETE FROM app_settings WHERE name = ?')->execute(array('repairmarks_' . $cur));
+      repair_misfiled_marks($cur);
+      audit($u['id'], 'filing_repair', 'manual re-file for ' . $cur);
+      respond(array('ok' => true, 'note' => setting_get('lastrepair_note', '')));
+    }
+
     /* OM types how many recruit files really reached the bank this month. */
     case 'bank_recruits_save': {
       $u = require_auth(); require_manager($u);

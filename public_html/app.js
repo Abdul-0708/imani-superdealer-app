@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.33.0';
+  var APP_VERSION = '1.33.1';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -232,6 +232,23 @@
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
     'TEAM TODAY': 'TIMU LEO',
+    'Loading the photo...': 'Inapakia picha...',
+    'Open the photo in a new tab': 'Fungua picha kwenye kichupo kipya',
+    'The photo could not be loaded': 'Picha haikuweza kupakiwa',
+    'The mark is still valid - only the picture is missing. Ask the BDO to re-attach it, or open the link below.':
+      'Alama bado ni halali - picha tu ndiyo haipo. Muombe BDO aiambatanishe tena, au fungua kiungo hapa chini.',
+    'Where each BDO\'s work is filed': 'Kazi ya kila BDO imehifadhiwa wapi',
+    'in the wrong month': 'ziko kwenye mwezi usio sahihi',
+    'all correctly filed': 'zote zimehifadhiwa sawa',
+    'Serving credits per BDO per month. The bold column is the open month. A BDO who worked before the month rolled over can have his taps sitting in the previous column - the repair moves them by their own timestamp.':
+      'Sifa za kuhudumia kwa kila BDO kwa mwezi. Safu iliyokolezwa ni mwezi ulio wazi. BDO aliyefanya kazi kabla mwezi haujabadilika anaweza kuwa na alama zake kwenye safu iliyopita - urekebishaji unazihamisha kwa muda wake wenyewe.',
+    'Filed under': 'Imehifadhiwa chini ya',
+    'Actually done in': 'Ilifanyika kweli',
+    'Rows': 'Safu',
+    'Re-file work by its own timestamp': 'Hamisha kazi kwa muda wake wenyewe',
+    'Last run': 'Mara ya mwisho',
+    'Re-filing done': 'Uhamishaji umekamilika',
+    'No BDO serving credits in the last few months.': 'Hakuna sifa za kuhudumia za BDO miezi ya karibuni.',
     'KPIs done by the team': 'KPI zilizofanywa na timu',
     'you': 'wewe',
     'BDOs out today': 'BDO waliopo kazini leo',
@@ -3380,6 +3397,7 @@
         '<h1 class="page-title">' + t('Settings & Data') + '</h1>' +
         '<p class="page-sub">' + t('The rules everyone works by, and every eraser in one place. Performance and all reports recalculate instantly after any erase. Everything here is audit-logged.') + '</p>' +
         rulesPanel +
+        '<div id="filingCheck"></div>' +
 
         '<div class="panel"><h2>' + svg('upload') + 'Uploaded Excel files</h2>' +
         '<p class="note">Every upload is saved with its exact date &amp; time, label and who uploaded it. Erasing one removes its rows and the credits it created; the month\'s office numbers fall back to the latest remaining upload.</p>' +
@@ -3400,7 +3418,51 @@
         '<div class="row"><div class="field"><label>Scope</label><select id="mScope"><option value="month">This month only</option><option value="all">Everything (all months)</option></select></div>' +
         '<button class="danger" data-action="mEraseSel">Erase ticked members</button>' +
         '<button class="danger" data-action="mEraseAll">Erase ALL BDO data at once</button></div></div>';
+      filingCheckLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+
+  /* WHERE IS EVERY BDO'S WORK FILED? Answers "he served agents but the app says
+   * zero" with evidence instead of guesswork: what each officer holds in the
+   * open month, what he holds in the months either side, and any row whose own
+   * timestamp disagrees with the month it sits in. */
+  function filingCheckLoad() {
+    var box = elById('filingCheck'); if (!box) return;
+    api('filing_check', { silent: true }).then(function (d) {
+      var months = {};
+      (d.perBdo || []).forEach(function (b) { Object.keys(b.months).forEach(function (m) { months[m] = 1; }); });
+      var cols = Object.keys(months).sort();
+      var rows = (d.perBdo || []).map(function (b) {
+        return '<tr><td><b>' + esc(b.name) + '</b></td>' +
+          cols.map(function (m) {
+            var n = b.months[m] || 0;
+            var here = m === d.month;
+            return '<td' + (here ? ' style="font-weight:800"' : '') + '>' +
+              (n ? (here ? '<span class="pill ok">' + n + '</span>' : '<span class="pill dim">' + n + '</span>') : '<span class="note">0</span>') + '</td>';
+          }).join('') + '</tr>';
+      }).join('') || '<tr><td colspan="' + (cols.length + 1) + '" class="note">' + t('No BDO serving credits in the last few months.') + '</td></tr>';
+
+      box.innerHTML =
+        '<div class="panel"' + (d.misfiled ? ' style="border-color:var(--bad)"' : '') + '>' +
+        '<h2>' + svg('cal') + t('Where each BDO\'s work is filed') +
+        (d.misfiled ? ' <span class="pill bad">' + d.misfiled + ' ' + t('in the wrong month') + '</span>'
+                    : ' <span class="pill ok">' + t('all correctly filed') + '</span>') + '</h2>' +
+        '<p class="note">' + t('Serving credits per BDO per month. The bold column is the open month. A BDO who worked before the month rolled over can have his taps sitting in the previous column - the repair moves them by their own timestamp.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th>' +
+        cols.map(function (m) { return '<th>' + esc(m) + (m === d.month ? ' &bull;' : '') + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        (d.misfiled
+          ? '<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>BDO</th><th>' + t('Filed under') + '</th><th>' + t('Actually done in') + '</th><th>' + t('Rows') + '</th></tr></thead><tbody>' +
+            (d.misfiledBy || []).map(function (r) {
+              return '<tr><td>' + esc(r.bdo) + '</td><td><span class="pill bad">' + esc(r.month) + '</span></td>' +
+                '<td><span class="pill ok">' + esc(r.real_month) + '</span></td><td><b>' + r.n + '</b></td></tr>';
+            }).join('') + '</tbody></table></div>'
+          : '') +
+        '<div class="row" style="margin-top:10px;align-items:center">' +
+        '<button class="btn" data-action="filingRepair">' + svg('rotate') + ' ' + t('Re-file work by its own timestamp') + '</button>' +
+        (d.lastRepair ? '<span class="note">' + t('Last run') + ': ' + esc(d.lastRepair) + '</span>' : '') +
+        '</div></div>';
+    }).catch(function () { box.innerHTML = ''; });
   }
   /* one confirm pattern for every big eraser: type ERASE to proceed */
   function dmConfirm(title, note, action, attrs) {
@@ -3647,6 +3709,12 @@
     if (a === 'cbLoad') { state._cbMonth = elById('cbMonth').value; renderTab(); return; }
     if (a === 'cbDownload') { cbDownload(); return; }
     if (a === 'brSave') { brSave(); return; }
+    if (a === 'filingRepair') {
+      api('filing_repair', { body: {} })
+        .then(function (d) { toast(d.note || t('Re-filing done'), 'ok'); renderTab(); })
+        .catch(function (e) { toast(e.message, 'err'); });
+      return;
+    }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {
@@ -3704,11 +3772,44 @@
       return;
     }
     if (a === 'viewProof') {
+      /* The old viewer hid a failed image and left a blank black box, so a
+       * missing or unreadable photo looked identical to a slow one. Now it says
+       * what actually happened - the server's own reason - and offers the raw
+       * link so the photo can be opened or saved directly. */
       var pNote = node.getAttribute('data-note') || '';
+      var purl = 'api.php?action=wake_proof&agent=' + encodeURIComponent(node.getAttribute('data-id')) +
+                 '&kpi=' + encodeURIComponent(node.getAttribute('data-kpi') || 'active') +
+                 '&month=' + encodeURIComponent(state.month || state.openMonth || curMonth());
       openModal('<h2>' + svg('eye') + ' ' + t('Receipt proof') + ' &mdash; ' + esc(node.getAttribute('data-name') || '') + '</h2>' +
         (pNote ? '<p class="note" style="border:1px dashed var(--line);border-radius:10px;padding:10px">&ldquo;' + esc(pNote) + '&rdquo;</p>' : '') +
-        '<img src="api.php?action=wake_proof&agent=' + node.getAttribute('data-id') + '&kpi=' + (node.getAttribute('data-kpi') || 'active') + '" alt="receipt photo" style="max-width:100%;border-radius:12px;margin-top:8px" onerror="this.style.display=\'none\'">' +
-        '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
+        '<div id="proofBox" style="margin-top:8px;min-height:60px"><span class="note">' + t('Loading the photo...') + '</span></div>' +
+        '<div class="row" style="justify-content:space-between;margin-top:12px">' +
+        '<a class="note" id="proofLink" href="' + purl + '" target="_blank" rel="noopener">' + t('Open the photo in a new tab') + '</a>' +
+        '<button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
+      (function (url) {
+        var box = elById('proofBox');
+        var img = new Image();
+        img.onload = function () {
+          box.innerHTML = '';
+          img.style.maxWidth = '100%'; img.style.borderRadius = '12px';
+          box.appendChild(img);
+        };
+        img.onerror = function () {
+          /* ask the same URL again as JSON so the server can explain itself */
+          fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'imani' } })
+            .then(function (r) { return r.text().then(function (txt) { return { s: r.status, t: txt }; }); })
+            .then(function (res) {
+              var why = '';
+              try { why = (JSON.parse(res.t) || {}).error || ''; } catch (e) { why = ''; }
+              box.innerHTML = '<div class="err">' + esc(why || (t('The photo could not be loaded') + ' (HTTP ' + res.s + ')')) + '</div>' +
+                '<p class="note">' + t('The mark is still valid - only the picture is missing. Ask the BDO to re-attach it, or open the link below.') + '</p>';
+            })
+            .catch(function () {
+              box.innerHTML = '<div class="err">' + esc(t('The photo could not be loaded')) + '</div>';
+            });
+        };
+        img.src = url;
+      })(purl);
       return;
     }
     if (a === 'recruit') { recruitModal(); return; }

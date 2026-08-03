@@ -5,6 +5,32 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.33.1 — 2026-08-03 · "Show where the work is filed, and why a photo will not open"
+
+**A panel that answers "he served agents but the app says zero" with evidence.** Settings & Data now
+carries **Where each BDO's work is filed**: serving credits per BDO per month with the open month in
+bold, so it is immediately visible whether an officer's taps are sitting in the previous column or
+whether he genuinely has none. When rows are misfiled it also lists them — *filed under 2026-07,
+actually done in 2026-08, 3 rows* — and a **Re-file work by its own timestamp** button re-runs the
+repair on demand. The last run is shown with its exact result.
+
+Verified: 3 August taps filed under July were caught and moved (`3 KPI marks`), the count dropped to
+**0 remaining**, and the same BDO's 11 genuine July credits correctly stayed in July.
+
+**The proof viewer stopped lying.** A failed photo was hidden by `onerror`, leaving a blank black
+box identical to a slow load — no way to tell a missing file from a broken one. It now shows a
+loading state, then either the photo or **the server's own reason**, plus an *Open the photo in a new
+tab* link. A mark whose file is gone reads *"No proof photo for this agent — the mark is still valid,
+only the picture is missing"* instead of silence. The month is also passed explicitly, so a photo
+attached to a mark in another month still resolves.
+
+Verified both paths: a mark pointing at a deleted file shows the explanation, and a real photo
+renders (100×100 loaded).
+
+- Assets `?v=50`, SW `imani-v50`
+
+---
+
 ## v1.33.0 — 2026-08-02 · "Recover the work filed under the wrong month + the team's day"
 
 ### The work was never lost — it was filed under the old month

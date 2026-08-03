@@ -7,7 +7,7 @@ date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.33.0');
+define('APP_VERSION', '1.33.1');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -250,10 +250,13 @@ function repair_misfiled_marks($cur) {
               SELECT month, bdo, agent_id, 'uploaded' FROM agent_month_kpi
               WHERE source = 'bdo' AND kpi = 'served' AND bdo NOT IN ('partners','unassigned')");
 
+  $note = date('Y-m-d H:i') . ' - re-filed by timestamp: ' . $moved . ' KPI marks, ' . $svc .
+          ' serve rows, ' . $rep . ' daily reports' .
+          ($clashed ? ', ' . $clashed . ' skipped (already credited that month)' : '');
+  setting_set('lastrepair_note', $note);
   if ($moved || $svc || $rep || $clashed) {
     db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "repair_misfiled", ?)')
-        ->execute(array('re-filed by timestamp: ' . $moved . ' KPI marks, ' . $svc . ' serve rows, ' .
-                        $rep . ' daily reports' . ($clashed ? ', ' . $clashed . ' skipped (already credited)' : '')));
+        ->execute(array($note));
   }
 }
 
