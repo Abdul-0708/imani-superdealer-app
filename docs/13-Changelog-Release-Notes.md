@@ -5,6 +5,40 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.34.0 — 2026-08-03 · "Idle alert for the BDO, base coverage for the OM"
+
+**A red alert when a BDO goes a day without recording anything.** It is the first thing on his
+dashboard — before his cards, before his feed — naming exactly how long it has been and offering
+one tap through to his round:
+
+> **NO KPI RECORDED IN OVER 24 HOURS** — Your last KPI was 2026-07-31 06:47, that is **75 hours ago**.
+> Your OM sees this too. Serve an agent, tick a visit or wake a dormant one today.
+
+Counted in **his own working days**, not raw clock hours, so a rest day never accuses him. Today
+counts as missed only **from midday**, so a man who worked late on Saturday is not confronted at 8am
+on Monday before he has had a chance to start.
+
+Verified across every clock position: worked 2h ago → quiet · 33h idle at 08:00 → quiet (morning
+grace) · Saturday 17:00 → Monday 08:00 → quiet (rest day) · the same at 14:00 → **ALERT** · 3 days
+idle → **ALERT** · 53h since the last tap but working today → quiet.
+
+**Base coverage for the OM.** "He served 40 agents" means nothing on its own — 40 of 45 is a month
+nearly finished, 40 of 400 is barely started. Real Performance gained a panel pairing the round each
+BDO was given with how much of it he has actually served:
+
+| BDO | His round | Served | Still to serve | Covered |
+|---|---|---|---|---|
+| John | 10 | 8 | 2 | 80% |
+| Peter | 5 | 0 | 5 | 0% |
+
+Green at 80%+, gold from 50%, red below — so the officer running out of work and the one falling
+behind are both obvious at a glance. It follows the month/station scope of the window and is added
+to the Excel export as its own **Base coverage** sheet.
+
+- Assets `?v=51`, SW `imani-v51`
+
+---
+
 ## v1.33.1 — 2026-08-03 · "Show where the work is filed, and why a photo will not open"
 
 **A panel that answers "he served agents but the app says zero" with evidence.** Settings & Data now

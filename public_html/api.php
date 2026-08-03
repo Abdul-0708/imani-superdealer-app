@@ -1483,8 +1483,46 @@ try {
       $top = null;
       foreach ($byBdo as $b => $n) { $top = array('name' => isset($names[$b]) ? $names[$b] : $b, 'total' => $n, 'me' => ($b === $u['username'])); break; }
 
+      /*
+       * IDLE WATCH: how long since he last recorded ANY KPI.
+       *
+       * Counted in his own WORKING days, not raw clock hours - a man who worked
+       * hard on Saturday and has Sunday off must not be accused on Monday
+       * morning. The alert fires when more than 24 hours have passed AND at
+       * least one of his working days went by without a single tap.
+       */
+      $lq = db()->prepare("SELECT MAX(at) AS last_at FROM agent_month_kpi WHERE source = 'bdo' AND bdo = ?");
+      $lq->execute(array($u['username']));
+      $lastAt = $lq->fetch()['last_at'];
+      $work = working_days_for($u);
+      $idleHours = null; $missedDays = 0;
+      $todayIsWorking = !empty($work[(int)date('N')]);
+      $nothingToday = (array_sum($per) === 0);
+      if ($lastAt) {
+        $idleHours = (int)floor((time() - strtotime($lastAt)) / 3600);
+        /* WHOLE working days that went by between his last tap and today */
+        $d = strtotime(date('Y-m-d', strtotime($lastAt)) . ' +1 day');
+        $today = strtotime(date('Y-m-d'));
+        while ($d < $today) {
+          if (!empty($work[(int)date('N', $d)])) $missedDays++;
+          $d = strtotime('+1 day', $d);
+        }
+        /* Today counts as missed too - but only from midday. Otherwise a man
+         * who worked late on Saturday is accused at 8am on Monday before he has
+         * had a chance to start. Past noon on a working day with nothing on the
+         * board is a fair thing to raise. */
+        if ($todayIsWorking && $nothingToday && (int)date('G') >= 12) $missedDays++;
+      }
+      $idle = array(
+        'lastAt' => $lastAt ? substr($lastAt, 0, 16) : '',
+        'hours' => $idleHours,
+        'missedWorkingDays' => $missedDays,
+        'never' => !$lastAt,
+        'alert' => (!$lastAt) || ($idleHours > 24 && $missedDays >= 1),
+      );
+
       respond(array('date' => date('Y-m-d'), 'now' => date('H:i'), 'marks' => $marks,
-                    'perKpi' => $per, 'bands' => $bands,
+                    'perKpi' => $per, 'bands' => $bands, 'idle' => $idle,
                     'team' => array('perKpi' => $teamPer, 'total' => $teamTotal,
                                     'workers' => count($byBdo), 'myRank' => $rank,
                                     'myTotal' => $mine, 'top' => $top)));
@@ -2647,6 +2685,43 @@ try {
       $recTotals = array('pipeline' => 0, 'became' => 0, 'bank' => 0, 'total' => 0);
       foreach ($rec as $r) foreach ($recTotals as $k2 => $v2) $recTotals[$k2] += $r[$k2];
 
+      /*
+       * BASE COVERAGE: how far each BDO is through HIS OWN round.
+       *
+       * "He served 40 agents" means nothing on its own - 40 out of 45 is a month
+       * nearly finished, 40 out of 400 is barely started. This pairs the size of
+       * the round he was given with how much of it he has actually served, so
+       * the OM can see who is running out of work and who is falling behind.
+       */
+      $bq2 = db()->prepare("SELECT b.bdo, COUNT(DISTINCT b.agent_id) n
+                            FROM base b JOIN agents a ON a.id = b.agent_id
+                            WHERE b.month = ?" . $stFilter . "
+                              AND b.bdo NOT IN ('partners','unassigned')
+                            GROUP BY b.bdo");
+      $bq2->execute(array_merge(array($month), $stVals));
+      $cover = array();
+      foreach ($bq2->fetchAll() as $r) {
+        $cover[$r['bdo']] = array('bdo' => $r['bdo'], 'name' => isset($names[$r['bdo']]) ? $names[$r['bdo']] : $r['bdo'],
+                                  'base' => (int)$r['n'], 'served' => 0);
+      }
+      $sq2 = db()->prepare("SELECT k.bdo, COUNT(DISTINCT k.agent_id) n
+                            FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                            JOIN base b ON b.month = k.month AND b.bdo = k.bdo AND b.agent_id = k.agent_id
+                            WHERE k.month = ? AND k.kpi = 'served'
+                              AND k.bdo NOT IN ('partners','unassigned')" . $stFilter . "
+                            GROUP BY k.bdo");
+      $sq2->execute(array_merge(array($month), $stVals));
+      foreach ($sq2->fetchAll() as $r) {
+        if (!isset($cover[$r['bdo']])) continue;
+        $cover[$r['bdo']]['served'] = (int)$r['n'];
+      }
+      foreach ($cover as $b => $c) {
+        $cover[$b]['left'] = max(0, $c['base'] - $c['served']);
+        $cover[$b]['pct'] = $c['base'] > 0 ? (int)round($c['served'] / $c['base'] * 100) : null;
+      }
+      $cover = array_values($cover);
+      usort($cover, function ($x, $y) { return ((int)$y['pct']) - ((int)$x['pct']); });
+
       /* every BDO, so the OM can type a bank count against someone with no rows yet */
       $allBdos = array();
       foreach (db()->query("SELECT username, name FROM users WHERE role = 'bdo' AND active = 1 ORDER BY name")->fetchAll() as $r)
@@ -2684,7 +2759,8 @@ try {
                     'fromUpload' => $oa['fromUpload'],
                     'slept' => $slept,
                     'weighted' => $wsum > 0, 'weightTotal' => $wsum,
-                    'byBdo' => $byBdo, 'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
+                    'byBdo' => $byBdo, 'coverage' => $cover,
+                    'recruits' => $rec, 'recruitTotals' => $recTotals, 'bdos' => $allBdos));
     }
 
     /*

@@ -723,3 +723,30 @@ th{font-size:10px;letter-spacing:.5px}
   .row.filters select,.row.filters .field:first-child input{max-width:none;width:100%}
   .row.filters .field{flex:1 1 46%}
 }
+
+/* ================= IDLE ALERT (BDO dashboard) =================
+ * A working day gone by with no KPI. Loud on purpose - it is the first thing
+ * on his screen - but it stays inside the app's palette rather than shouting in
+ * a colour that belongs to nothing else. Readable in every theme: the tint is
+ * translucent red over the panel, and the text keeps --ink. */
+.panel.idle-alert{
+  border-color:var(--bad);
+  background:linear-gradient(180deg,rgba(255,107,94,.14),rgba(255,107,94,.06));
+  box-shadow:var(--e2),0 0 0 1px rgba(255,107,94,.25);
+  animation:idlepulse 2.6s ease-in-out infinite;
+}
+.panel.idle-alert b{color:var(--bad)}
+.idle-ic{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:34px;height:34px;border-radius:10px;background:var(--bad);color:#fff;margin-right:10px;
+}
+.idle-ic svg{width:19px;height:19px}
+@keyframes idlepulse{
+  0%,100%{box-shadow:var(--e2),0 0 0 1px rgba(255,107,94,.25)}
+  50%{box-shadow:var(--e2),0 0 14px rgba(255,107,94,.45)}
+}
+body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.10),rgba(198,47,29,.04))}
+
+/* base-coverage bar: served vs the round he was given */
+.cov{height:8px;border-radius:6px;background:rgba(216,168,120,.16);overflow:hidden;min-width:80px}
+.cov i{display:block;height:100%;background:var(--grad)}

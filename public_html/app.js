@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.33.1';
+  var APP_VERSION = '1.34.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -232,6 +232,23 @@
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
     'TEAM TODAY': 'TIMU LEO',
+    'NO KPI RECORDED IN OVER 24 HOURS': 'HAKUNA KPI ILIYOWEKWA KWA ZAIDI YA MASAA 24',
+    'You have not recorded a single KPI yet.': 'Bado hujaweka hata KPI moja.',
+    'Your last KPI was': 'KPI yako ya mwisho ilikuwa',
+    'that is': 'hiyo ni',
+    'hours ago': 'masaa yaliyopita',
+    'working days with nothing': 'siku za kazi bila kitu',
+    'Your OM sees this too. Serve an agent, tick a visit or wake a dormant one today.':
+      'OM wako anaona hii pia. Mhudumie wakala, weka alama ya ziara au mwamshe aliyelala leo.',
+    'Open My Agent Base': 'Fungua Base Yangu ya Mawakala',
+    'Base coverage - how much of his own round each BDO has served':
+      'Ufikiaji wa base - kila BDO amehudumia kiasi gani cha mzunguko wake',
+    'His round is the agents carried from last month plus anyone added to him this month. Served counts the ones he has actually done.':
+      'Mzunguko wake ni mawakala waliobebwa kutoka mwezi uliopita pamoja na walioongezwa mwezi huu. Waliohudumiwa ni wale aliowafanyia kweli.',
+    'His round': 'Mzunguko wake',
+    'Still to serve': 'Waliobaki kuhudumiwa',
+    'Covered': 'Amefikia',
+    'No BDO has a round for this month yet.': 'Hakuna BDO mwenye mzunguko wa mwezi huu bado.',
     'Loading the photo...': 'Inapakia picha...',
     'Open the photo in a new tab': 'Fungua picha kwenye kichupo kipya',
     'The photo could not be loaded': 'Picha haikuweza kupakiwa',
@@ -1107,9 +1124,34 @@
        * has done since this morning. The monthly weighted score and the
        * high-earner value he built sit on the Team tab, one tap away, under
        * "where you stand". */
+      /* IDLE ALERT - the first thing he sees, in red, when a working day has
+       * gone by without a single KPI. Counted in HIS working days, so a day off
+       * never triggers it. */
+      var idle = live.idle || {};
+      var idlePanel = '';
+      if (idle.alert) {
+        var howLong = idle.never
+          ? t('You have not recorded a single KPI yet.')
+          : t('Your last KPI was') + ' <b>' + esc(idle.lastAt) + '</b> - ' +
+            t('that is') + ' <b>' + fmt(idle.hours) + ' ' + t('hours ago') + '</b>' +
+            (idle.missedWorkingDays > 1 ? ' (' + idle.missedWorkingDays + ' ' + t('working days with nothing') + ')' : '');
+        idlePanel =
+          '<div class="panel idle-alert"><div class="row" style="align-items:flex-start">' +
+          '<span class="idle-ic">' + svg('alert') + '</span>' +
+          '<div style="flex:1">' +
+          '<b style="font-size:15px">' + t('NO KPI RECORDED IN OVER 24 HOURS') + '</b>' +
+          '<div class="note" style="margin-top:4px">' + howLong + '</div>' +
+          '<div class="note">' + t('Your OM sees this too. Serve an agent, tick a visit or wake a dormant one today.') + '</div>' +
+          '<div class="row" style="margin-top:8px">' +
+          '<button class="btn mini" data-action="tab" data-tab="mybase">' + t('Open My Agent Base') + '</button>' +
+          '<button class="ghost mini" data-action="tab" data-tab="agents">' + t('Open agent list') + '</button>' +
+          '</div></div></div></div>';
+      }
+
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         livePanel;
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -3105,6 +3147,24 @@
         (d.achievement == null ? '-' : d.achievement + '%') + '</b></td></tr>' +
         '</tbody></table></div></div>' +
 
+        /* HOW FAR THROUGH HIS OWN ROUND each BDO is. "He served 40" means
+         * nothing alone: 40 of 45 is a month nearly finished, 40 of 400 is
+         * barely started. */
+        '<div class="panel"><h2>' + svg('check') + t('Base coverage - how much of his own round each BDO has served') + '</h2>' +
+        '<p class="note">' + t('His round is the agents carried from last month plus anyone added to him this month. Served counts the ones he has actually done.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>' + t('His round') + '</th><th>' + t('Served') + '</th>' +
+        '<th>' + t('Still to serve') + '</th><th>' + t('Covered') + '</th></tr></thead><tbody>' +
+        ((d.coverage || []).map(function (c) {
+          var p = c.pct == null ? 0 : c.pct;
+          var cls = p >= 80 ? 'ok' : (p >= 50 ? 'gold' : 'bad');
+          return '<tr><td><b>' + esc(c.name) + '</b></td>' +
+            '<td>' + fmt(c.base) + '</td><td><b>' + fmt(c.served) + '</b></td>' +
+            '<td>' + (c.left ? '<span class="pill ' + (c.left > c.served ? 'bad' : 'dim') + '">' + fmt(c.left) + '</span>' : '<span class="pill ok">0</span>') + '</td>' +
+            '<td style="min-width:130px"><div class="cov"><i style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>' +
+            '<span class="pill ' + cls + '">' + (c.pct == null ? '-' : p + '%') + '</span></td></tr>';
+        }).join('') || '<tr><td colspan="5" class="note">' + t('No BDO has a round for this month yet.') + '</td></tr>') +
+        '</tbody></table></div></div>' +
+
         '<div class="panel"><h2>' + svg('users') + t('Per BDO - what each one really produced') + '</h2>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Activeness</th>' +
         '<th>' + t('From file') + '</th><th>' + t('From field') + '</th><th>' + t('Combined') + '</th></tr></thead><tbody>' +
@@ -3155,6 +3215,10 @@
       return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active,
                'From file': b.file, 'From field': b.live, 'Combined': b.total };
     })), 'Per BDO');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.coverage || []).map(function (c) {
+      return { 'BDO': c.name, 'His round': c.base, 'Served': c.served,
+               'Still to serve': c.left, 'Covered %': c.pct == null ? '' : c.pct };
+    })), 'Base coverage');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.recruits || []).map(function (r) {
       return { 'BDO': r.name, 'Forms in app': r.pipeline, 'Became agents': r.became,
                'Submitted to bank': r.bank, 'Total': r.total, 'Note': r.note };
