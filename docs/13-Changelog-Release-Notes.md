@@ -5,6 +5,34 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.35.0 — 2026-08-05 · "Bottom navigation for phones"
+
+A BDO works this app one-handed, standing in front of an agent. On a phone the sidebar collapsed
+into a **top** bar, which put every tab at the far end of his thumb. The tab list now sits along the
+bottom, where the thumb already rests.
+
+- **Four tabs plus More**, chosen from what his role can actually see — a BDO gets
+  *Home · My Base · Report · Agents*, an OM gets *Home · Agents · Upload · Targets*. Everything else
+  lives behind **More**, which opens a sheet of the remaining sections.
+- **Nothing waits unseen.** The unread-message and pending-flag counts ride the icons as dots, and
+  any badge belonging to a section hidden behind More **rolls up onto the More button** in red.
+  Verified: 1 flag + 1 unread → **More [2]**.
+- **The bar always shows where you are.** Open a section from More and it swaps into the last slot
+  with the active state, rather than leaving the bar looking as if you were somewhere else.
+- **Short labels for the bar only.** "My Agent Base" truncated to "My Agent B..." at 375px, so the
+  bar carries its own wording — same destination, fewer letters. Verified: no label truncates for
+  either role.
+- The top bar keeps the brand and the account buttons, so nothing is duplicated; `.main` gains
+  bottom padding and modals clear the bar, both respecting `safe-area-inset-bottom` for the iPhone
+  home indicator.
+
+**Desktop is untouched** — verified at 1440×900: bar hidden, all 8 sidebar tabs and their badges
+present, padding unchanged.
+
+- Assets `?v=52`, SW `imani-v52`
+
+---
+
 ## v1.34.0 — 2026-08-03 · "Idle alert for the BDO, base coverage for the OM"
 
 **A red alert when a BDO goes a day without recording anything.** It is the first thing on his

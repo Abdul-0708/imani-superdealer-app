@@ -750,3 +750,61 @@ body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.1
 /* base-coverage bar: served vs the round he was given */
 .cov{height:8px;border-radius:6px;background:rgba(216,168,120,.16);overflow:hidden;min-width:80px}
 .cov i{display:block;height:100%;background:var(--grad)}
+
+/* ================= BOTTOM NAV (phones only) =================
+ * A BDO uses this standing in front of an agent, one hand on the phone. The
+ * sidebar collapsed into a TOP bar, which put every tab at the far end of his
+ * thumb; these sit where the thumb already rests. Desktop never sees it.
+ *
+ * The top bar keeps the brand and the account buttons - only the tab list moves
+ * down, so nothing is duplicated on screen. */
+.botnav{display:none}
+
+@media (max-width:860px){
+  .botnav{
+    display:flex;position:fixed;left:0;right:0;bottom:0;z-index:120;
+    background:linear-gradient(180deg,var(--panel),var(--bg2));
+    border-top:1px solid var(--line);
+    box-shadow:0 -6px 22px rgba(0,0,0,.35);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));
+  }
+  .bn-item{
+    flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:transparent;border:0;padding:6px 2px;border-radius:12px;cursor:pointer;
+    color:var(--muted);font-family:inherit;font-size:10px;font-weight:700;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation;
+  }
+  .bn-ic{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    width:34px;height:26px;border-radius:9px;transition:background .16s var(--ease)}
+  .bn-item svg{width:20px;height:20px}
+  .bn-lb{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.1}
+  .bn-item.active{color:var(--fire2)}
+  .bn-item.active .bn-ic{background:var(--grad-soft)}
+  .bn-item:active{transform:scale(.94)}
+  /* count dot riding the icon, like a phone app */
+  .bn-dot{
+    position:absolute;top:-3px;right:-1px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;
+    display:inline-flex;align-items:center;justify-content:center;
+    font-size:9px;font-weight:800;background:var(--grad);color:#2b1000;
+    border:2px solid var(--panel);
+  }
+  .bn-dot.bad{background:var(--bad);color:#fff}
+
+  /* the tab list moves to the bottom - the top bar keeps brand + account only */
+  .sidebar .nav-item{display:none}
+  .sidebar{gap:8px}
+  /* room for the bar so the last row of a table is never trapped under it */
+  .main{padding-bottom:calc(74px + env(safe-area-inset-bottom,0px))}
+  /* modals must clear it too */
+  .modalback{padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}
+}
+
+/* the More sheet: everything the four slots could not hold */
+.morelist{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.more-item{
+  display:flex;align-items:center;gap:11px;width:100%;padding:12px 13px;border-radius:12px;
+  border:1px solid var(--line);background:transparent;color:var(--ink);
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;text-align:left;
+}
+.more-item:hover{border-color:var(--fire2);background:var(--grad-soft)}
+.more-item svg{width:18px;height:18px;color:var(--fire2);flex:none}

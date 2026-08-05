@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.34.0';
+  var APP_VERSION = '1.35.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -231,6 +231,18 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
+    'More': 'Zaidi',
+    'All sections': 'Sehemu zote',
+    'Main navigation': 'Urambazaji mkuu',
+    'Home': 'Nyumbani',
+    'My Base': 'Base Yangu',
+    'Report': 'Ripoti',
+    'Field': 'Uwandani',
+    'Real Perf.': 'Utendaji',
+    'Upload': 'Pakia',
+    'Targets': 'Malengo',
+    'Reports': 'Ripoti',
+    'Settings': 'Mipangilio',
     'TEAM TODAY': 'TIMU LEO',
     'NO KPI RECORDED IN OVER 24 HOURS': 'HAKUNA KPI ILIYOWEKWA KWA ZAIDI YA MASAA 24',
     'You have not recorded a single KPI yet.': 'Bado hujaweka hata KPI moja.',
@@ -850,15 +862,35 @@
   }
   function paintBadges() {
     if (!state.user) return;
-    [['inbox', state.unreadMsgs || 0, ''], ['flags', isFieldUser() ? (state.pendingFlags || 0) : 0, ' bad']]
-      .forEach(function (x) {
-        var item = document.querySelector('.nav-item[data-tab="' + x[0] + '"]');
-        if (!item) return;
-        var b = item.querySelector('.navbadge');
-        if (!x[1]) { if (b) b.remove(); return; }
-        if (!b) { b = document.createElement('span'); b.className = 'navbadge' + x[2]; item.appendChild(b); }
-        b.textContent = x[1] > 99 ? '99+' : x[1];
-      });
+    var counts = [['inbox', state.unreadMsgs || 0, ''], ['flags', isFieldUser() ? (state.pendingFlags || 0) : 0, ' bad']];
+    counts.forEach(function (x) {
+      var item = document.querySelector('.nav-item[data-tab="' + x[0] + '"]');
+      if (!item) return;
+      var b = item.querySelector('.navbadge');
+      if (!x[1]) { if (b) b.remove(); return; }
+      if (!b) { b = document.createElement('span'); b.className = 'navbadge' + x[2]; item.appendChild(b); }
+      b.textContent = x[1] > 99 ? '99+' : x[1];
+    });
+    /* the phone bar carries the same counts - and whatever it hides behind More
+     * rolls up onto the More button, so nothing waits unseen */
+    var hidden = 0;
+    counts.forEach(function (x) {
+      var slot = document.querySelector('.botnav .bn-item[data-tab="' + x[0] + '"] .bn-ic');
+      if (!slot) { hidden += x[1]; return; }
+      var d = slot.querySelector('.bn-dot');
+      if (!x[1]) { if (d) d.remove(); return; }
+      if (!d) { d = document.createElement('span'); d.className = 'bn-dot' + x[2]; slot.appendChild(d); }
+      d.textContent = x[1] > 9 ? '9+' : x[1];
+    });
+    var moreIc = document.querySelector('.botnav .bn-item[data-action="moreNav"] .bn-ic');
+    if (moreIc) {
+      var md = moreIc.querySelector('.bn-dot');
+      if (!hidden) { if (md) md.remove(); }
+      else {
+        if (!md) { md = document.createElement('span'); md.className = 'bn-dot bad'; moreIc.appendChild(md); }
+        md.textContent = hidden > 9 ? '9+' : hidden;
+      }
+    }
   }
   function renderLogin() {
     elById('app').innerHTML =
@@ -960,8 +992,79 @@
       '<button class="ghost tiny" data-action="toggleLang" title="Language">' + (LANG === 'sw' ? 'EN' : 'SW') + '</button>' +
       '<button class="ghost tiny" data-action="pwd">' + t('Password') + '</button>' +
       '<button class="ghost tiny" data-action="logout">' + t('Sign out') + '</button></div></div>' +
-      '</aside><main class="main"><div id="view"></div></main></div>';
+      '</aside><main class="main"><div id="view"></div></main></div>' +
+      bottomNavHtml(tabs);
     renderTab();
+  }
+
+  /* ---------------- BOTTOM NAV (phones) ----------------
+   * A BDO works this app one-handed, standing in front of an agent. On a phone
+   * the sidebar collapsed into a top bar, which put every tab at the far end of
+   * his thumb. These four sit where the thumb already rests; everything else
+   * lives behind More, which carries the badges of whatever it hides so a
+   * pending flag or an unread message is never buried silently.
+   *
+   * Desktop is untouched - this is display:none above the phone breakpoint. */
+  var BOTNAV_MAX = 4;
+  /* Five labels across a 375px phone: the sidebar wording truncates ("My Agent
+   * B..."), so the bar gets its own short forms. Same destination, fewer
+   * letters - a truncated label teaches nobody anything. */
+  var BOTNAV_SHORT = {
+    mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home',
+    field: 'Field', inbox: 'Messages', combined: 'Real Perf.', upload: 'Upload',
+    targets: 'Targets', commission: 'Commission', reports: 'Reports', data: 'Settings'
+  };
+  function botLabel(m) { return t(BOTNAV_SHORT[m.key] || m.label); }
+  function botBadge(key) {
+    if (key === 'inbox') return state.unreadMsgs || 0;
+    if (key === 'flags') return isFieldUser() ? (state.pendingFlags || 0) : 0;
+    return 0;
+  }
+  function bottomNavHtml(tabs) {
+    if (!tabs.length) return '';
+    var primary = tabs.slice(0, BOTNAV_MAX);
+    var rest = tabs.slice(BOTNAV_MAX);
+    /* keep the active tab reachable: if the user is inside a More tab, swap it
+       into the last primary slot so the bar always shows where he is */
+    if (rest.some(function (m) { return m.key === state.tab; })) {
+      var cur = rest.filter(function (m) { return m.key === state.tab; })[0];
+      rest = rest.filter(function (m) { return m.key !== state.tab; }).concat([primary[primary.length - 1]]);
+      primary = primary.slice(0, primary.length - 1).concat([cur]);
+    }
+    function item(m) {
+      var n = botBadge(m.key);
+      return '<button class="bn-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' +
+        '<span class="bn-ic">' + svg(m.icon) +
+        (n ? '<span class="bn-dot' + (m.key === 'flags' ? ' bad' : '') + '">' + (n > 9 ? '9+' : n) + '</span>' : '') +
+        '</span><span class="bn-lb">' + esc(botLabel(m)) + '</span></button>';
+    }
+    var moreCount = 0;
+    rest.forEach(function (m) { moreCount += botBadge(m.key); });
+    var more = rest.length
+      ? '<button class="bn-item" data-action="moreNav">' +
+        '<span class="bn-ic">' + svg('grid') +
+        (moreCount ? '<span class="bn-dot bad">' + (moreCount > 9 ? '9+' : moreCount) + '</span>' : '') +
+        '</span><span class="bn-lb">' + t('More') + '</span></button>'
+      : '';
+    return '<nav class="botnav" aria-label="' + esc(t('Main navigation')) + '">' +
+      primary.map(item).join('') + more + '</nav>';
+  }
+  function moreNavSheet() {
+    var tabs = visibleModules();
+    var shown = {};
+    document.querySelectorAll('.botnav .bn-item[data-tab]').forEach(function (b) { shown[b.getAttribute('data-tab')] = 1; });
+    var rest = tabs.filter(function (m) { return !shown[m.key]; });
+    openModal('<h2>' + svg('grid') + ' ' + t('All sections') + '</h2>' +
+      '<div class="morelist">' +
+      rest.map(function (m) {
+        var n = botBadge(m.key);
+        return '<button class="more-item" data-action="tab" data-tab="' + m.key + '">' +
+          svg(m.icon) + '<span style="flex:1;text-align:left">' + esc(t(m.label)) + '</span>' +
+          (n ? '<span class="navbadge' + (m.key === 'flags' ? ' bad' : '') + '">' + n + '</span>' : '') + '</button>';
+      }).join('') +
+      '</div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
   }
   function renderTab() {
     var v = elById('view'); if (!v) return;
@@ -3709,8 +3812,10 @@
         state._agentSearch = ''; state._agentField = ''; state.agentPage = 1;
         state._fserved = state._fvisit = state._fapk = state._factive = state._fband = '';
       }
+      closeModal();   /* harmless if none is open; shuts the More sheet */
       state.tab = toTab; renderShell(); return;
     }
+    if (a === 'moreNav') { moreNavSheet(); return; }
     if (a === 'toggleTheme') { toggleTheme(); themePicker(); return; }
     if (a === 'themePick') { themePicker(); return; }
     if (a === 'palSet') { setPalette(node.getAttribute('data-p')); renderShell(); themePicker(); return; }
