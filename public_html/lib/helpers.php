@@ -2,12 +2,15 @@
 /* Shared helpers: JSON I/O, session auth, permissions, normalizers. */
 
 error_reporting(E_ALL & ~E_DEPRECATED);
-date_default_timezone_set('Africa/Nairobi'); /* EAT (+3) - the business clock */
+/* The business clock: Dar es Salaam. Identical to the old Africa/Nairobi
+ * setting - both are East Africa Time, UTC+3, no daylight saving - so no
+ * displayed time moves. Named for the country the business is in. */
+date_default_timezone_set('Africa/Dar_es_Salaam');
 
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.35.0');
+define('APP_VERSION', '1.36.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -89,7 +92,7 @@ function modules_meta() {
     array('key'=>'dashboard',  'label'=>'Dashboard'),
     array('key'=>'agents',     'label'=>'Agents'),
     array('key'=>'mybase',     'label'=>'My Agent Base (BDO)'),
-    array('key'=>'upload',     'label'=>'Weekly Upload'),
+    array('key'=>'upload',     'label'=>'Database Upload'),
     array('key'=>'targets',    'label'=>'Monthly Targets'),
     array('key'=>'commission', 'label'=>'Commission & Months'),
     array('key'=>'reports',    'label'=>'Reports & Ranks'),
@@ -468,7 +471,10 @@ function parse_weekly_row($row, $month = '') {
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
-    'station' => strtoupper(trim((string)pick($idx, array('SA STATION','SA Station','Station','StationName','kituo','region','mkoa')))),
+    /* The region IS the SA station - read it from that column only. A stray
+     * "Region"/"Mkoa" column in some files carried a different geography and
+     * quietly overrode the station whenever SA STATION was blank. */
+    'station' => strtoupper(trim((string)pick($idx, array('SA STATION','SA Station','Station','StationName','kituo')))),
   );
 }
 
@@ -911,7 +917,17 @@ function he_band($acc) {
 }
 
 /* Field users (BDOs) work ONE region. The OM may still inspect any station. */
+/*
+ * WHICH REGION AM I LOOKING AT?
+ *
+ * A field user is pinned to the home station and can never see another - that
+ * is his patch. Management follows `view_station`, a single choice the OM makes
+ * once and which then governs EVERY screen: agent list, flags, live board,
+ * targets, commission. Before this, the picker on the dashboard changed the
+ * dashboard only, so the agent list still showed regions the office had stopped
+ * working. Empty means "all stations".
+ */
 function station_scope($user) {
-  if (is_manager($user)) return ''; /* no forced filter for management */
+  if (is_manager($user)) return strtoupper(trim(setting_get('view_station', setting_get('home_station', 'ARUSHA'))));
   return setting_get('home_station', 'ARUSHA');
 }

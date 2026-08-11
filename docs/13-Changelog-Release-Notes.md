@@ -5,6 +5,52 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.36.0 — 2026-08-11 · "Database Upload, and the file that judges nobody" — schema v16
+
+**One door for every office file, and only one of them scores anybody.** "Weekly Upload" is now
+**Database Upload**, with the kind of file chosen up front: *Weekly performance · Monthly database
+(fixed) · Physical locations · Commission file · High-earner list*. The performance chip is marked
+**scores** in red and its panel says *"This file scores and flags"*; every other kind says *"Updates
+the database only — never scores, never flags"*. Five half-remembered rules became one visible one.
+
+**The monthly baseline (item 1).** Every agent with his standing status — nobody served, no visits,
+no float, activeness as it is (active, inactive, or no status at all), APK version where the file
+carries it. It refreshes the agent database and the activeness/APK baseline and touches nothing
+else.
+**Verified on exactly the case you described**: John had already served and visited 3 carried agents
+this week, *then* the baseline landed — **0 flags raised**, his 3 credits intact, office totals
+untouched (`fromUpload` still false), and activeness set correctly per agent (a blank activeness
+column leaves the agent as he was rather than wiping him).
+
+**New agents get somewhere to be claimed (item 9).** The baseline reports how many agents it had
+never seen, and My Agent Base gained a **NEW — not yet mine** toggle beside **My round**, listing
+every agent in the database that no BDO owns this month. He serves one and the agent joins his
+round. No new tab, so the phone bar stays at five.
+
+**The region choice is now a decision, not a page setting (item 4).** The OM picks a station once
+and it is stored: the agent list, flags, live board, targets, exports and Real Performance all obey
+it. Verified — with ARUSHA chosen the agent list showed only the Arusha agent; switching to MANYARA
+showed only the Manyara one. Previously the picker moved the dashboard alone while the agent list
+still showed regions the office had stopped working. Region is also read from **SA STATION only** —
+a stray "Region"/"Mkoa" column used to override it whenever SA STATION was blank.
+
+**The dialog that would not close (item 3).** Saves that rebuilt the page but forgot to shut their
+own box left it hanging over the fresh screen. Rebuilding the view now closes any open dialog — one
+rule, whole class of bug, rather than chasing each save. The upload result also gained a **Clear
+result** button and is replaced by a live "Importing N rows…" the moment a new import starts.
+
+**Clock renamed to Dar es Salaam (item 5)** — `Africa/Dar_es_Salaam`. It is the same clock as the
+previous `Africa/Nairobi` (East Africa Time, UTC+3, no daylight saving), so **no displayed time
+moves**; it simply now reads as the country the business is in.
+
+Schema v16 also lays the groundwork for the rest of the batch: `uploads.kind`, station columns on
+`commission_rows`/`commission_calc` (re-keyed to month + station), `agents.apk_version`, and a
+`flags_cleared` table.
+
+- Assets `?v=53`, SW `imani-v53`
+
+---
+
 ## v1.35.0 — 2026-08-05 · "Bottom navigation for phones"
 
 A BDO works this app one-handed, standing in front of an agent. On a phone the sidebar collapsed

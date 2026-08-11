@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.35.0';
+  var APP_VERSION = '1.36.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -232,6 +232,37 @@
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Team': 'Timu',
     'More': 'Zaidi',
+    'Database Upload': 'Upakiaji wa Database',
+    'Every office file comes in here. Pick what kind it is - only the performance file scores anybody or raises a flag.':
+      'Kila faili la ofisi linaingia hapa. Chagua ni aina gani - faili la utendaji pekee ndilo linalotoa alama au kuweka bendera.',
+    'What are you uploading?': 'Unapakia nini?',
+    'scores': 'inatoa alama',
+    'This file scores and flags': 'Faili hili linatoa alama na bendera',
+    'Updates the database only - never scores, never flags':
+      'Linasasisha database tu - halitoi alama wala bendera',
+    'Columns': 'Safu',
+    'Clear result': 'Futa matokeo',
+    'Importing': 'Inapakia',
+    'rows...': 'safu...',
+    'No scores and no flags from this file': 'Hakuna alama wala bendera kutoka faili hili',
+    'new agents added': 'mawakala wapya wameongezwa',
+    '- BDOs can claim them under NEW in My Agent Base.':
+      '- BDO wanaweza kuwachukua chini ya MPYA kwenye Base Yangu.',
+    'weekly performance': 'utendaji wa wiki',
+    'monthly database baseline': 'msingi wa database wa mwezi',
+    'physical locations': 'maeneo halisi',
+    'priority base': 'base ya kipaumbele',
+    'commission rows saved': 'safu za kamisheni zimehifadhiwa',
+    'Open Commission & Months to calculate the release.': 'Fungua Kamisheni na Miezi kukokotoa malipo.',
+    'Commission file saved': 'Faili la kamisheni limehifadhiwa',
+    'Upload complete': 'Upakiaji umekamilika',
+    'Now showing': 'Sasa inaonyesha',
+    'Now showing all stations': 'Sasa inaonyesha vituo vyote',
+    'New agents to claim': 'Mawakala wapya wa kuchukua',
+    'My round': 'Mzunguko wangu',
+    'NEW - not yet mine': 'MPYA - bado si wangu',
+    'Agents in the company database that no BDO owns this month. Serve one and he joins your round.':
+      'Mawakala waliopo kwenye database ambao hakuna BDO aliyewachukua mwezi huu. Mhudumie mmoja naye anaingia kwenye mzunguko wako.',
     'All sections': 'Sehemu zote',
     'Main navigation': 'Urambazaji mkuu',
     'Home': 'Nyumbani',
@@ -795,7 +826,7 @@
     { key: 'mybase', label: 'My Agent Base', icon: 'phone' },
     { key: 'daily', label: 'Daily Report', icon: 'cal' },
     { key: 'agents', label: 'Agents', icon: 'users' },
-    { key: 'upload', label: 'Weekly Upload', icon: 'upload' },
+    { key: 'upload', label: 'Database Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
@@ -1068,6 +1099,13 @@
   }
   function renderTab() {
     var v = elById('view'); if (!v) return;
+    /* THE VIEW IS BEING REBUILT, SO ANY OPEN DIALOG IS STALE BY DEFINITION.
+     * Saves that rebuilt the page but forgot to shut their own box left it
+     * hanging over the fresh screen, and the only way out was Close or tapping
+     * outside. Closing here fixes the whole class at once instead of chasing
+     * each save. (Flows that mean to keep a dialog - the theme picker - reopen
+     * it after the redraw, so they are unaffected.) */
+    closeModal();
     v.innerHTML = skeletonHtml();
     if (state.tab === 'dashboard') viewDashboard(v);
     else if (state.tab === 'agents') viewAgents(v);
@@ -1973,7 +2011,10 @@
       var d = rr[0];
       state.month = d.month;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
-      var all = d.agents || [];
+      /* NEW = agents the monthly database file brought in that nobody owns yet.
+       * He serves one and it joins his round, so this is where his base grows. */
+      var showNew = state._baseNew === '1';
+      var all = showNew ? (d.unclaimed || []) : (d.agents || []);
       var q = (state._baseSearch || '').toLowerCase();
       var fb = state._baseBand || '';
       /* KPI filters: "who still needs a visit?" is one tap */
@@ -2062,7 +2103,15 @@
         card('cal', t('Month'), d.month) +
         '</div>' +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
-        '<h2 style="margin:0">' + svg('phone') + t('My agents') + ' (' + list.length + ')</h2></div>' +
+        '<h2 style="margin:0">' + svg('phone') + (showNew ? t('New agents to claim') : t('My agents')) + ' (' + list.length + ')</h2>' +
+        '<div class="spacer"></div>' +
+        '<button class="ghost mini' + (showNew ? '' : ' on') + '" data-action="baseScope" data-v="">' + t('My round') +
+        ' <span class="pill dim">' + fmt((d.agents || []).length) + '</span></button>' +
+        '<button class="ghost mini' + (showNew ? ' on' : '') + '" data-action="baseScope" data-v="1">' + t('NEW - not yet mine') +
+        ' <span class="pill ' + (d.counts.unclaimed ? 'fire' : 'dim') + '">' + fmt(d.counts.unclaimed || 0) + '</span></button>' +
+        '</div>' +
+        (showNew ? '<p class="note" style="margin:0 0 8px">' +
+          t('Agents in the company database that no BDO owns this month. Serve one and he joins your round.') + '</p>' : '') +
         '<div class="row filters" style="margin-bottom:6px">' +
         '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
         '<input id="baseSearch" placeholder="' + esc(t('name, acc, phone, branch, location...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
@@ -2545,29 +2594,69 @@
   }
 
   /* ---------------- weekly upload ---------------- */
+  /* ---------------- DATABASE UPLOAD ----------------
+   * Every file the office feeds the system comes through one door, and the KIND
+   * of file decides what it is allowed to do. Only the PERFORMANCE file scores
+   * anybody or raises a flag; the rest maintain the database and nothing more.
+   * One screen, one file box, one type - rather than five separate panels each
+   * with its own half-remembered rules. */
+  var UPLOAD_KINDS = [
+    { k: 'performance', label: 'Weekly performance', icon: 'chart', scores: true,
+      hint: 'The result file. Writes the office KPI totals, gives each BDO his credits, and raises flags where a BDO claim is not backed. This is the ONLY file that judges anybody.',
+      cols: 'Agent Account, Agent Name, Phone, Branch, Servicing, Agent Visit, APK, Agent Activeness, SA Commission, Served Status, SA Station. Optional: BDO, Physical Location.' },
+    { k: 'fixed', label: 'Monthly database (fixed)', icon: 'users', scores: false,
+      hint: 'The start-of-month baseline: every agent with his standing status - nobody served, no visits, no float, activeness as it stands, APK version where known. Refreshes the agent database only. NO credits, NO office totals and NO flags, so it is safe to upload late even after the BDOs have been out serving all week.',
+      cols: 'Agent Account, Agent Name, Phone, Branch, SA Station, Agent Activeness, APK. Optional: Physical Location.' },
+    { k: 'location', label: 'Physical locations', icon: 'pin', scores: false,
+      hint: 'Fills in where agents actually are. Touches the address only - no KPI, no score, no flag.',
+      cols: 'Agent Account, Physical Location. Optional: Agent Name, Branch, SA Station.' },
+    { k: 'commission', label: 'Commission file', icon: 'dollar', scores: false,
+      hint: 'The month\'s commission per agent, used to work out the release percentage. Kept per SA station.',
+      cols: 'Agent Account, Agent Name, SA Commission, Served Status, SA Station.' },
+    { k: 'highearners', label: 'High-earner list', icon: 'flame', scores: false,
+      hint: 'Ranks agents by commission into LIST A-E so every BDO chases the valuable ones first. Uploading REPLACES the previous list.',
+      cols: 'Agent Account, Agent Name, SA Commission, SA Station.' }
+  ];
   function viewUpload(v) {
+    var sel = state._upKind || 'performance';
+    var def = UPLOAD_KINDS.filter(function (x) { return x.k === sel; })[0] || UPLOAD_KINDS[0];
+    state._upKind = def.k;
+
+    var chips = UPLOAD_KINDS.map(function (x) {
+      return '<button class="role-chip' + (x.k === def.k ? ' active' : '') + '" data-action="upKind" data-k="' + x.k + '">' +
+        svg(x.icon) + ' ' + esc(t(x.label)) +
+        (x.scores ? ' <span class="pill bad">' + t('scores') + '</span>' : '') + '</button>';
+    }).join('');
+
     v.innerHTML =
-      '<h1 class="page-title">Weekly Performance Upload</h1>' +
-      '<p class="page-sub">Excel columns: Agent Account, Agent Name, Phone, Branch, Float Served, Agent Visit, APK Update, Agent Activeness, SA Commission, Served Status. Optional: BDO, Physical Location, Partner.</p>' +
-      '<div class="panel"><h2>' + svg('upload') + 'Import</h2>' +
-      '<p class="note">No need to pick a BDO &mdash; a BDO/Officer column in the file links each row automatically (new BDOs get accounts); rows without one go to Unassigned.</p>' +
-      '<div class="row" style="margin-top:8px">' +
-      '<div class="field"><label>Month</label><input id="upMonth" type="month" value="' + esc(state.openMonth || curMonth()) + '"></div>' +
-      '<div class="field"><label>Week</label><input id="upWeek" placeholder="e.g. W1"></div>' +
-      '<div class="field"><label>Label (optional)</label><input id="upLabel" maxlength="160" placeholder="e.g. July week 2 final file"></div>' +
-      '<div class="field"><label>Excel file (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
-      (can('upload', 'e') ? '<button class="btn" data-action="doUpload">Upload</button><button class="ghost" data-action="loadDemo">Load demo data</button>' : '<span class="note">View only.</span>') +
+      '<h1 class="page-title">' + t('Database Upload') + '</h1>' +
+      '<p class="page-sub">' + t('Every office file comes in here. Pick what kind it is - only the performance file scores anybody or raises a flag.') + '</p>' +
+
+      '<div class="panel"><h2>' + svg('upload') + t('What are you uploading?') + '</h2>' +
+      '<div class="row" style="gap:8px;margin-bottom:10px">' + chips + '</div>' +
+      '<div class="panel" style="margin:0;border-color:' + (def.scores ? 'var(--bad)' : 'var(--line)') + '">' +
+      '<b>' + svg(def.icon) + ' ' + esc(t(def.label)) + '</b>' +
+      (def.scores
+        ? ' <span class="pill bad">' + t('This file scores and flags') + '</span>'
+        : ' <span class="pill ok">' + t('Updates the database only - never scores, never flags') + '</span>') +
+      '<p class="note" style="margin:6px 0 0">' + esc(t(def.hint)) + '</p>' +
+      '<p class="note" style="margin:6px 0 0"><b>' + t('Columns') + ':</b> ' + esc(def.cols) + '</p></div>' +
+
+      '<div class="row" style="margin-top:10px">' +
+      '<div class="field"><label>' + t('Month') + '</label><input id="upMonth" type="month" value="' + esc(state.openMonth || curMonth()) + '"></div>' +
+      (def.k === 'performance' ? '<div class="field"><label>' + t('Week') + '</label><input id="upWeek" placeholder="e.g. W1"></div>' : '') +
+      '<div class="field"><label>' + t('Label') + ' (' + t('optional') + ')</label><input id="upLabel" maxlength="160" placeholder="' + esc(t('e.g. August baseline')) + '"></div>' +
+      '<div class="field"><label>' + t('Excel file') + ' (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
+      (can('upload', 'e')
+        ? '<button class="btn" data-action="doUpload">' + svg('upload') + ' ' + t('Upload') + '</button>' +
+          (def.k === 'performance' ? '<button class="ghost" data-action="loadDemo">' + t('Load demo data') + '</button>' : '')
+        : '<span class="note">' + t('View only.') + '</span>') +
       '</div>' +
-      '<label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="upPriority"> ' +
-      'This is a <b>&nbsp;priority base list&nbsp;</b> (agents with physical locations + BDO names) - place agents into each BDO\'s priority base</label>' +
-      '<div id="upResult" class="note" style="margin-top:12px"></div></div>' +
-      (isManager()
-        ? '<div class="panel"><h2>' + svg('dollar') + t('High-earner priority list') + '</h2>' +
-          '<p class="note">' + t('Upload agents ranked by commission (columns: Agent Account, Agent Name, SA Commission, SA Station). Whoever is still NOT served shows on every BDO\'s priority list in bands: A >2M, B >1M, C >500k, D >100k, E >50k - matched live against every performance upload and every BDO tap. Uploading REPLACES the previous list.') + '</p>' +
-          '<div class="row"><div class="field"><label>Excel file (.xlsx)</label><input id="heFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
-          '<button class="btn" data-action="heUpload">' + svg('upload') + ' ' + t('Upload high earners') + '</button></div>' +
-          '<div id="heResult" class="note" style="margin-top:10px"></div></div>'
-        : '');
+      /* the result of the last import, with its own dismiss - a summary that
+       * cannot be cleared looks like it is still happening */
+      '<div id="upResult" class="note" style="margin-top:12px"></div>' +
+      '<div class="row" style="margin-top:6px"><button class="ghost mini" data-action="upClear">' + t('Clear result') + '</button></div>' +
+      '</div>';
   }
   function heUpload() {
     readExcel(elById('heFile'), function (rows) {
@@ -2592,12 +2681,41 @@
     };
     rd.readAsArrayBuffer(f);
   }
+  /* One button, five destinations. The kind chosen above decides which endpoint
+   * the rows go to and what the file is allowed to change. */
   function doUpload() {
+    var kind = state._upKind || 'performance';
+    var box = elById('upResult');
     readExcel(elById('upFile'), function (rows) {
-      var mode = elById('upPriority') && elById('upPriority').checked ? 'priority' : '';
-      api('upload_weekly', { body: { month: elById('upMonth').value, week: elById('upWeek').value, label: elById('upLabel') ? elById('upLabel').value : '', mode: mode, rows: rows } })
-        .then(function (d) { elById('upResult').innerHTML = uploadSummary(d); toast('Upload complete', 'ok'); })
-        .catch(function (e) { elById('upResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+      box.innerHTML = '<span class="note">' + t('Importing') + ' ' + fmt(rows.length) + ' ' + t('rows...') + '</span>';
+      if (kind === 'highearners') {
+        api('high_earners_upload', { body: { rows: rows } })
+          .then(function (d) {
+            box.innerHTML = '<span class="pill ok">' + d.count + ' ' + t('high earners saved') + '</span> ' +
+              t('BDOs now see the not-served ones on their priority list.');
+            toast(d.count + ' ' + t('high earners saved'), 'ok');
+          })
+          .catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+        return;
+      }
+      if (kind === 'commission') {
+        api('commission_upload', { body: { month: elById('upMonth').value, rows: rows } })
+          .then(function (d) {
+            box.innerHTML = '<span class="pill ok">' + fmt(d.rows || d.count || rows.length) + ' ' + t('commission rows saved') + '</span> ' +
+              t('Open Commission & Months to calculate the release.');
+            toast(t('Commission file saved'), 'ok');
+          })
+          .catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+        return;
+      }
+      api('upload_weekly', { body: {
+        month: elById('upMonth').value,
+        week: elById('upWeek') ? elById('upWeek').value : '',
+        label: elById('upLabel') ? elById('upLabel').value : '',
+        mode: kind, rows: rows
+      } })
+        .then(function (d) { box.innerHTML = uploadSummary(d); toast(t('Upload complete'), 'ok'); })
+        .catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
     });
   }
   function loadDemo() {
@@ -2617,7 +2735,15 @@
       .catch(function (e) { elById('upResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
   }
   function uploadSummary(d) {
-    var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) + (d.priorityMode ? ' as <b>PRIORITY base</b>' : '') + ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.';
+    var KINDNAME = { performance: 'weekly performance', fixed: 'monthly database baseline',
+                     location: 'physical locations', priority: 'priority base' };
+    var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) +
+            ' as <b>' + esc(t(KINDNAME[d.mode] || d.mode || 'performance')) + '</b>';
+    s += d.scoring
+      ? ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.'
+      : '. <span class="pill ok">' + t('No scores and no flags from this file') + '</span>';
+    if (d.newAgents) s += ' <span class="pill fire">' + fmt(d.newAgents) + ' ' + t('new agents added') + '</span> ' +
+      t('- BDOs can claim them under NEW in My Agent Base.');
     if (d.createdBdos && d.createdBdos.length) s += ' New BDO accounts: ' + d.createdBdos.map(esc).join(', ') + ' (password imani123).';
     if (d.flagged) s += ' <span class="pill bad">' + d.flagged + ' flag' + (d.flagged > 1 ? 's' : '') + ' raised</span> (a BDO claim the month\'s files do not back - see Flags).';
     /* blank SA STATION cells were counted into the home station rather than
@@ -3816,6 +3942,8 @@
       state.tab = toTab; renderShell(); return;
     }
     if (a === 'moreNav') { moreNavSheet(); return; }
+    if (a === 'upKind') { state._upKind = node.getAttribute('data-k'); renderTab(); return; }
+    if (a === 'upClear') { var ur = elById('upResult'); if (ur) ur.innerHTML = ''; return; }
     if (a === 'toggleTheme') { toggleTheme(); themePicker(); return; }
     if (a === 'themePick') { themePicker(); return; }
     if (a === 'palSet') { setPalette(node.getAttribute('data-p')); renderShell(); themePicker(); return; }
@@ -3867,6 +3995,7 @@
       return;
     }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
+    if (a === 'baseScope') { state._baseNew = node.getAttribute('data-v'); renderTab(); return; }
     if (a === 'baseClear') {
       state._baseBand = ''; state._baseKpi = ''; state._baseSearch = '';
       state._baseServed = ''; state._baseLoc = ''; state._baseBranch = ''; state._baseField = '';
@@ -4288,7 +4417,15 @@
     }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
-    if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') { state._dashStation = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') {
+      /* the region is a decision, not a page setting: store it so the agent
+       * list, flags, live board, targets and commission all follow */
+      state._dashStation = n.value;
+      api('view_station_set', { body: { station: n.value } })
+        .then(function () { toast(n.value ? (t('Now showing') + ' ' + n.value) : t('Now showing all stations'), 'ok'); renderTab(); })
+        .catch(function (e) { toast(e.message, 'err'); renderTab(); });
+      return;
+    }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'tgStationPick') { state.tgStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'cbStation') { state._cbStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }

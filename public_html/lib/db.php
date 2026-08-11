@@ -381,6 +381,52 @@ function upgrade_schema($pdo) {
     schema_v15_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "15" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 16) {
+    schema_v16_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "16" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v16: the upload screen becomes DATABASE UPLOAD with several kinds of file
+ * behind one door, and only the weekly PERFORMANCE file is allowed to judge
+ * anybody. Each upload records which kind it was, so an import can be read back
+ * (and erased) knowing whether it ever counted.
+ *
+ * Commission also gains a station: two SA stations earn different achievements
+ * and cannot share one release percentage.
+ *
+ * flags_cleared remembers every clearance the OM makes - who, when, and how
+ * many times the same claim has been forgiven - so a pattern stays visible
+ * instead of the history being wiped.
+ */
+function schema_v16_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE uploads ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT "performance"',
+    'ALTER TABLE commission_rows ADD COLUMN station VARCHAR(32) NOT NULL DEFAULT ""',
+    'ALTER TABLE commission_calc ADD COLUMN station VARCHAR(32) NOT NULL DEFAULT ""',
+    /* the APK version the baseline file reported for this agent, so the list
+       can show "on 1.8" rather than only a yes/no against the required one */
+    'ALTER TABLE agents ADD COLUMN apk_version VARCHAR(16) NOT NULL DEFAULT ""',
+    'ALTER TABLE agents ADD COLUMN apk_month CHAR(7) NOT NULL DEFAULT ""',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  /* commission is settled per (month, station) now, not per month */
+  try { $pdo->exec('ALTER TABLE commission_calc DROP PRIMARY KEY, ADD PRIMARY KEY (month, station)'); } catch (Exception $e) { /* done */ }
+  $pdo->exec('
+  CREATE TABLE IF NOT EXISTS flags_cleared (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    kpi VARCHAR(12) NOT NULL,
+    detail VARCHAR(255) NOT NULL DEFAULT "",
+    cleared_by VARCHAR(64) NOT NULL DEFAULT "",
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_fc_month (month),
+    INDEX idx_fc_claim (agent_id, bdo, kpi)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ');
 }
 
 /*

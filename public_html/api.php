@@ -343,7 +343,9 @@ try {
       $byStation = isset($snap['_stations']) && is_array($snap['_stations']) ? $snap['_stations'] : array();
       $stations = array_keys($byStation);
       sort($stations);
-      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+      /* the OM's stored choice governs; an explicit ?station= still wins for
+       * one-off inspection without changing what everyone else sees */
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
       $stationStats = ($station !== '' && isset($byStation[$station])) ? $byStation[$station] : null;
 
       $oa = office_attainment($month, $station);
@@ -371,6 +373,20 @@ try {
         'serveReceipt' => setting_get('serve_receipt', 'optional'),
         'wakeReceipt' => setting_get('wake_receipt', 'photo'),
       ));
+    }
+
+    /*
+     * The OM picks the region ONCE and every screen obeys it. Stored, not held
+     * in the page, so the agent list, flags, live board and targets can never
+     * disagree with the dashboard about which station is being worked.
+     */
+    case 'view_station_set': {
+      $u = require_auth(); require_manager($u);
+      $s = strtoupper(trim((string)bval('station')));
+      if (strlen($s) > 32) fail('Station name too long');
+      setting_set('view_station', $s);
+      audit($u['id'], 'view_station', $s === '' ? 'ALL stations' : $s);
+      respond(array('ok' => true, 'station' => $s));
     }
 
     /* OM chooses which KPIs show on everyone's dashboard + the required APK version. */
@@ -466,14 +482,12 @@ try {
       if ($fa === 'active') { $conds[] = 'act_current = "ACTIVE"'; }
       elseif ($fa === 'inactive') { $conds[] = 'act_current = "INACTIVE"'; }
 
-      /* Region: a field user only ever sees his home station. The OM may pass
-       * &station= to inspect any region (empty = everything). */
+      /* Region: a field user is pinned to the home station; management follows
+       * the one station choice the OM made, which now governs this list too.
+       * Agents with a blank station stay visible - a missing cell in the file
+       * must not hide an agent from the man who has to serve him. */
       $scope = station_scope($u);
       if ($scope !== '') { $conds[] = '(station = ? OR station = "")'; $vals[] = $scope; }
-      else {
-        $omStation = strtoupper(trim((string)($_GET['station'] ?? '')));
-        if ($omStation !== '') { $conds[] = 'station = ?'; $vals[] = $omStation; }
-      }
 
       /* High-earner band filter (A..E, or F = not on the commission list). */
       $fband = strtoupper(trim((string)($_GET['fband'] ?? '')));
@@ -674,10 +688,42 @@ try {
       $sp->execute(array($month));
       $special = $sp->fetchAll();
 
+      /*
+       * UNCLAIMED AGENTS - the men the monthly database file brought in whom no
+       * BDO has taken yet. They are not in anybody's round, so without this they
+       * sit in the system invisible until someone happens to search for them.
+       * A BDO serves one and the agent becomes his. Station-scoped like
+       * everything else.
+       */
+      $scope2 = station_scope($u);
+      $uc = array();
+      $ucSql = "SELECT a.id, a.acc, a.name, a.phone, a.branch, a.station, a.physical_location,
+                       a.act_current, a.act_prev, a.act_month
+                FROM agents a
+                WHERE NOT EXISTS (SELECT 1 FROM base b WHERE b.month = ? AND b.agent_id = a.id)
+                  AND NOT EXISTS (SELECT 1 FROM agent_month_kpi k WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served')";
+      $ucVals = array($month, $month);
+      if ($scope2 !== '') { $ucSql .= ' AND (a.station = ? OR a.station = "")'; $ucVals[] = $scope2; }
+      $ucSql .= ' ORDER BY a.name LIMIT 300';
+      $ucq = db()->prepare($ucSql);
+      $ucq->execute($ucVals);
+      foreach ($ucq->fetchAll() as $a2) {
+        $a2['level'] = 'unclaimed';
+        $a2['kpi'] = new stdClass();
+        $a2['actStatus'] = strtoupper((string)$a2['act_current']);
+        $a2['actPrev'] = strtoupper((string)$a2['act_prev']);
+        $a2['actFromFile'] = false;
+        $a2['lastTx'] = ''; $a2['wontReturn'] = false;
+        $a2['band'] = he_band($a2['acc']);
+        unset($a2['act_current'], $a2['act_month'], $a2['act_prev']);
+        $uc[] = $a2;
+      }
+
       respond(array(
         'bdo' => $bdo, 'month' => $month, 'monthStatus' => month_status($month),
-        'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)), 'total' => count($ids), 'served' => $servedNow),
-        'agents' => $agents, 'performance' => $perf, 'special' => $special,
+        'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)),
+                          'total' => count($ids), 'served' => $servedNow, 'unclaimed' => count($uc)),
+        'agents' => $agents, 'unclaimed' => $uc, 'performance' => $perf, 'special' => $special,
       ));
     }
 
@@ -1360,7 +1406,7 @@ try {
       $names = array();
       foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
 
-      $station = strtoupper(trim((string)($_GET['station'] ?? '')));
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
       $sql = 'SELECT id, acc, name, phone, branch, station, physical_location FROM agents';
       $vals = array();
       if ($station !== '') { $sql .= ' WHERE station = ?'; $vals[] = $station; }
@@ -1727,14 +1773,36 @@ try {
       $insSvc = db()->prepare('INSERT INTO service_history
           (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source, upload_id)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
-      $priorityMode = bval('mode') === 'priority'; // OM seeding priority bases (agents + locations + BDO names)
-      $kind = $priorityMode ? 'priority' : 'uploaded';
+      /*
+       * WHAT KIND OF FILE IS THIS?
+       *
+       *   performance - the weekly/monthly result file. The ONLY kind that
+       *                 scores anybody: it writes office totals, gives KPI
+       *                 credits and raises flags.
+       *   fixed       - the monthly DATABASE baseline. Every agent with his
+       *                 standing status: nobody served, no visits, no float,
+       *                 activeness and APK as they are. It refreshes the agent
+       *                 database and the activeness/APK baseline and NOTHING
+       *                 else - no credits, no office totals, and above all no
+       *                 flags, so a baseline that lands late cannot accuse a
+       *                 BDO who has already been out serving all week.
+       *   priority    - the older base-seeding file (kept working).
+       *   location    - physical locations only; touches no KPI at all.
+       */
+      $mode = strtolower(trim((string)bval('mode')));
+      if (!in_array($mode, array('performance', 'fixed', 'priority', 'location'), true)) $mode = 'performance';
+      $scoring = ($mode === 'performance');
+      /* everything that is not the performance file behaves like the old
+       * priority seed: agents in, judgement out */
+      $priorityMode = !$scoring;
+      $kind = ($mode === 'priority') ? 'priority' : ($mode === 'fixed' ? 'fixed' : 'uploaded');
       $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
-      $flagged = 0;
+      $updApk = db()->prepare('UPDATE agents SET apk_version = ?, apk_month = ? WHERE id = ?');
+      $flagged = 0; $newAgents = 0;
       /* Flags are recomputed once, after every row is written, by comparing the
        * BDO's live claims with the month's ENTIRE office record - see the
        * reconciliation block below. */
@@ -1818,9 +1886,12 @@ try {
       /* Register this upload: dated, labelled, and every row/credit it writes
        * carries its id - so it can be renamed or ERASED as one unit later. */
       $upLabel = trim((string)bval('label'));
-      if ($upLabel === '') $upLabel = ($week !== '' ? $week . ' - ' : '') . $month . ' file';
-      db()->prepare('INSERT INTO uploads (month, week, label, by_user, rows_count, stats) VALUES (?,?,?,?,?,?)')
-          ->execute(array($month, $week, mb_substr($upLabel, 0, 160), $u['username'], count($parsed), json_encode($stats)));
+      if ($upLabel === '') {
+        $upLabel = ($mode === 'fixed' ? 'Monthly database baseline - ' : ($week !== '' ? $week . ' - ' : ''))
+                 . $month . ' file';
+      }
+      db()->prepare('INSERT INTO uploads (month, week, label, by_user, rows_count, stats, kind) VALUES (?,?,?,?,?,?,?)')
+          ->execute(array($month, $week, mb_substr($upLabel, 0, 160), $u['username'], count($parsed), json_encode($stats), $mode));
       $uploadId = (int)db()->lastInsertId();
 
       /* PASS 2: write agents, history, bases, ledger, flags. */
@@ -1856,6 +1927,7 @@ try {
         } else {
           $insAgent->execute(array($r['acc'],$r['name'],$r['phone'],$r['branch'],$r['location'],$r['partner'],$r['station']));
           $id = (int)db()->lastInsertId();
+          $newAgents++;   /* never seen before - a BDO can claim him */
         }
         /* Activeness transition snapshot - drives the Inactive Agents panel.
          *
@@ -1869,6 +1941,12 @@ try {
         $actCur = $r['act_cur'];
         if ($actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
         if ($actCur !== '' || $r['act_prev'] !== '') $updAct->execute(array($actCur, $r['act_prev'], $month, $id));
+        /* The baseline file also carries each agent's APK version. Store it so
+         * the list can say "on 1.8" instead of only pass/fail against the
+         * required version. */
+        if ($mode === 'fixed' && trim((string)$r['apk_raw']) !== '') {
+          $updApk->execute(array(trim((string)$r['apk_raw']), $month, $id));
+        }
 
         $agents++;
         /* PRIORITY MODE is a DATABASE SEED, not performance: it only creates or
@@ -1987,8 +2065,9 @@ try {
       audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ' answersKept=' . $restored . ($blankStation ? ' blankStation=' . $blankStation : ''));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
+                    'mode' => $mode, 'scoring' => $scoring,
                     'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats,
-                    'answersKept' => $restored,
+                    'answersKept' => $restored, 'newAgents' => $newAgents,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation));
     }
 
