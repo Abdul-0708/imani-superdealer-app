@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.36.0';
+  var APP_VERSION = '1.37.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -74,6 +74,10 @@
     'Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.':
       'Piga picha ya RISITI ZA MIAMALA ya wakala kama uthibitisho kwamba anafanya miamala tena. Uongozi unaweza kuifungua kwenye chip yake.',
     'Receipt photo': 'Picha ya risiti',
+    'Take photo': 'Piga picha',
+    'Choose from gallery': 'Chagua kwenye ghala la picha',
+    'Take the receipt photo now, or attach one already saved on your phone.':
+      'Piga picha ya risiti sasa, au ambatanisha iliyoko kwenye simu yako.',
     'Save proof & wake': 'Hifadhi uthibitisho & amsha',
     'Take the receipt photo first': 'Piga picha ya risiti kwanza',
     'Receipt proof': 'Uthibitisho wa risiti',
@@ -661,7 +665,9 @@
     el.className = 'toast' + (kind ? ' ' + kind : '');
     el.textContent = msg;
     elById('toasts').appendChild(el);
-    setTimeout(function () { t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 400); }, 3400);
+    /* `el`, not `t` - `t` is the translator, and reaching for `t.style` here
+     * threw every time a toast timed out, so toasts never faded or removed. */
+    setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 400); }, 3400);
   }
   /* Top progress bar: any request in flight keeps it visible, so a slow phone
    * network reads as "working" instead of "frozen". */
@@ -815,7 +821,9 @@
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
     alert: '<path d="M12 3l9 16H3z"/><path d="M12 10v4"/><path d="M12 17h.01"/>',
-    pin: '<path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>'
+    pin: '<path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    camera: '<path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/>',
+    gallery: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-6 6-2-2-5 5"/>'
   };
   function svg(name) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.grid) + '</svg>';
@@ -1289,11 +1297,69 @@
           '</div></div></div></div>';
       }
 
+      /* HIS WEIGHTED SCORE AGAINST THE MONTHLY TARGET, TWICE.
+       * Left: what he has claimed. Right: what survives if every flag against
+       * him is upheld. The gap between the two is the exact cost of his flags,
+       * which is what makes him go and settle them. */
+      var scorePanel = '';
+      if (d.performance) {
+        var withF = d.performance, clean = d.performanceClean || d.performance;
+        var gap = (withF.score != null && clean.score != null) ? (withF.score - clean.score) : 0;
+        var nFlags = d.flagCount || 0;
+        scorePanel =
+          '<div class="panel"><h2>' + svg('percent') + t('My weighted score vs my monthly target') + '</h2>' +
+          '<div class="grid cards" style="margin-bottom:10px">' +
+          card('percent', t('As I claimed'), (withF.score == null ? '-' : withF.score + '%'),
+               t('every KPI I ticked')) +
+          card(nFlags ? 'alert' : 'check', t('If every flag stands'), (clean.score == null ? '-' : clean.score + '%'),
+               nFlags ? (fmt(nFlags) + ' ' + t('flags would remove this much')) : t('no flags against me')) +
+          '</div>' +
+          (nFlags
+            ? '<div style="border-top:1px solid var(--line);padding-top:10px">' +
+              '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<span class="pill ' + (gap >= 10 ? 'bad' : 'fire') + '">-' + (gap > 0 ? gap : 0) + '%</span>' +
+              '<b>' + t('is what your flags cost you') + '</b></div>' +
+              '<div class="note" style="margin:6px 0 8px">' + t('Answer them on the Flags panel - a claim you can prove is a claim the OM can clear.') + '</div>' +
+              '<button class="btn mini" data-action="tab" data-tab="flags">' + t('Work on my flags') + '</button></div>'
+            : '<div class="note">' + t('Clean month - nothing is being questioned. Both numbers are the same.') + '</div>') +
+          '<div style="margin-top:10px">' + perfBars(withF.kpis) + '</div>' +
+          '</div>';
+      }
+
+      /* WHERE HE STANDS ON HIS BASE. The base is the raw material of every KPI
+       * he will ever score, so he is shown its size against everyone else's and
+       * how much of it he has actually covered. Growing the base is the point. */
+      var standPanel = '';
+      var sd = d.standing;
+      if (sd && sd.peers > 1) {
+        var covPct = sd.coverage == null ? 0 : sd.coverage;
+        var behind = sd.biggestBase != null ? (sd.biggestBase - sd.base) : null;
+        standPanel =
+          '<div class="panel"><h2>' + svg('users') + t('Where I stand') + '</h2>' +
+          '<div class="grid cards" style="margin-bottom:10px">' +
+          card('users', t('My agent base'), fmt(sd.base),
+               '#' + sd.baseRank + ' ' + t('of') + ' ' + sd.peers + ' ' + t('by base size')) +
+          card('check', t('Covered so far'), covPct + '%',
+               fmt(sd.served) + ' / ' + fmt(sd.base) + ' · #' + sd.coverageRank + ' ' + t('by coverage')) +
+          '</div>' +
+          '<div class="tg-row"><span class="tg-name">' + t('My coverage') + '</span>' +
+          '<div class="bar" style="flex:1"><i class="' + (covPct < 50 ? 'red' : covPct >= 80 ? 'green' : '') + '" style="width:' + Math.max(0, Math.min(100, covPct)) + '%"></i></div>' +
+          '<span class="tg-pct">' + covPct + '%</span></div>' +
+          '<div class="note" style="margin-top:8px">' +
+          (behind != null && behind > 0
+            ? t('The biggest base in the office holds') + ' <b>' + fmt(sd.biggestBase) + '</b> ' + t('agents') + ' &mdash; ' +
+              t('you are') + ' <b>' + fmt(behind) + '</b> ' + t('short of it. Every new agent you recruit or take over grows what you can score from.')
+            : t('You hold the biggest base in the office. Keep it covered and keep it growing.')) +
+          '</div></div>';
+      }
+
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
+        scorePanel +
+        standPanel +
         livePanel;
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -2475,21 +2541,49 @@
           t('You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.') + '</p></div>'
         : '') +
       '<p class="note">' + t('Confirm the agent\'s physical location - it becomes his known location and counts him into your base.') + ' ' +
-      t('Attach the receipt photo of what he transacted as your proof of serving.') + '</p>' +
+      t('Attach the receipt photo of what he transacted as your proof of serving.') + ' ' +
+      t('Take the receipt photo now, or attach one already saved on your phone.') + '</p>' +
       '<div class="field"><label>' + t('Physical location') + '</label><input id="locInput" value="' + esc(knownLoc || '') + '" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
       '<div class="field" style="margin-top:8px"><label>' + t('Serving receipt photo') + ' ' +
       (required ? '<span class="pill bad">' + t('COMPULSORY') + '</span>' : '<span class="pill dim">' + t('optional') + '</span>') + '</label>' +
-      '<input id="serveFile" type="file" accept="image/*" capture="environment"></div>' +
+      photoPicker('serveFile') + '</div>' +
       '<div id="servePrev" style="margin-top:8px;text-align:center"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
       '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
       '<button class="btn" data-action="locConfirm" data-id="' + id + '" data-kpi="' + kpi + '" data-name="' + esc(name) + '" data-req="' + (required ? '1' : '') + '">' + t('Save & mark served') + '</button></div>');
     state._locNode = node;
     state._serveProof = '';
-    var inp = elById('serveFile');
-    inp.addEventListener('change', function () {
-      readPhoto(inp.files && inp.files[0], elById('servePrev'), function (dataUrl) {
-        state._serveProof = dataUrl;
+    photoPickerWire('serveFile', 'servePrev', function (dataUrl) {
+      state._serveProof = dataUrl;
+    });
+  }
+  /* ---------------- where the photo comes from ----------------
+   * `capture="environment"` does not mean "prefer the camera" on a phone - it
+   * means CAMERA ONLY, and the gallery is not offered at all. So a receipt he
+   * photographed at the agent's counter an hour ago, or one a colleague sent
+   * him on WhatsApp, could never be attached. Two separate inputs: one goes
+   * straight to the camera, one straight to the gallery, both feeding the same
+   * preview. The camera sits first because a fresh photo is the honest default.
+   */
+  function photoPicker(base) {
+    /* input BEFORE its own label so the focus ring can follow it in CSS */
+    return '<div class="row pick-row">' +
+      '<input class="pick-input" id="' + base + 'Cam" type="file" accept="image/*" capture="environment">' +
+      '<label class="pick-btn" for="' + base + 'Cam">' + svg('camera') + ' ' + t('Take photo') + '</label>' +
+      '<input class="pick-input" id="' + base + 'Gal" type="file" accept="image/*">' +
+      '<label class="pick-btn" for="' + base + 'Gal">' + svg('gallery') + ' ' + t('Choose from gallery') + '</label>' +
+      '</div>';
+  }
+  /* Both inputs share one handler, and picking from one clears the other so the
+   * last photo chosen is always the one that gets sent. */
+  function photoPickerWire(base, prevId, done) {
+    ['Cam', 'Gal'].forEach(function (which) {
+      var inp = elById(base + which);
+      if (!inp) return;
+      inp.addEventListener('change', function () {
+        var other = elById(base + (which === 'Cam' ? 'Gal' : 'Cam'));
+        if (other) other.value = '';
+        readPhoto(inp.files && inp.files[0], elById(prevId), done);
       });
     });
   }
@@ -2561,9 +2655,10 @@
    * the phone (max 1280px JPEG) so it uploads fast even on slow networks. */
   function proofModal(id, name, node, knownLoc) {
     openModal('<h2>' + svg('zap') + ' ' + t('Wake') + ' ' + esc(name) + '</h2>' +
-      '<p class="note">' + t('Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.') + '</p>' +
+      '<p class="note">' + t('Take a photo of the agent\'s TRANSACTION RECEIPTS as proof he is transacting again. Management can open it from his chip.') + ' ' +
+      t('Take the receipt photo now, or attach one already saved on your phone.') + '</p>' +
       '<div class="field"><label>' + t('Receipt photo') + '</label>' +
-      '<input id="proofFile" type="file" accept="image/*" capture="environment"></div>' +
+      photoPicker('proofFile') + '</div>' +
       '<div id="proofPrev" style="margin-top:8px;text-align:center"></div>' +
       '<div class="field" style="margin-top:8px"><label>' + t('No photo? Confirm by words - how are you SURE he transacted?') + '</label>' +
       '<input id="proofNote" maxlength="255" placeholder="' + esc(t('e.g. I saw his float statement at the branch today')) + '"></div>' +
@@ -2584,12 +2679,9 @@
     var noteInp = elById('proofNote');
     noteInp.addEventListener('input', proofReady);
     elById('proofLoc').addEventListener('input', proofReady);
-    var inp = elById('proofFile');
-    inp.addEventListener('change', function () {
-      readPhoto(inp.files && inp.files[0], elById('proofPrev'), function (dataUrl) {
-        state._proofData = dataUrl;
-        if (state._proofReady) state._proofReady();
-      });
+    photoPickerWire('proofFile', 'proofPrev', function (dataUrl) {
+      state._proofData = dataUrl;
+      if (state._proofReady) state._proofReady();
     });
   }
 
@@ -2997,10 +3089,21 @@
       state.months = ms.months;
       var sel = state._commMonth || ms.open;
       state._commMonth = sel;
-      return api('commission_get', { qs: '&month=' + sel }).then(function (d) {
+      var qs = '&month=' + sel + (state._commStation ? '&station=' + encodeURIComponent(state._commStation) : '');
+      return api('commission_get', { qs: qs }).then(function (d) {
+        state._commStation = d.station || '';
         var strip = ms.months.map(function (m) {
           return '<button class="mo ' + m.status + (m.month === sel ? ' sel' : '') + '" data-action="commMonth" data-m="' + m.month + '">' + m.month + '<span class="st">' + m.status + '</span></button>';
         }).join('');
+        /* Every station on file for this month, plus the one being viewed even
+         * if nothing has been uploaded for it yet. */
+        var stns = (d.stations || []).slice();
+        if (d.station && stns.indexOf(d.station) < 0) stns.unshift(d.station);
+        var stationBar = stns.length > 1
+          ? '<div class="role-chips" style="margin:6px 0 10px">' + stns.map(function (sn) {
+              return '<button class="role-chip' + (sn === d.station ? ' active' : '') + '" data-action="commStation" data-s="' + esc(sn) + '">' + esc(sn) + '</button>';
+            }).join('') + '</div>'
+          : '';
         var canE = can('commission', 'e');
         var s = d.saved;
         var calcCards = s
@@ -3017,8 +3120,10 @@
           '<p class="page-sub">Upload the final commission Excel before closing a month. A new month can be open for BDOs while the previous waits for its final commission.</p>' +
           '<div class="panel"><h2>' + svg('cal') + 'Months</h2><div class="mo-strip">' + strip + '</div>' +
           (canE ? '<button class="ghost" data-action="monthOpen">Open next month (current becomes AWAITING)</button>' : '') + '</div>' +
-          '<div class="panel"><h2>' + svg('dollar') + 'Final Commission &mdash; ' + esc(sel) + ' <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + esc(d.status || '?') + '</span></h2>' +
-          '<p class="note">Uploaded rows: <b>' + fmt(d.uploadedRows) + '</b> (' + fmt(d.servedRows) + ' served). Suggested achievement from targets: <b>' + (d.suggestedAchievement == null ? 'set targets first' : d.suggestedAchievement + '%') + '</b></p>' +
+          '<div class="panel"><h2>' + svg('dollar') + 'Final Commission &mdash; ' + esc(sel) + ' &middot; ' + esc(d.station || 'no station') + ' <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + esc(d.status || '?') + '</span></h2>' +
+          stationBar +
+          '<p class="note">Each SA station is settled on its own: its own served rows, its own pool, its own achievement.</p>' +
+          '<p class="note">Uploaded rows: <b>' + fmt(d.uploadedRows) + '</b> (' + fmt(d.servedRows) + ' served) for <b>' + esc(d.station || '-') + '</b>. Suggested achievement from ' + esc(d.station || 'this station') + ' targets: <b>' + (d.suggestedAchievement == null ? 'set targets first' : d.suggestedAchievement + '%') + '</b></p>' +
           (canE && d.status !== 'CLOSED'
             ? '<div class="row" style="margin-top:8px">' +
               '<div class="field"><label>Commission Excel (.xlsx)</label><input id="commFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
@@ -3038,23 +3143,29 @@
   }
   function commUpload() {
     readExcel(elById('commFile'), function (rows) {
-      api('commission_upload', { body: { month: state._commMonth, rows: rows } })
-        .then(function (d) { toast('Commission file loaded: ' + fmt(d.rows) + ' rows', 'ok'); renderTab(); })
+      /* The station travels with the upload so a file WITHOUT an SA STATION
+       * column lands on the station being viewed instead of nowhere. */
+      api('commission_upload', { body: { month: state._commMonth, station: state._commStation || '', rows: rows } })
+        .then(function (d) {
+          toast('Commission file loaded: ' + fmt(d.rows) + ' rows (' + (d.stations || []).join(', ') + ')', 'ok');
+          renderTab();
+        })
         .catch(function (e) { toast(e.message, 'err'); });
     });
   }
   function commDemo() {
-    var rows = [];
-    for (var i = 1; i <= 10; i++) rows.push({ 'Agent Account': 'D' + i, 'SA Commission': 12500000, 'Served Status': i <= 8 ? 'SERVED' : 'NOT_SERVED' });
-    api('commission_upload', { body: { month: state._commMonth, rows: rows } })
-      .then(function () { toast('Demo commission loaded (8 x 12.5M served)', 'ok'); renderTab(); })
+    var rows = [], stn = state._commStation || 'ARUSHA';
+    for (var i = 1; i <= 10; i++) rows.push({ 'Agent Account': 'D' + i, 'SA Commission': 12500000, 'Served Status': i <= 8 ? 'SERVED' : 'NOT_SERVED', 'SA STATION': stn });
+    api('commission_upload', { body: { month: state._commMonth, station: stn, rows: rows } })
+      .then(function () { toast('Demo commission loaded for ' + stn + ' (8 x 12.5M served)', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
   function commCalc() {
-    api('commission_calc', { body: { month: state._commMonth, achievement: elById('commAch').value } })
-      .then(function () { toast('Commission calculated & saved', 'ok'); renderTab(); })
+    api('commission_calc', { body: { month: state._commMonth, station: state._commStation || '', achievement: elById('commAch').value } })
+      .then(function () { toast('Commission calculated & saved for ' + (state._commStation || 'station'), 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
+  function commStation(el) { state._commStation = el.getAttribute('data-s') || ''; renderTab(); }
   function monthOpen() {
     openModal('<h2>Open next month?</h2><p class="note">BDOs will start serving in the new month. The current month becomes AWAITING until you upload its final commission and close it.</p>' +
       '<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="ghost" data-action="closeModal">Cancel</button>' +
@@ -3464,12 +3575,18 @@
       state._flags = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Active' };
       /* per-BDO x per-KPI grid: matched (both agree) vs flagged (mismatch) */
+      /* only management may forgive - the server enforces it too */
+      var canClear = isManager();
       var gridRows = (d.grid || []).map(function (g) {
         function cell(k) { return '<td><span class="pill ok">' + g[k].m + '</span> <span class="pill bad">' + g[k].f + '</span></td>'; }
         return '<tr><td><b>' + esc(g.bdo) + '</b></td>' +
           cell('served') + cell('visit') + cell('apk') + cell('active') +
-          '<td><b>' + g.matched + '</b></td><td><b>' + g.flagged + '</b></td></tr>';
-      }).join('') || '<tr><td colspan="7" class="note">' + t('No live BDO marks in this month yet.') + '</td></tr>';
+          '<td><b>' + g.matched + '</b></td><td><b>' + g.flagged + '</b></td>' +
+          (canClear ? '<td>' + (g.flagged
+            ? '<button class="ghost sm" data-action="flClearOne" data-bdo="' + esc(g.bdo) + '">' + t('Clear his flags') + '</button>'
+            : '<span class="note">&mdash;</span>') + '</td>' : '') +
+          '</tr>';
+      }).join('') || '<tr><td colspan="8" class="note">' + t('No live BDO marks in this month yet.') + '</td></tr>';
 
       function detailRow(r, isFlag) {
         return '<tr class="fl-row" data-bdo="' + esc(r.bdo).toLowerCase() + '" data-kpi="' + esc(r.kpi || '') + '" data-search="' +
@@ -3486,6 +3603,9 @@
             : (isFlag ? '<span class="pill dim">' + t('no answer yet') + '</span>' : '')) + '</td>' +
           '<td class="note">' + esc(kpiWhen(r)) +
             (isFlag && r.kpi_at ? '<div class="note dim">' + t('flagged') + ' ' + esc((r.at || '').slice(0, 16)) + '</div>' : '') +
+            /* Clearing forgives the flag but never forgets it: a claim that has
+             * been let go before says so, so a repeat offender is visible. */
+            (isFlag && r.cleared_before ? '<div><span class="pill fire">' + t('forgiven') + ' ' + r.cleared_before + 'x</span></div>' : '') +
           '</td></tr>';
       }
       var mmRows = (d.flags || []).map(function (r) { return detailRow(r, true); }).join('');
@@ -3506,7 +3626,17 @@
         '<button class="ghost" data-action="flDownload">' + svg('download') + ' ' + t('Download Excel - one sheet per BDO') + '</button></div></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('Per BDO x KPI') + ' &mdash; ' + t('matched vs mismatch') + '</h2>' +
         '<p class="note">' + t('Green = matched, red = mismatch. Bigger red = more suspicious claims.') + '</p>' +
-        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>' + t('Matched') + '</th><th>' + t('Flagged') + '</th></tr></thead><tbody>' + gridRows + '</tbody></table></div></div>' +
+        '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>' + t('Matched') + '</th><th>' + t('Flagged') + '</th>' + (canClear ? '<th></th>' : '') + '</tr></thead><tbody>' + gridRows + '</tbody></table></div>' +
+        /* One button forgives the whole month. The agents keep the status the
+         * BDO gave them; only the accusation goes. The next performance upload
+         * raises it again if the file still disagrees - and it can be cleared
+         * again, with the count of past pardons showing on the row. */
+        (canClear && (d.flags || []).length
+          ? '<div class="row" style="margin-top:12px;justify-content:flex-end;align-items:center;gap:10px">' +
+            '<span class="note">' + t('Clearing keeps every agent exactly as the BDO marked him. The claim is forgiven, not forgotten - it is recorded and re-raised if the next file still disagrees.') + '</span>' +
+            '<button class="danger" data-action="flClearAll">' + svg('check') + ' ' + t('Clear all flags') + ' (' + (d.flags || []).length + ')</button></div>'
+          : '') +
+        '</div>' +
         '<div class="panel"><h2>' + svg('users') + t('Every claim') + '</h2>' +
         '<div class="row" style="margin-bottom:8px">' +
         '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label><input id="flSearch" placeholder="' + esc(t('BDO, agent name, acc, branch, station')) + '"></div>' +
@@ -3519,6 +3649,28 @@
         '<div class="note" style="margin-top:6px"><b>' + (d.flags || []).length + '</b> ' + t('mismatch') + ' &middot; <b>' + (d.matched || []).length + '</b> ' + t('matched') + ' &middot; <span id="flShown">' + ((d.flags || []).length + (d.matched || []).length) + '</span> ' + t('shown') + '</div>' +
         '</div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* Forgiving flags. The OM is overruling the file in favour of the BDO's own
+   * word, so the agents' statuses are left exactly as the BDO set them. What
+   * disappears is only the accusation. */
+  function flagsClearAsk(bdo) {
+    var d = state._flags || {};
+    var n = bdo
+      ? (d.flags || []).filter(function (r) { return (r.bdo || '').toLowerCase() === bdo.toLowerCase(); }).length
+      : (d.flags || []).length;
+    openModal('<h2>' + (bdo ? t('Clear flags for') + ' ' + esc(bdo) : t('Clear every flag')) + '?</h2>' +
+      '<p class="note">' + n + ' ' + t('flags in') + ' ' + esc(state._flagsMonth || '') + '.</p>' +
+      '<ul class="note" style="margin:10px 0 0 18px;line-height:1.7">' +
+      '<li>' + t('Every agent keeps the status the BDO gave him - nothing is reverted.') + '</li>' +
+      '<li>' + t('Who cleared it and when is recorded permanently.') + '</li>' +
+      '<li>' + t('If the next performance upload still disagrees, the flag comes back - and the row will show how many times it has been forgiven.') + '</li></ul>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="danger" data-action="flClearGo" data-bdo="' + esc(bdo) + '">' + t('Clear them') + '</button></div>');
+  }
+  function flagsClearGo(bdo) {
+    api('flags_clear', { body: { month: state._flagsMonth, bdo: bdo } })
+      .then(function (r) { closeModal(); toast(t('Cleared') + ' ' + r.cleared, 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
   }
   /* Flags workbook: Summary grid first, then ONE SHEET PER BDO listing every
    * flag he collected across all KPIs (plus his matched claims underneath). */
@@ -4019,6 +4171,9 @@
       ['flSearch','flBdo','flKpi','flStatus'].forEach(function (id) { var el = elById(id); if (el) el.value = ''; });
       flApply(); return;
     }
+    if (a === 'flClearAll') { flagsClearAsk(''); return; }
+    if (a === 'flClearOne') { flagsClearAsk(node.getAttribute('data-bdo') || ''); return; }
+    if (a === 'flClearGo') { flagsClearGo(node.getAttribute('data-bdo') || ''); return; }
     if (a === 'liveWinAll' || a === 'liveWinMorning' || a === 'liveWinAfternoon' || a === 'liveWinEvening') {
       var win = a === 'liveWinAll' ? ['00:00', '23:59']
               : a === 'liveWinMorning' ? ['06:00', '12:00']
@@ -4372,6 +4527,7 @@
     if (a === 'tgLoad') { state.month = elById('tgMonth').value; renderTab(); return; }
     if (a === 'tgSave') { tgSave(); return; }
     if (a === 'commMonth') { state._commMonth = node.getAttribute('data-m'); renderTab(); return; }
+    if (a === 'commStation') { commStation(node); return; }
     if (a === 'commUpload') { commUpload(); return; }
     if (a === 'commDemo') { commDemo(); return; }
     if (a === 'commCalc') { commCalc(); return; }

@@ -669,15 +669,23 @@ try {
         return strcmp($x['name'], $y['name']);
       });
 
-      /* This BDO's weighted performance for the month (if OM set his targets). */
-      $perf = null;
+      /* This BDO's weighted performance for the month (if OM set his targets),
+       * computed TWICE: as it stands, and as it would stand if every flag
+       * against him were upheld. He sees both and knows what the flags cost. */
+      $perf = null; $perfClean = null;
       $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
       $tq->execute(array($month, $bdo));
       if ($t = $tq->fetch()) {
-        $perf = user_specialty($bdo) === 'activeness'
-          ? bdo_score_specialist(bdo_actuals($month, $bdo), $t)
-          : bdo_score(bdo_actuals($month, $bdo), $t);
+        $isSpec = user_specialty($bdo) === 'activeness';
+        $perf = $isSpec ? bdo_score_specialist(bdo_actuals($month, $bdo), $t)
+                        : bdo_score(bdo_actuals($month, $bdo), $t);
+        $ua = bdo_actuals_unflagged($month, $bdo);
+        $perfClean = $isSpec ? bdo_score_specialist($ua, $t) : bdo_score($ua, $t);
       }
+      /* how many of his claims are under query right now */
+      $fq2 = db()->prepare('SELECT COUNT(*) c FROM flags WHERE month = ? AND bdo = ?');
+      $fq2->execute(array($month, $bdo));
+      $myFlagCount = (int)$fq2->fetch()['c'];
 
       /* SPECIAL agents: served by partners this month - every BDO should build
        * the relationship and capture the physical location. */
@@ -719,11 +727,48 @@ try {
         $uc[] = $a2;
       }
 
+      /*
+       * WHERE HE STANDS AMONG THE OTHERS - by the size of the round he has
+       * built, and by how much of it he has actually served. Two different
+       * things: a big base worked badly and a small base finished are both
+       * halfway stories, and he should see which one he is.
+       */
+      $rq3 = db()->query("SELECT b.bdo, COUNT(DISTINCT b.agent_id) n FROM base b
+                          WHERE b.month = " . db()->quote($month) . "
+                            AND b.bdo NOT IN ('partners','unassigned') GROUP BY b.bdo");
+      $baseSizes = array();
+      foreach ($rq3->fetchAll() as $r3) $baseSizes[$r3['bdo']] = (int)$r3['n'];
+      $sq3 = db()->query("SELECT k.bdo, COUNT(DISTINCT k.agent_id) n FROM agent_month_kpi k
+                          JOIN base b ON b.month = k.month AND b.bdo = k.bdo AND b.agent_id = k.agent_id
+                          WHERE k.month = " . db()->quote($month) . " AND k.kpi = 'served'
+                            AND k.bdo NOT IN ('partners','unassigned') GROUP BY k.bdo");
+      $servedSizes = array();
+      foreach ($sq3->fetchAll() as $r3) $servedSizes[$r3['bdo']] = (int)$r3['n'];
+
+      $myBase = isset($baseSizes[$bdo]) ? $baseSizes[$bdo] : 0;
+      $myServed = isset($servedSizes[$bdo]) ? $servedSizes[$bdo] : 0;
+      $baseRank = 1; $covRank = 1;
+      $myCov = $myBase > 0 ? $myServed / $myBase : 0;
+      foreach ($baseSizes as $b3 => $n3) {
+        if ($b3 === $bdo) continue;
+        if ($n3 > $myBase) $baseRank++;
+        $c3 = $n3 > 0 ? (isset($servedSizes[$b3]) ? $servedSizes[$b3] : 0) / $n3 : 0;
+        if ($c3 > $myCov) $covRank++;
+      }
+      $peers = count($baseSizes) ? count($baseSizes) : 1;
+      $biggest = $baseSizes ? max($baseSizes) : 0;
+
       respond(array(
         'bdo' => $bdo, 'month' => $month, 'monthStatus' => month_status($month),
         'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)),
                           'total' => count($ids), 'served' => $servedNow, 'unclaimed' => count($uc)),
-        'agents' => $agents, 'unclaimed' => $uc, 'performance' => $perf, 'special' => $special,
+        'agents' => $agents, 'unclaimed' => $uc,
+        'performance' => $perf, 'performanceClean' => $perfClean, 'flagCount' => $myFlagCount,
+        'standing' => array('base' => $myBase, 'served' => $myServed,
+                            'coverage' => $myBase > 0 ? (int)round($myCov * 100) : null,
+                            'baseRank' => $baseRank, 'coverageRank' => $covRank,
+                            'peers' => $peers, 'biggestBase' => $biggest),
+        'special' => $special,
       ));
     }
 
@@ -2884,6 +2929,41 @@ try {
                     'lastRepair' => setting_get('lastrepair_note', '')));
     }
 
+    /*
+     * THE OM CLEARS THE FLAGS AND THE BDO'S WORD STANDS.
+     *
+     * Clearing is the OM ruling in the BDO's favour: the mark stays, the agent
+     * keeps the status the BDO gave him, and the accusation comes off the board.
+     * It is NOT forgotten - every cleared flag is copied to flags_cleared with
+     * who cleared it and when, so a BDO whose flags are wiped every single month
+     * is visible instead of invisible, and the next upload can say "cleared 3
+     * times before" when it raises the same claim again.
+     */
+    case 'flags_clear': {
+      $u = require_auth(); require_manager($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
+      $only = strtolower(trim((string)bval('bdo')));   /* optional: one BDO only */
+      $sql = 'SELECT month, agent_id, bdo, kpi, detail FROM flags WHERE month = ?';
+      $vals = array($month);
+      if ($only !== '') { $sql .= ' AND bdo = ?'; $vals[] = $only; }
+      $q = db()->prepare($sql); $q->execute($vals);
+      $rows = $q->fetchAll();
+      if (!$rows) fail('There are no flags to clear for ' . $month);
+
+      $keep = db()->prepare('INSERT INTO flags_cleared (month, agent_id, bdo, kpi, detail, cleared_by)
+                             VALUES (?,?,?,?,?,?)');
+      foreach ($rows as $r) {
+        $keep->execute(array($r['month'], (int)$r['agent_id'], $r['bdo'], $r['kpi'],
+                             mb_substr((string)$r['detail'], 0, 255), $u['username']));
+      }
+      $del = db()->prepare($only !== ''
+        ? 'DELETE FROM flags WHERE month = ? AND bdo = ?'
+        : 'DELETE FROM flags WHERE month = ?');
+      $del->execute($vals);
+      audit($u['id'], 'flags_clear', $month . ($only !== '' ? ' ' . $only : ' ALL') . ' - ' . count($rows) . ' cleared');
+      respond(array('ok' => true, 'cleared' => count($rows), 'month' => $month, 'bdo' => $only));
+    }
+
     /* Re-file BDO work by its own timestamp, on demand. */
     case 'filing_repair': {
       $u = require_auth(); require_manager($u);
@@ -2923,7 +3003,11 @@ try {
       /* k.at is the moment the BDO actually tapped the KPI in the field - that,
        * not the upload time, is what "When?" must show. */
       $det = db()->prepare("SELECT f.id, f.bdo, f.kpi, f.detail, f.at, f.bdo_response, f.bdo_note, f.responded_at,
-                                   k.at AS kpi_at, a.name agent_name, a.acc, a.branch, a.station
+                                   k.at AS kpi_at, a.name agent_name, a.acc, a.branch, a.station,
+                                   /* how often this exact claim has been cleared before - a
+                                      flag forgiven every month is a pattern, not an accident */
+                                   (SELECT COUNT(*) FROM flags_cleared c
+                                    WHERE c.agent_id = f.agent_id AND c.bdo = f.bdo AND c.kpi = f.kpi) AS cleared_before
                             FROM flags f LEFT JOIN agents a ON a.id = f.agent_id
                             LEFT JOIN agent_month_kpi k
                               ON k.month = f.month AND k.agent_id = f.agent_id
@@ -3042,28 +3126,55 @@ try {
       $parsed = array();
       foreach ((array)$rows as $raw) { $p = parse_commission_row($raw); if ($p) $parsed[] = $p; }
       if (!count($parsed)) fail('No valid rows (need SA Commission and/or Served Status columns)');
-      db()->prepare('DELETE FROM commission_rows WHERE month = ?')->execute(array($month));
-      $ins = db()->prepare('INSERT INTO commission_rows (month, acc, name, sa_commission, served_status) VALUES (?,?,?,?,?)');
-      foreach ($parsed as $p) $ins->execute(array($month, $p['acc'], $p['name'], $p['sa'], $p['served']));
-      audit($u['id'], 'commission_upload', $month . ' rows=' . count($parsed));
-      respond(array('ok' => true, 'month' => $month, 'rows' => count($parsed)));
+      /* The station comes from each row. Only the stations present in THIS
+       * file are replaced, so Arusha and Manyara can be loaded separately
+       * without one wiping the other. */
+      $fallback = strtoupper(trim((string)bval('station')));
+      if ($fallback === '') $fallback = station_scope($u);
+      $stations = array();
+      foreach ($parsed as $i => $p) {
+        /* Older commission files carry no SA STATION column. Those rows belong
+         * to the station the uploader is currently working in - never to a
+         * blank station, which would hide them from every settlement. */
+        if ($p['station'] === '') $parsed[$i]['station'] = $fallback;
+        $stations[$parsed[$i]['station']] = true;
+      }
+      $delOne = db()->prepare('DELETE FROM commission_rows WHERE month = ? AND station = ?');
+      foreach (array_keys($stations) as $stn) $delOne->execute(array($month, $stn));
+      $ins = db()->prepare('INSERT INTO commission_rows (month, acc, name, sa_commission, served_status, station) VALUES (?,?,?,?,?,?)');
+      foreach ($parsed as $p) $ins->execute(array($month, $p['acc'], $p['name'], $p['sa'], $p['served'], $p['station']));
+      audit($u['id'], 'commission_upload', $month . ' rows=' . count($parsed) . ' stations=' . implode('/', array_keys($stations)));
+      respond(array('ok' => true, 'month' => $month, 'rows' => count($parsed), 'stations' => array_keys($stations)));
     }
 
     case 'commission_get': {
       $u = require_auth(); require_perm($u, 'commission', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
-      $cnt = db()->prepare('SELECT COUNT(*) c, SUM(served_status="SERVED") s FROM commission_rows WHERE month = ?');
-      $cnt->execute(array($month));
+      /* Commission is settled PER SA STATION: each region earns its own
+       * achievement, so one release percentage cannot cover both. */
+      $stns = array();
+      $sq4 = db()->prepare('SELECT DISTINCT station FROM commission_rows WHERE month = ? ORDER BY station');
+      $sq4->execute(array($month));
+      foreach ($sq4->fetchAll() as $r4) $stns[] = $r4['station'];
+
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
+      /* An MD looking at every station still has to settle ONE of them; show
+       * the first station on file rather than an empty, unsettleable page. */
+      if ($station === '' && count($stns)) $station = $stns[0];
+
+      $cnt = db()->prepare('SELECT COUNT(*) c, SUM(served_status="SERVED") s FROM commission_rows WHERE month = ? AND station = ?');
+      $cnt->execute(array($month, $station));
       $c = $cnt->fetch();
-      $calc = db()->prepare('SELECT * FROM commission_calc WHERE month = ?');
-      $calc->execute(array($month));
+      $calc = db()->prepare('SELECT * FROM commission_calc WHERE month = ? AND station = ?');
+      $calc->execute(array($month, $station));
       $saved = $calc->fetch() ?: null;
 
-      // suggested achievement = the office's REAL (weighted) attainment
-      $oa = office_attainment($month);
+      /* suggested achievement = THAT station's own weighted attainment */
+      $oa = office_attainment($month, $station);
       $ach = $oa['achievement'];
 
-      respond(array('month' => $month, 'status' => month_status($month),
+      respond(array('month' => $month, 'status' => month_status($month), 'station' => $station,
+                    'stations' => $stns, 'targetsFrom' => $oa['targetsFrom'],
                     'uploadedRows' => (int)$c['c'], 'servedRows' => (int)$c['s'],
                     'suggestedAchievement' => $ach, 'saved' => $saved));
     }
@@ -3072,10 +3183,14 @@ try {
       $u = require_auth(); require_perm($u, 'commission', 'e');
       $month = (string)bval('month');
       if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
-      $st = db()->prepare('SELECT COUNT(*) c, COALESCE(SUM(sa_commission),0) t FROM commission_rows WHERE month = ? AND served_status = "SERVED"');
-      $st->execute(array($month));
+      /* Settled per SA STATION: each station has its own served list, its own
+       * pool and its own attainment, so the release percentage differs. */
+      $station = strtoupper(trim((string)bval('station')));
+      if ($station === '') $station = station_scope($u);
+      $st = db()->prepare('SELECT COUNT(*) c, COALESCE(SUM(sa_commission),0) t FROM commission_rows WHERE month = ? AND station = ? AND served_status = "SERVED"');
+      $st->execute(array($month, $station));
       $r = $st->fetch();
-      if (!(int)$r['c']) fail('Upload the commission file for ' . $month . ' first');
+      if (!(int)$r['c']) fail('No SERVED rows for ' . $station . ' in ' . $month . '. Upload that station commission file first.');
       $achIn = bval('achievement', null);
       $ach = ($achIn !== null && $achIn !== '') ? (float)$achIn : 0.0;
       $total = (float)$r['t'];
@@ -3084,14 +3199,14 @@ try {
       $release = release_for($ach);
       $variablePaid = $variablePool * $release;
       $final = $fixed + $variablePaid;
-      db()->prepare('INSERT INTO commission_calc (month, served_count, total, fixed_pool, variable_pool, achievement, release_pct, variable_paid, final_amount)
-                     VALUES (?,?,?,?,?,?,?,?,?)
+      db()->prepare('INSERT INTO commission_calc (month, station, served_count, total, fixed_pool, variable_pool, achievement, release_pct, variable_paid, final_amount)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE served_count=VALUES(served_count), total=VALUES(total), fixed_pool=VALUES(fixed_pool),
                        variable_pool=VALUES(variable_pool), achievement=VALUES(achievement), release_pct=VALUES(release_pct),
                        variable_paid=VALUES(variable_paid), final_amount=VALUES(final_amount)')
-          ->execute(array($month, (int)$r['c'], $total, $fixed, $variablePool, $ach, $release, $variablePaid, $final));
-      audit($u['id'], 'commission_calc', $month . ' ach=' . $ach . ' final=' . round($final));
-      respond(array('ok' => true, 'month' => $month, 'calc' => array(
+          ->execute(array($month, $station, (int)$r['c'], $total, $fixed, $variablePool, $ach, $release, $variablePaid, $final));
+      audit($u['id'], 'commission_calc', $month . '/' . $station . ' ach=' . $ach . ' final=' . round($final));
+      respond(array('ok' => true, 'month' => $month, 'station' => $station, 'calc' => array(
         'servedCount' => (int)$r['c'], 'total' => $total, 'fixedPool' => $fixed, 'variablePool' => $variablePool,
         'achievement' => $ach, 'releasePct' => $release, 'variablePaid' => $variablePaid, 'final' => $final,
       )));

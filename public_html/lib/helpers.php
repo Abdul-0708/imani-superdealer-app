@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.36.0');
+define('APP_VERSION', '1.37.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -562,6 +562,8 @@ function parse_commission_row($row) {
     'name' => trim((string)pick($idx, array('Agent Name','name','agent'))),
     'sa' => num($sa),
     'served' => served_status($sv),
+    /* Same rule as the performance file: the SA STATION column IS the region. */
+    'station' => strtoupper(trim((string)pick($idx, array('SA STATION','SA Station','Station','StationName','kituo')))),
   );
 }
 
@@ -714,6 +716,39 @@ function bdo_actuals($month, $bdo) {
   $dr = $d->fetch();
   $k['apk'] = max($k['apk'], (int)$dr['a']);
 
+  $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
+  $f->execute(array($month, $bdo));
+  $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
+  return $k;
+}
+
+/*
+ * The same actuals, but WITHOUT the claims that currently carry a flag.
+ *
+ * This is not a punishment - the BDO keeps his credits until the OM rules. It
+ * exists so he can see, side by side, the score he is showing and the score he
+ * would be left with if every flag against him were upheld. The gap between the
+ * two is exactly what he stands to lose by ignoring them, which is a far better
+ * motivator than a red number he cannot interpret.
+ */
+function bdo_actuals_unflagged($month, $bdo) {
+  $st = db()->prepare("SELECT k.kpi, COUNT(*) n
+                       FROM agent_month_kpi k
+                       WHERE k.month = ? AND k.bdo = ?
+                         AND NOT EXISTS (SELECT 1 FROM flags f
+                                         WHERE f.month = k.month AND f.agent_id = k.agent_id
+                                           AND f.bdo = k.bdo AND f.kpi = k.kpi)
+                       GROUP BY k.kpi");
+  $st->execute(array($month, $bdo));
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+
+  /* float and typed APK are not per-agent claims, so nothing there is flagged */
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(apk),0) a
+                      FROM daily_reports WHERE month = ? AND bdo = ?');
+  $d->execute(array($month, $bdo));
+  $dr = $d->fetch();
+  $k['apk'] = max($k['apk'], (int)$dr['a']);
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
   $f->execute(array($month, $bdo));
   $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];

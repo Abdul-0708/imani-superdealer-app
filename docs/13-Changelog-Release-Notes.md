@@ -5,6 +5,50 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.37.0 — 2026-08-12 · "What the flags cost, and what the base is worth"
+
+The rest of the ten-item batch. Schema unchanged (v16 already carried the columns).
+
+**Commission is settled per SA station (item 7).** Two stations do not earn the same weighted
+average, so they cannot share one release percentage. The commission file now carries **SA STATION**
+per row; the Commission panel gained a station switcher, and each station keeps its own served
+rows, its own 30/70 pools, its own achievement and its own saved settlement.
+Verified end to end: Arusha 6 served → 60,000,000 at 95% (release 100%); Manyara 4 served →
+11,600,000 at 62% (release 40%) — **both stored side by side**, where before the second calculation
+overwrote the first. Uploading Manyara's file no longer wipes Arusha's rows: only the stations
+present in the file being imported are replaced. A legacy file with **no** SA STATION column lands
+on the station the OM is viewing rather than on a blank station that no settlement could ever see.
+
+**One button forgives the month (item 2).** The OM clears every flag — or one officer's flags —
+from the Flags panel. **The agents keep exactly the status the BDO gave them**; only the accusation
+goes. Forgiven is not forgotten: each cleared flag is copied to `flags_cleared` with who cleared it
+and when, and if the next performance file still disagrees the flag comes back wearing
+**"forgiven 1×"**. It can be cleared again, and the count keeps climbing — so an officer whose flags
+are wiped every single month is visible instead of invisible.
+Verified: 5 flags → cleared (all 5 recorded against `om`, all 5 BDO marks intact) → same file
+re-uploaded → the same 5 returned marked *forgiven 1×*, alongside a brand-new one showing 0.
+
+**His score, twice, on his own dashboard (item 6).** *As I claimed* beside *If every flag stands*,
+with the gap between them stated in red — **-18%** on the verified case (50% → 32% under 5 flags) —
+and a button straight to his flags. A clean month says so: both numbers match and nothing is being
+questioned.
+
+**Where he stands, and how far he is from the biggest base (item 10).** Base size with his rank
+among his peers, coverage percent with its own rank, and the distance to the largest base in the
+office: *"The biggest base holds 12 agents — you are 6 short of it."* The officer holding the
+biggest base is told to keep it covered and keep it growing.
+
+**A receipt photo can come from the gallery.** `capture="environment"` does not mean *prefer the
+camera* on a phone — it means **camera only**, and the gallery is never offered. So a receipt
+photographed at the counter an hour earlier, or one a colleague sent on WhatsApp, could not be
+attached at all. Both photo dialogs (serving receipt and wake-up proof) now offer **Take photo** and
+**Choose from gallery** side by side, camera first. Verified: a gallery pick previews, downscales,
+uploads and is stored against the mark exactly like a fresh photo.
+
+- Assets `?v=54`, SW `imani-v54`
+
+---
+
 ## v1.36.0 — 2026-08-11 · "Database Upload, and the file that judges nobody" — schema v16
 
 **One door for every office file, and only one of them scores anybody.** "Weekly Upload" is now

@@ -145,6 +145,26 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible,.kchip.todo:focus-visible{outline:2px solid var(--fire2);outline-offset:2px}
 .mini{padding:4px 10px!important;font-size:12px!important;border-radius:8px!important}
 
+/* PHOTO SOURCE: camera or gallery.
+ * The real <input type=file> is hidden and driven by its <label>, because the
+ * two inputs differ only by the `capture` attribute - which a phone reads as
+ * "camera only" and which therefore has to be a separate control from the one
+ * that opens the gallery. Labels, not buttons: tapping a label is what opens a
+ * file input on every mobile browser. */
+.pick-row{gap:8px;flex-wrap:wrap;margin-top:4px}
+.pick-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.pick-btn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--line);
+  color:var(--ink);padding:8px 13px;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px;
+  min-height:38px;touch-action:manipulation;
+  transition:border-color .16s var(--ease),color .16s var(--ease),box-shadow .16s var(--ease),transform .12s var(--ease)}
+.pick-btn svg{width:15px;height:15px;flex:none}
+.pick-btn:hover{border-color:var(--fire2);color:var(--yellow);box-shadow:var(--glow)}
+.pick-btn:active{transform:scale(.96)}
+/* keyboard users get the same ring as the buttons beside it */
+.pick-input:focus-visible+.pick-btn,.pick-btn:focus-visible{outline:2px solid var(--fire2);outline-offset:2px}
+/* on a phone each source takes half the row so both stay thumb-sized */
+@media (max-width:520px){.pick-row .pick-btn{flex:1 1 46%;justify-content:center}}
+
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line)}
 td{font-variant-numeric:tabular-nums}
