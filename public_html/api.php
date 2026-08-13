@@ -2676,7 +2676,7 @@ try {
      * screen - which is what this returns.
      */
     case 'bdos': {
-      $u = require_auth(); require_manager($u);
+      $u = require_auth(); require_officer_view($u);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
       $stF = $station !== '' ? ' AND a.station = ?' : '';
@@ -2763,7 +2763,7 @@ try {
      * split into served and still-untouched (the OM's first question), with his
      * whole base underneath. */
     case 'bdo_detail': {
-      $u = require_auth(); require_manager($u);
+      $u = require_auth(); require_officer_view($u);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
       if ($bdo === '') fail('Which officer?');

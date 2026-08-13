@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.38.0';
+  var APP_VERSION = '1.39.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -859,7 +859,6 @@
     { key: 'upload', label: 'Database Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
-    { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
     { key: 'combined', label: 'Real Performance', icon: 'percent' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
@@ -1018,10 +1017,11 @@
       /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
        * (viewFlags branches on the role). Both need the tab. */
       if (m.key === 'flags') return isManager() || can('mybase', 'v');
-      if (m.key === 'bdos') return isManager();     // the officer window: OM / MD
+      /* The officer window IS the old Reports screen now, so everyone who
+       * could read Reports still reaches it - the team leader above all, since
+       * approving route plans and float shortages is his job. */
+      if (m.key === 'bdos') return isManager() || (!isFieldUser() && can('reports', 'v'));
       if (m.key === 'combined') return isManager(); // OM / super admin only
-      /* a BDO's report days + ranking now live on HIS dashboard - one less tab */
-      if (m.key === 'reports') return !isFieldUser() && can('reports', 'v');
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -1071,7 +1071,7 @@
   var BOTNAV_SHORT = {
     mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home',
     bdos: 'BDOs', inbox: 'Messages', combined: 'Real Perf.', upload: 'Upload',
-    targets: 'Targets', commission: 'Commission', reports: 'Reports', data: 'Settings'
+    targets: 'Targets', commission: 'Commission', data: 'Settings'
   };
   function botLabel(m) { return t(BOTNAV_SHORT[m.key] || m.label); }
   function botBadge(key) {
@@ -1148,7 +1148,6 @@
     else if (state.tab === 'upload') viewUpload(v);
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
-    else if (state.tab === 'reports') viewReports(v);
     else if (state.tab === 'admin') viewAdmin(v);
   }
 
@@ -3212,105 +3211,60 @@
   /* ---------------- reports & ranks ---------------- */
   var DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function isoDow(dateStr) { var d = new Date(dateStr + 'T12:00:00'); var n = d.getDay(); return n === 0 ? 7 : n; }
-  function viewReports(v) {
-    var m = state._repMonth || state.openMonth || curMonth();
-    state._repMonth = m;
-    var period = state._rankPeriod || 'daily';
-    var isMgmt = can('reports', 'e') || can('targets', 'v');
-    var calls = [api('daily_reports_get', { qs: '&month=' + m }),
-                 isManager() ? api('flags_get', { qs: '&month=' + m }) : Promise.resolve({ rank: [], flags: [], matched: [], grid: [] }),
-                 api('rank_get', { qs: '&period=' + period + '&date=' + (state._rankDate || new Date().toISOString().slice(0, 10)) }),
-                 api('messages_get'), api('bdo_rank_public')];
-    calls.push(isMgmt ? api('shortages_get', { qs: '&month=' + m }) : Promise.resolve(null));
-    calls.push(can('reports', 'e') ? api('route_plans_get') : Promise.resolve(null));
-    Promise.all(calls).then(function (rr) {
-      var dr = rr[0], fl = rr[1], rk = rr[2], msgs = rr[3], wrk = rr[4], sh = rr[5], rp = rr[6];
-
-      /* weighted TOP-PERFORMING ranking - the one list every member sees */
-      var weightRank = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
-        weightedBoard(wrk) + '</div>';
-
-      /* --- daily report matrix: BDO x day, OK / LATE / MISSING(red) --- */
-      var mx = reportDaysMatrix(dr, m);
-      var head = mx.head, matrix = mx.body, shown = { length: mx.days };
-
-
-      /* Flag details moved to their own tab (viewFlags) - keep the response
-       * loaded so `fl` is still valid, but don't render anything here. */
-
-      /* --- management extras --- */
-      var omTools = can('reports', 'e')
-        ? '<div class="panel"><h2>' + svg('mail') + 'Messages to members</h2>' +
-          '<div class="row"><div class="field"><label>To</label><select id="msgTo"><option value="">All members</option></select></div>' +
-          '<div class="field" style="flex:1;min-width:220px"><label>Message</label><input id="msgBody" placeholder="Type the announcement..." maxlength="500"></div>' +
-          '<button class="btn" data-action="msgSend">Send</button></div>' +
-          '<div id="msgSent" style="margin-top:10px"></div></div>' +
-          '<div class="panel"><h2>' + svg('cal') + 'Working days</h2>' +
-          '<p class="note">Default applies to everyone; override per BDO below (e.g. works Sunday instead of Saturday).</p>' +
-          '<div class="row"><div class="field"><label>Default working days</label><input id="wdGlobal" value="' + esc(dr.globalWorkingDays) + '" placeholder="1,2,3,4,5,6"></div>' +
-          '<div class="field"><label>BDO override</label><select id="wdBdo">' + (dr.bdos || []).map(function (b) { return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>'; }).join('') + '</select></div>' +
-          '<div class="field"><label>His days (1=Mon..7=Sun)</label><input id="wdDays" placeholder="1,2,3,4,5,7"></div>' +
-          '<button class="btn" data-action="wdSave">Save</button></div>' +
-          '<div class="note" style="margin-top:6px">1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat 7=Sun</div></div>'
+  /* Who sent his daily report, who was late, who missed a working day. */
+  function reportDaysPanel(dr, m) {
+    var mx = reportDaysMatrix(dr, m);
+    return '<div class="panel"><h2>' + svg('cal') + t('Daily reports - last') + ' ' + mx.days + ' ' + t('days') + '</h2>' +
+      '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> ' +
+      t('after midnight') + ' &middot; <span class="pill bad">MISS</span> ' + t('working day without a report') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
+  }
+  /* Team leader: today's route plans - approve, reject, or assign one. */
+  function routePlansPanel(rp, dr) {
+    if (!rp) return '';
+    var body = (rp.rows || []).map(function (r) {
+      var pill = r.status === 'APPROVED' ? '<span class="pill ok">APPROVED</span>'
+        : r.status === 'ASSIGNED' ? '<span class="pill fire">ASSIGNED' + (r.by_leader ? ' &middot; ' + esc(r.by_leader) : '') + '</span>'
+        : r.status === 'REJECTED' ? '<span class="pill bad">REJECTED</span>'
+        : '<span class="pill gold">PENDING</span>';
+      var act = r.status === 'PENDING'
+        ? '<button class="btn mini" data-action="routeOk" data-id="' + r.id + '">' + t('Approve') + '</button> ' +
+          '<button class="danger mini" data-action="routeNo" data-id="' + r.id + '">' + t('Reject') + '</button>'
         : '';
-      /* shortage chain: PENDING until the team leader approves; only APPROVED
-       * ones reach top management (the server already filters per role) */
-      var canApprove = can('reports', 'e');
-      var shortPanel = (sh !== null)
-        ? '<div class="panel"><h2>' + svg('alert') + 'Float shortages</h2>' +
-          (canApprove ? '<p class="note">PENDING shortages wait for YOUR approval before top management sees them.</p>' : '') +
-          '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Amount</th><th>Reason</th><th>Recover by</th><th>Status</th><th>When</th>' + (canApprove ? '<th></th>' : '') + '</tr></thead><tbody>' +
-          ((sh || []).map(function (s) {
-            var stPill = s.status === 'APPROVED'
-              ? '<span class="pill ok">APPROVED' + (s.approved_by ? ' &middot; ' + esc(s.approved_by) : '') + '</span>'
-              : '<span class="pill gold">PENDING</span>';
-            var act = canApprove && s.status === 'PENDING'
-              ? '<td><button class="btn mini" data-action="shortApprove" data-id="' + s.id + '">Approve</button></td>'
-              : (canApprove ? '<td></td>' : '');
-            return '<tr><td>' + esc(s.bdo) + '</td><td>' + fmt(s.amount) + '</td><td>' + esc(s.reason) + '</td><td>' + esc(s.recover_by || '-') + '</td>' +
-              '<td>' + stPill + '</td><td class="note">' + esc((s.at || '').slice(0, 16)) + '</td>' + act + '</tr>';
-          }).join('') || '<tr><td colspan="7" class="note">No shortages reported.</td></tr>') + '</tbody></table></div></div>'
+      return '<tr><td class="note">' + esc(r.date) + '</td><td>' + esc(r.bdo) + '</td><td>' + esc(r.plan) + '</td>' +
+        '<td>' + pill + '</td><td>' + act + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">' + t('No route plans yet.') + '</td></tr>';
+    return '<div class="panel"><h2>' + svg('pin') + t('Daily route plans (EAT)') + '</h2>' +
+      '<p class="note">' + t('BDOs submit before 10:00 EAT. Approve or reject; assign a route yourself when needed.') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>BDO</th><th>' + t('Route') + '</th>' +
+      '<th>' + t('Status') + '</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>' +
+      '<div class="row" style="margin-top:10px"><div class="field"><label>' + t('Assign to') + '</label><select id="raBdo">' +
+      ((dr && dr.bdos) || []).map(function (b) { return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>'; }).join('') +
+      '</select></div><div class="field" style="flex:1;min-width:200px"><label>' + t('Route for today') + '</label>' +
+      '<input id="raPlan" maxlength="2000" placeholder="e.g. Kaloleni -> Sakina -> Njiro"></div>' +
+      '<button class="btn" data-action="routeAssign">' + t('Assign route') + '</button></div></div>';
+  }
+  /* Float shortages. PENDING waits for the team leader; only APPROVED ones
+   * reach top management (the server already filters per role). */
+  function shortagesPanel(sh) {
+    if (sh === null) return '';
+    var canApprove = can('reports', 'e');
+    var body = (sh || []).map(function (x) {
+      var stPill = x.status === 'APPROVED'
+        ? '<span class="pill ok">APPROVED' + (x.approved_by ? ' &middot; ' + esc(x.approved_by) : '') + '</span>'
+        : '<span class="pill gold">PENDING</span>';
+      var act = canApprove
+        ? '<td>' + (x.status === 'PENDING' ? '<button class="btn mini" data-action="shortApprove" data-id="' + x.id + '">' + t('Approve') + '</button>' : '') + '</td>'
         : '';
-
-      /* team leader: today's route plans - approve, reject, assign */
-      var routePanel = rp
-        ? '<div class="panel"><h2>' + svg('pin') + 'Daily route plans (EAT)</h2>' +
-          '<p class="note">BDOs submit before 10:00 EAT. Approve or reject; assign a route yourself when needed.</p>' +
-          '<div class="tablewrap"><table><thead><tr><th>Date</th><th>BDO</th><th>Route</th><th>Status</th><th></th></tr></thead><tbody>' +
-          ((rp.rows || []).map(function (r) {
-            var pill = r.status === 'APPROVED' ? '<span class="pill ok">APPROVED</span>'
-              : r.status === 'ASSIGNED' ? '<span class="pill fire">ASSIGNED' + (r.by_leader ? ' &middot; ' + esc(r.by_leader) : '') + '</span>'
-              : r.status === 'REJECTED' ? '<span class="pill bad">REJECTED</span>'
-              : '<span class="pill gold">PENDING</span>';
-            var act = r.status === 'PENDING'
-              ? '<button class="btn mini" data-action="routeOk" data-id="' + r.id + '">Approve</button> <button class="danger mini" data-action="routeNo" data-id="' + r.id + '">Reject</button>'
-              : '';
-            return '<tr><td class="note">' + esc(r.date) + '</td><td>' + esc(r.bdo) + '</td><td>' + esc(r.plan) + '</td><td>' + pill + '</td><td>' + act + '</td></tr>';
-          }).join('') || '<tr><td colspan="5" class="note">No route plans yet.</td></tr>') + '</tbody></table></div>' +
-          '<div class="row" style="margin-top:10px"><div class="field"><label>Assign to</label><select id="raBdo">' +
-          (dr.bdos || []).map(function (b) { return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>'; }).join('') + '</select></div>' +
-          '<div class="field" style="flex:1;min-width:200px"><label>Route for today</label><input id="raPlan" maxlength="2000" placeholder="e.g. Kaloleni -> Sakina -> Njiro"></div>' +
-          '<button class="btn" data-action="routeAssign">Assign route</button></div></div>'
-        : '';
-
-      /* NB: a plain BDO never reaches this view any more - his report days and
-       * the ranking are merged into his own Dashboard. */
-      v.innerHTML =
-        '<h1 class="page-title">Reports &amp; Ranks</h1><p class="page-sub">Daily reports, rankings and flags - visible to every member.</p>' +
-        '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="repMonth" type="month" value="' + esc(m) + '"></div>' +
-        '<button class="btn" data-action="repLoad">Load</button></div></div>' +
-        omTools +
-        '<div class="panel"><h2>' + svg('cal') + 'Daily reports - last ' + shown.length + ' days</h2>' +
-        '<p class="note"><span class="pill ok">OK</span> on time &middot; <span class="pill gold">LATE</span> after midnight &middot; <span class="pill bad">MISS</span> working day without a report</p>' +
-        '<div class="tablewrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + matrix + '</tbody></table></div></div>' +
-
-        (isManager()
-          ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">' + svg('alert') + ' ' + t('Flag details moved to their own tab.') + '</span>' +
-            '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open Flags') + '</button></div></div>'
-          : '') +
-        weightRank + routePanel + shortPanel;
-      msgMgrLoad();
-    }).catch(function (e) { v.innerHTML = errBox(e); });
+      return '<tr><td>' + esc(x.bdo) + '</td><td>' + fmt(x.amount) + '</td><td>' + esc(x.reason) + '</td>' +
+        '<td>' + esc(x.recover_by || '-') + '</td><td>' + stPill + '</td>' +
+        '<td class="note">' + esc((x.at || '').slice(0, 16)) + '</td>' + act + '</tr>';
+    }).join('') || '<tr><td colspan="7" class="note">' + t('No shortages reported.') + '</td></tr>';
+    return '<div class="panel"><h2>' + svg('alert') + t('Float shortages') + '</h2>' +
+      (canApprove ? '<p class="note">' + t('PENDING shortages wait for YOUR approval before top management sees them.') + '</p>' : '') +
+      '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>' + t('Amount') + '</th><th>' + t('Reason') + '</th>' +
+      '<th>' + t('Recover by') + '</th><th>' + t('Status') + '</th><th>' + t('When') + '</th>' + (canApprove ? '<th></th>' : '') +
+      '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
   }
   /* recipient picker + the sender's own messages with edit/delete */
   function msgMgrLoad() {
@@ -3588,8 +3542,21 @@
     var m = state._bdMonth || state.openMonth || curMonth();
     state._bdMonth = m;
     if (state._bdOpen) return bdoDetail(v, state._bdOpen, m);
-    api('bdos', { qs: '&month=' + m }).then(function (d) {
+    /* Reports & Ranks was this same screen seen from the other side: the
+     * leaderboard, who sent his daily report, whose route needs approving,
+     * who is short of float. All of it is about these officers, so all of it
+     * is here, under the list of them. */
+    var isMgmt = can('reports', 'e') || can('targets', 'v');
+    Promise.all([
+      api('bdos', { qs: '&month=' + m }),
+      api('daily_reports_get', { qs: '&month=' + m }),
+      api('bdo_rank_public'),
+      isMgmt ? api('shortages_get', { qs: '&month=' + m }) : Promise.resolve(null),
+      can('reports', 'e') ? api('route_plans_get') : Promise.resolve(null)
+    ]).then(function (rr) {
+      var d = rr[0], dr = rr[1], wrk = rr[2], sh = rr[3], rp = rr[4];
       state._bdos = d;
+      state._bdDaily = dr;
       var rows = d.rows || [];
       var T = d.totals || {};
 
@@ -3645,7 +3612,12 @@
         '<th>' + t('Score') + '</th><th>' + t('Flags') + '</th></tr></thead><tbody>' + body + '</tbody></table></div></div>' +
         /* the date-range officer report - it was stranded in the target-setting
          * screen, which is not where anybody looks for a report */
-        rangeReportPanel();
+        rangeReportPanel() +
+        '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
+        weightedBoard(wrk) + '</div>' +
+        reportDaysPanel(dr, m) +
+        routePlansPanel(rp, dr) +
+        shortagesPanel(sh);
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* the untouched earners broken down by list, so "8 left" says WHICH 8 */
@@ -3949,12 +3921,22 @@
           '<div class="row"><input id="fbBody" maxlength="500" style="flex:1;min-width:220px" placeholder="' + esc(t('e.g. agents in Kaloleni complain about float delays...')) + '">' +
           '<button class="btn" data-action="fbSend">' + t('Send to management') + '</button></div></div>'
         : '';
+      /* management composes here too, beside what it is answering */
+      var send = can('reports', 'e')
+        ? '<div class="panel"><h2>' + svg('mail') + t('Messages to members') + '</h2>' +
+          '<div class="row"><div class="field"><label>' + t('To') + '</label><select id="msgTo"><option value="">' + t('All members') + '</option></select></div>' +
+          '<div class="field" style="flex:1;min-width:220px"><label>' + t('Message') + '</label>' +
+          '<input id="msgBody" placeholder="' + esc(t('Type the announcement...')) + '" maxlength="500"></div>' +
+          '<button class="btn" data-action="msgSend">' + t('Send') + '</button></div>' +
+          '<div id="msgSent" style="margin-top:10px"></div></div>'
+        : '';
       v.innerHTML =
         greetingLine() +
         '<h1 class="page-title">' + t('Messages') + '</h1>' +
         '<p class="page-sub">' + t('Newest first. Reply to the sender, or delete a message from your own box once read.') + '</p>' +
-        fb +
+        send + fb +
         '<div class="panel"><h2>' + svg('mail') + t('Your box') + '</h2>' + rows + '</div>';
+      if (send) msgMgrLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -4222,7 +4204,7 @@
    * settles, so nobody taps twice wondering whether it registered. */
   var NO_SPIN = { tab: 1, closeModal: 1, toggleTheme: 1, themePick: 1, palSet: 1, toggleLang: 1,
                   togglePw: 1, backToLogin: 1, agentClear: 1, flClear: 1, inactMode: 1,
-                  rankPeriod: 1, baseBand: 1, kpiMark: 1 };
+                  baseBand: 1, kpiMark: 1 };
   function spinWhileBusy(node) {
     if (!node || node.tagName !== 'BUTTON' || node.classList.contains('loading')) return;
     var before = netCount;
@@ -4678,9 +4660,6 @@
       return;
     }
     if (a === 'wdSave') { wdSave(); return; }
-    if (a === 'repLoad') { state._repMonth = elById('repMonth').value; renderTab(); return; }
-    if (a === 'rankPeriod') { state._rankPeriod = node.getAttribute('data-p'); renderTab(); return; }
-    if (a === 'rankLoad') { state._rankDate = elById('rankDate').value; renderTab(); return; }
     if (a === 'dashSettingsSave') { dashSettingsSave(); return; }
     if (a === 'inactMode') { state._inactMode = node.getAttribute('data-m'); inactivePanelLoad(); return; }
     if (a === 'btSave') { btSave(); return; }

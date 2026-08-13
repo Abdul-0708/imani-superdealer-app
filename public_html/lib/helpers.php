@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.38.0');
+define('APP_VERSION', '1.39.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -151,6 +151,20 @@ function is_manager($user) {
 }
 function require_manager($user) {
   if (!is_manager($user)) fail('Management access only', 403);
+}
+/*
+ * WHO MAY LOOK AT THE OFFICERS.
+ *
+ * Wider than management, because the officer window absorbed the old Reports
+ * screen: approving route plans and float shortages is the TEAM LEADER's job,
+ * and he is not a manager by this app's definition (he cannot overturn a
+ * colleague's work). He may read the officers; a field user may not - a BDO
+ * has no business browsing his colleagues' rounds.
+ */
+function require_officer_view($user) {
+  if (is_manager($user)) return;
+  if (!is_field_user($user) && can($user, 'reports', 'v')) return;
+  fail('Management access only', 403);
 }
 
 function can($user, $module, $level) {

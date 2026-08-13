@@ -5,6 +5,34 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.39.0 — 2026-08-13 · "Reports & Ranks folds into BDOs; sending joins reading"
+
+**Reports & Ranks is gone — it was the officer window seen from the other side.** The leaderboard,
+who sent his daily report, whose route needs approving, who is short of float: all of it is about
+these officers, so all of it now sits under the list of them. The **BDOs** tab carries six panels in
+reading order — *Officers · Download BDO Report · Top performing · Daily reports · Daily route plans
+· Float shortages* — and nothing was dropped on the way.
+
+**The team leader keeps every approval he had.** The officer window absorbed a screen he depended
+on, and approving route plans and float shortages is his job — but he is not a *manager* by this
+app's definition (he cannot overturn a colleague's work), so a plain `require_manager` would have
+locked him out of his own workflow. A new `require_officer_view` gate: management, **or** anyone
+with `reports` view who is not a field user. Verified as `leader1` — the BDOs tab appears, and
+**Approve route · Assign route · Approve shortage** all still work. Verified as a BDO — *"Management
+access only"* on both endpoints, because a BDO has no business browsing his colleagues' rounds.
+
+**Sending a message joined reading them.** Management composed announcements on Reports and read the
+replies in Messages: two screens for one conversation. *Messages to members* — recipient picker,
+the sent list, edit and delete — now sits at the top of the **Messages** tab. Verified end to end by
+sending one and watching it appear in the sent list.
+
+**OM: 11 tabs → 10. Team leader: 7 → 6.** Both roles walked end to end, every screen renders, every
+request 200.
+
+- Assets `?v=56`, SW `imani-v56`
+
+---
+
 ## v1.38.0 — 2026-08-13 · "The officer window, and four fewer places to look"
 
 **Fix: the month took the targets with it.** The base carried into the new month, activeness
