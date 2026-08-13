@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.40.0');
+define('APP_VERSION', '1.41.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -289,6 +289,39 @@ function repair_misfiled_marks($cur) {
  * month that already rolled under an older build still gets its carry the next
  * time anybody opens the app, instead of staying empty until the month ends.
  */
+/*
+ * WHO HOLDS THIS AGENT THIS MONTH - one officer, and only one.
+ *
+ * A field serve is the strongest claim there is: the man went to the door,
+ * captured the location and took the receipt. So an uploaded file may never
+ * take an agent away from the officer who served him. Anything else yields -
+ * a placeholder holder ('unassigned', 'partners'), or a holder who was given
+ * the agent on paper but has not actually served him.
+ *
+ * Returns true when the owner changed.
+ */
+function base_assign($month, $agentId, $bdo, $kind) {
+  static $look = null, $del = null, $ins = null;
+  if ($look === null) {
+    $look = db()->prepare("SELECT b.bdo,
+                             EXISTS(SELECT 1 FROM agent_month_kpi k
+                                    WHERE k.month = b.month AND k.agent_id = b.agent_id
+                                      AND k.kpi = 'served' AND k.bdo = b.bdo AND k.source = 'bdo') srv
+                           FROM base b WHERE b.month = ? AND b.agent_id = ?");
+    $del = db()->prepare('DELETE FROM base WHERE month = ? AND agent_id = ?');
+    $ins = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
+  }
+  $look->execute(array($month, $agentId));
+  $cur = $look->fetch();
+  if ($cur) {
+    if ($cur['bdo'] === $bdo) return false;      /* already his */
+    if ((int)$cur['srv'] === 1) return false;    /* he served him - hands off */
+    $del->execute(array($month, $agentId));
+  }
+  $ins->execute(array($month, $bdo, $agentId, $kind));
+  return true;
+}
+
 function ensure_base_carry($cur) {
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
   $lock->execute(array('basecarry_' . $cur, date('Y-m-d H:i:s')));

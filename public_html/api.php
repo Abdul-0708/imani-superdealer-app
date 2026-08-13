@@ -896,7 +896,37 @@ try {
       if ($kpi === 'active') {
         db()->prepare('UPDATE agents SET act_current = "ACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
       }
-      db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
+      /*
+       * SERVING TAKES OWNERSHIP - IMMEDIATELY.
+       *
+       * The man who went out, served the agent and captured his physical
+       * location has earned him. The agent moves into HIS round the moment the
+       * mark lands and leaves whoever was holding him before, so two officers
+       * are never sent to the same door and the round each one sees is the
+       * round he is actually responsible for. The credit already follows the
+       * same rule: agent_month_kpi records who did the work.
+       *
+       * Only SERVING transfers. A visit or an APK tick is work on somebody
+       * else's agent, not a claim on him.
+       */
+      if ($kpi === 'served') {
+        $prev = db()->prepare('SELECT bdo FROM base WHERE month = ? AND agent_id = ?');
+        $prev->execute(array($month, $agentId));
+        $before = ($pr = $prev->fetch()) ? $pr['bdo'] : '';
+        if ($before !== $bdo) {
+          db()->prepare('DELETE FROM base WHERE month = ? AND agent_id = ?')->execute(array($month, $agentId));
+          db()->prepare('INSERT INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "served")')
+              ->execute(array($month, $bdo, $agentId));
+          if ($before !== '' && $before !== 'partners' && $before !== 'unassigned') {
+            audit($u['id'], 'base_transfer',
+                  $month . ': agent ' . $agentId . ' moved from ' . $before . ' to ' . $bdo . ' - ' . $bdo . ' served him');
+          }
+        }
+      } else {
+        /* one owner per agent per month, so this can only ever add him where
+         * nobody holds him yet */
+        db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
+      }
       /* Claiming an agent the file credits to the PARTNER raises the flag right
        * now, not at the next upload: the OM should see the dispute while the
        * visit is fresh, and the BDO keeps the credit meanwhile. */
@@ -1845,7 +1875,8 @@ try {
        * priority seed: agents in, judgement out */
       $priorityMode = !$scoring;
       $kind = ($mode === 'priority') ? 'priority' : ($mode === 'fixed' ? 'fixed' : 'uploaded');
-      $insBase = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
+      /* base writes go through base_assign(): one owner per agent, and a file
+       * never takes an agent off the officer who actually served him */
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
@@ -2004,14 +2035,14 @@ try {
          * touches the office snapshot - those agents are last months' known
          * base, not this month's claims. */
         if ($priorityMode) {
-          $insBase->execute(array($month, $key, $id, $kind));
+          base_assign($month, $key, $id, $kind);
           continue;
         }
 
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'], $uploadId));
-        $insBase->execute(array($month, $key, $id, $kind));
+        base_assign($month, $key, $id, $kind);
         /* Ledger credits (BDO personal scores; first credit wins). */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key, $uploadId));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
@@ -2830,6 +2861,80 @@ try {
                     'base' => $base, 'baseCount' => count($base), 'servedCount' => $servedTotal,
                     'heServed' => $heServed, 'heLeft' => $heLeft,
                     'flags' => $flags, 'performance' => $perf));
+    }
+
+    /*
+     * THE HIGH-EARNER REPORT, for one officer or for the whole team.
+     *
+     * The same split the officer window shows on screen - served against still
+     * untouched, biggest list first - but as data the OM can hand to somebody:
+     * a workbook with a sheet per officer, or a Word document he can print and
+     * carry into a meeting.
+     */
+    case 'he_report': {
+      $u = require_auth(); require_officer_view($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $only = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
+      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stV = $station !== '' ? array($station) : array();
+
+      $names = array();
+      foreach (db()->query("SELECT username, name FROM users WHERE role = 'bdo' AND active = 1")->fetchAll() as $r)
+        $names[$r['username']] = $r['name'] !== '' ? $r['name'] : $r['username'];
+
+      $sql = "SELECT b.bdo, a.acc, a.name, a.phone, a.branch, a.physical_location, a.station, a.act_current,
+                     k.at served_at, (k.agent_id IS NOT NULL) srv
+              FROM base b
+              JOIN agents a ON a.id = b.agent_id
+              LEFT JOIN agent_month_kpi k
+                     ON k.month = b.month AND k.agent_id = b.agent_id AND k.kpi = 'served'
+              WHERE b.month = ? AND b.bdo NOT IN ('partners','unassigned')" . $stF;
+      $vals = array_merge(array($month), $stV);
+      if ($only !== '') { $sql .= ' AND b.bdo = ?'; $vals[] = $only; }
+      $sql .= ' ORDER BY a.name';
+      $q = db()->prepare($sql);
+      $q->execute($vals);
+
+      $bandMap = he_band_map();
+      $order = array('A' => 0, 'B' => 1, 'C' => 2, 'D' => 3, 'E' => 4);
+      $per = array();
+      foreach ($q->fetchAll() as $r) {
+        /* F means he is not on the high-earner list - this report is only about
+         * the ones that carry money */
+        if (!isset($bandMap[$r['acc']])) continue;
+        $b = $r['bdo'];
+        if (!isset($per[$b])) $per[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b,
+                                               'served' => array(), 'notServed' => array());
+        $row = array('band' => $bandMap[$r['acc']], 'acc' => $r['acc'], 'name' => $r['name'],
+                     'phone' => $r['phone'], 'branch' => $r['branch'],
+                     'location' => $r['physical_location'], 'station' => $r['station'],
+                     'active' => $r['act_current'],
+                     'servedAt' => $r['served_at'] ? substr($r['served_at'], 0, 16) : '');
+        $per[$b][(int)$r['srv'] === 1 ? 'served' : 'notServed'][] = $row;
+      }
+      $sorter = function ($x, $y) use ($order) {
+        if ($order[$x['band']] !== $order[$y['band']]) return $order[$x['band']] - $order[$y['band']];
+        return strcmp($x['name'], $y['name']);
+      };
+      $out = array();
+      foreach ($per as $b => $p) {
+        usort($p['served'], $sorter);
+        usort($p['notServed'], $sorter);
+        $p['servedCount'] = count($p['served']);
+        $p['leftCount'] = count($p['notServed']);
+        $p['total'] = $p['servedCount'] + $p['leftCount'];
+        $out[] = $p;
+      }
+      /* the officer with the most money still untouched leads the document */
+      usort($out, function ($x, $y) { return $y['leftCount'] - $x['leftCount']; });
+
+      $tot = array('served' => 0, 'left' => 0, 'total' => 0);
+      foreach ($out as $p) { $tot['served'] += $p['servedCount']; $tot['left'] += $p['leftCount']; $tot['total'] += $p['total']; }
+
+      respond(array('month' => $month, 'station' => $station, 'bdo' => $only,
+                    'officers' => $out, 'totals' => $tot,
+                    'generatedAt' => date('Y-m-d H:i')));
     }
 
     case 'combined_performance': {

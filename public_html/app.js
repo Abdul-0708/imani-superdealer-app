@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.40.0';
+  var APP_VERSION = '1.41.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -3611,6 +3611,8 @@
         '<button class="btn" data-action="bdLoad">' + t('Load') + '</button>' +
         '<div class="spacer"></div>' +
         '<button class="ghost" data-action="bdDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
+        '<button class="ghost" data-action="heXlsAll">' + svg('flame') + ' ' + t('High earners - Excel') + '</button>' +
+        '<button class="ghost" data-action="heDocAll">' + svg('flame') + ' ' + t('High earners - Word') + '</button>' +
         '</div></div>' +
         '<div class="grid cards" style="margin-bottom:12px">' +
         card('users', t('Agents in all rounds'), fmt(T.base), fmt(T.served) + ' ' + t('served so far')) +
@@ -3682,7 +3684,12 @@
       }).join('') || '<tr><td colspan="5" class="note">' + t('His round is empty this month.') + '</td></tr>';
 
       v.innerHTML =
-        '<div class="row" style="margin-bottom:10px"><button class="ghost" data-action="bdBack">&larr; ' + t('All officers') + '</button></div>' +
+        '<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
+        '<button class="ghost" data-action="bdBack">&larr; ' + t('All officers') + '</button>' +
+        '<div class="spacer"></div>' +
+        '<button class="ghost" data-action="heXlsOne" data-bdo="' + esc(d.bdo) + '">' + svg('download') + ' ' + t('His high earners - Excel') + '</button>' +
+        '<button class="ghost" data-action="heDocOne" data-bdo="' + esc(d.bdo) + '">' + svg('download') + ' ' + t('His high earners - Word') + '</button>' +
+        '</div>' +
         '<h1 class="page-title">' + esc(d.name) + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' · ' + esc(d.bdo) +
           (d.specialty === 'activeness' ? ' · ' + t('activeness specialist') : '') + '</p>' +
@@ -3719,6 +3726,125 @@
         baseRows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* ---------------- high-earner report: Excel or Word ----------------
+   *
+   * The OM needs this off the screen and into somebody's hands - a workbook to
+   * work through, or a printed document to carry into a meeting with an
+   * officer. Word is produced as a self-contained HTML document saved as .doc,
+   * which Word opens and formats natively: no library, no server round trip,
+   * and it prints the way it looks.
+   */
+  function heReport(bdo, fmtKind) {
+    var m = state._bdMonth || state.openMonth || curMonth();
+    var qs = '&month=' + m + (bdo ? '&bdo=' + encodeURIComponent(bdo) : '');
+    toast(t('Building the report...'), 'ok');
+    api('he_report', { qs: qs }).then(function (d) {
+      var offs = d.officers || [];
+      if (!offs.length) { toast(t('No high earners in any round for this month.'), 'warn'); return; }
+      if (fmtKind === 'word') heReportWord(d); else heReportExcel(d);
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+  function heRowsFor(p, servedList) {
+    return (servedList ? p.served : p.notServed).map(function (a) {
+      var row = { 'LIST': a.band, 'Agent': a.name, 'Account': a.acc, 'Phone': a.phone || '',
+                  'Branch': a.branch || '', 'Location': a.location || '', 'SA Station': a.station || '' };
+      if (servedList) row['Served at'] = a.servedAt || '';
+      else row['Agent status'] = a.active || '';
+      return row;
+    });
+  }
+  function heReportExcel(d) {
+    var wb = XLSX.utils.book_new();
+    /* summary first: who is sitting on the most untouched money */
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.officers || []).map(function (p) {
+      return { 'Officer': p.name, 'Username': p.bdo, 'High earners in round': p.total,
+               'Served': p.servedCount, 'NOT served': p.leftCount,
+               'Covered %': p.total ? Math.round(p.servedCount / p.total * 100) : '' };
+    })), 'Summary');
+    /* one sheet per officer: the untouched ones first, then the served */
+    var used = {};
+    (d.officers || []).forEach(function (p) {
+      var rows = [];
+      heRowsFor(p, false).forEach(function (r) { r['Status'] = 'NOT SERVED'; rows.push(r); });
+      heRowsFor(p, true).forEach(function (r) { r['Status'] = 'SERVED'; rows.push(r); });
+      if (!rows.length) rows = [{ 'LIST': '', 'Agent': 'No high earners in this round' }];
+      /* Excel sheet names: 31 chars, no []:*?/\ - and never the same name twice */
+      var nm = String(p.name || p.bdo).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 28) || 'BDO';
+      var i = 2; var base = nm;
+      while (used[nm.toLowerCase()]) nm = base.slice(0, 26) + ' ' + (i++);
+      used[nm.toLowerCase()] = true;
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nm);
+    });
+    XLSX.writeFile(wb, 'high_earners_' + (d.bdo ? d.bdo + '_' : 'team_') + d.month +
+                       (d.station ? '_' + d.station : '') + '.xlsx');
+    toast(t('Downloaded'), 'ok');
+  }
+  function heReportWord(d) {
+    function tbl(list, served) {
+      if (!list.length) {
+        return '<p class="none">' + (served ? 'None served yet.' : 'Nothing left - every high earner here is served.') + '</p>';
+      }
+      return '<table><thead><tr><th>LIST</th><th>Agent</th><th>Account</th><th>Phone</th>' +
+        '<th>Branch</th><th>Location</th><th>' + (served ? 'Served at' : 'Status') + '</th></tr></thead><tbody>' +
+        list.map(function (a) {
+          return '<tr><td class="band">' + esc(a.band) + '</td><td><b>' + esc(a.name) + '</b></td>' +
+            '<td>' + esc(a.acc) + '</td><td>' + esc(a.phone || '-') + '</td>' +
+            '<td>' + esc(a.branch || '-') + '</td><td>' + esc(a.location || '-') + '</td>' +
+            '<td>' + (served ? esc(a.servedAt || 'yes')
+                             : '<span class="no">NOT SERVED</span>' + (a.active === 'INACTIVE' ? ' (inactive)' : '')) +
+            '</td></tr>';
+        }).join('') + '</tbody></table>';
+    }
+    var title = d.bdo ? ('High earners - ' + ((d.officers[0] && d.officers[0].name) || d.bdo))
+                      : 'High earners - whole team';
+    var body = (d.officers || []).map(function (p) {
+      var cov = p.total ? Math.round(p.servedCount / p.total * 100) : 0;
+      return '<h2>' + esc(p.name) + '</h2>' +
+        '<p class="meta"><b>' + p.total + '</b> high earners in his round &nbsp;&middot;&nbsp; ' +
+        '<b>' + p.servedCount + '</b> served &nbsp;&middot;&nbsp; ' +
+        '<b class="no">' + p.leftCount + '</b> still untouched &nbsp;&middot;&nbsp; ' + cov + '% covered</p>' +
+        '<h3>Still untouched &mdash; the money left in this round</h3>' + tbl(p.notServed, false) +
+        '<h3>Already served</h3>' + tbl(p.served, true);
+    }).join('<div class="brk"></div>');
+
+    var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+      '<head><meta charset="utf-8"><title>' + esc(title) + '</title>' +
+      '<style>' +
+      '@page { size: A4 landscape; margin: 1.6cm; }' +
+      'body { font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; color: #222; }' +
+      'h1 { font-size: 18pt; margin: 0 0 2pt; color: #b34700; }' +
+      '.sub { color: #666; font-size: 9.5pt; margin: 0 0 14pt; }' +
+      'h2 { font-size: 13pt; margin: 16pt 0 2pt; color: #b34700; border-bottom: 1.5pt solid #b34700; padding-bottom: 3pt; }' +
+      'h3 { font-size: 10.5pt; margin: 10pt 0 4pt; color: #444; text-transform: uppercase; letter-spacing: .5pt; }' +
+      '.meta { margin: 4pt 0 8pt; font-size: 10pt; }' +
+      'table { border-collapse: collapse; width: 100%; margin-bottom: 8pt; }' +
+      'th { background: #f2e6dc; border: .5pt solid #c8b8ac; padding: 4pt 5pt; text-align: left; font-size: 9pt; text-transform: uppercase; }' +
+      'td { border: .5pt solid #d8ccc2; padding: 4pt 5pt; font-size: 9.5pt; }' +
+      '.band { font-weight: bold; text-align: center; background: #faf3ee; }' +
+      '.no { color: #b3001b; font-weight: bold; }' +
+      '.none { color: #666; font-style: italic; }' +
+      '.brk { page-break-after: always; }' +
+      '.tot { margin-top: 12pt; padding-top: 6pt; border-top: 1pt solid #999; font-size: 10pt; }' +
+      '</style></head><body>' +
+      '<h1>IMANI SUPERDEALER &mdash; ' + esc(title) + '</h1>' +
+      '<p class="sub">' + esc(d.month) + (d.station ? ' &middot; ' + esc(d.station) : ' &middot; all stations') +
+      ' &middot; generated ' + esc(d.generatedAt) + ' EAT</p>' +
+      '<p class="tot"><b>' + d.totals.total + '</b> high earners across these rounds &middot; ' +
+      '<b>' + d.totals.served + '</b> served &middot; <b class="no">' + d.totals.left + '</b> still untouched.</p>' +
+      body + '</body></html>';
+
+    var blob = new Blob(['﻿', html], { type: 'application/msword' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'high_earners_' + (d.bdo ? d.bdo + '_' : 'team_') + d.month +
+                 (d.station ? '_' + d.station : '') + '.doc';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    toast(t('Downloaded'), 'ok');
+  }
+
   /* Officer workbook: the summary, then one sheet holding every untouched high
    * earner across the whole team - the call list the OM actually works from. */
   function bdosDownload() {
@@ -4324,6 +4450,10 @@
     if (a === 'bdBack') { state._bdOpen = null; renderTab(); return; }
     if (a === 'bdLoad') { state._bdMonth = elById('bdMonth').value; state._bdOpen = null; renderTab(); return; }
     if (a === 'bdDownload') { bdosDownload(); return; }
+    if (a === 'heXlsAll') { heReport('', 'excel'); return; }
+    if (a === 'heDocAll') { heReport('', 'word'); return; }
+    if (a === 'heXlsOne') { heReport(node.getAttribute('data-bdo'), 'excel'); return; }
+    if (a === 'heDocOne') { heReport(node.getAttribute('data-bdo'), 'word'); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {

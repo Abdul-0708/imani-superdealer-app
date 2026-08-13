@@ -5,6 +5,51 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.41.0 — 2026-08-13 · "One agent, one owner, one row" — schema v17
+
+**Fix: the same agent could sit in a round twice.** The base was keyed on
+`(month, bdo, agent_id, KIND)` — and because the *kind* was part of the key, one agent could occupy
+the very same officer's round twice: once as **priority** (carried from last month) and once as
+**uploaded** (a file listed him again). Everything built on the base then counted him twice — round
+size, coverage percent, high-earner totals, and the untouched list the OM works from. That is the
+duplicate account number in the screenshot.
+
+Worse, nothing stopped the same agent appearing in **two officers' rounds at once**, so two men
+could both be sent to the same door.
+
+The key is now `(month, agent_id)`: **one owner per agent per month.** Existing rows are collapsed
+before the key is applied, keeping the row that best represents the truth — in order of authority:
+the officer who actually **served** him (the work is done and the credit is already his), then a
+real officer over the `partners`/`unassigned` placeholders, then a carried **priority** row over one
+a file added, then the oldest. Every collapse is written to the audit log.
+Verified by reproducing all three duplicate shapes on the old key and running the migration: agent
+held twice by one officer → collapsed to the carried row; agent held by two officers → collapsed to
+one; agent held by a placeholder *and* by the officer who served him → **the officer who served him
+won**. Duplicates remaining: 0.
+
+**Serving takes ownership, immediately.** The officer who went to the door, served the agent and
+captured his physical location has earned him. The agent moves into **his** round the moment the
+mark lands and leaves whoever held him before — no waiting for month end — and the credit already
+follows the same rule. Only *serving* transfers; a visit or an APK tick is work on somebody else's
+agent, not a claim on him. An uploaded file may **never** take an agent off the officer who served
+him; a placeholder holder, or one who has not served, yields to the file.
+Verified: john served an agent mary was holding → *"agent 13 moved from mary to john — john served
+him"* in the audit, credit to john, location captured, mary's round down one. Rolled forward to the
+next month: the agent lands in **john's** round, not mary's.
+
+**High earners as a document the OM can hand over.** Four new downloads on the BDOs window — **Excel
+or Word, for one officer or for the whole team**:
+
+- **Excel** — a Summary sheet (who is sitting on the most untouched money) plus one sheet per
+  officer, untouched rows first, then served.
+- **Word** — a formatted A4 landscape document: title, month, station, generation time, then a
+  section per officer with his counts, his **still untouched** table (the money left in his round)
+  and his served table. Produced entirely in the browser, so it prints the way it looks.
+
+- Schema **v17**. Assets `?v=58`, SW `imani-v58`
+
+---
+
 ## v1.40.0 — 2026-08-13 · "One dashboard, two sections"
 
 **Real Performance is now section two of the Dashboard — two labelled sections, never one number.**

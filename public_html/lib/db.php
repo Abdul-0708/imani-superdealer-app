@@ -107,7 +107,11 @@ function ensure_schema($pdo) {
     bdo VARCHAR(64) NOT NULL,
     agent_id INT NOT NULL,
     kind VARCHAR(10) NOT NULL,
-    UNIQUE KEY uq_base (month, bdo, agent_id, kind)
+    /* ONE OWNER PER AGENT PER MONTH. The kind column used to sit in this key,
+       so the same agent could occupy the same round twice - once carried
+       (priority) and once added by a file (uploaded) - and every count built
+       on the base double-counted him. */
+    UNIQUE KEY uq_base_owner (month, agent_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
   CREATE TABLE IF NOT EXISTS targets (
@@ -385,6 +389,87 @@ function upgrade_schema($pdo) {
     schema_v16_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "16" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 17) {
+    schema_v17_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "17" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v17: ONE AGENT, ONE OWNER, ONE ROW.
+ *
+ * The base key was (month, bdo, agent_id, KIND). Because the kind was part of
+ * it, the very same agent could sit in the very same officer's round twice -
+ * once as "priority" (carried from last month) and once as "uploaded" (a file
+ * listed him again) - and everything built on the base counted him twice: the
+ * round size, the coverage percentage, the high-earner totals, the untouched
+ * list the OM works from. The screenshot that started this showed one agent
+ * printed twice under the same account number.
+ *
+ * Worse, nothing stopped the same agent appearing in TWO officers' rounds at
+ * once, so two men could both be told to go and serve him.
+ *
+ * The key becomes (month, agent_id): one owner per agent per month, full stop.
+ * Existing rows are collapsed before the key is applied, keeping the row that
+ * best represents the truth - see keep_one_base_row().
+ */
+function schema_v17_apply($pdo) {
+  /* 1. collapse duplicates so the new key can be created at all */
+  dedupe_base_rows($pdo);
+
+  /* 2. swap the key. Dropping by name is wrapped because an install that was
+   *    created fresh on v17 already has the new one. */
+  foreach (array('ALTER TABLE base DROP INDEX uq_base',
+                 'ALTER TABLE base ADD UNIQUE KEY uq_base_owner (month, agent_id)') as $sql) {
+    try { $pdo->exec($sql); } catch (Exception $e) { /* already in the wanted shape */ }
+  }
+}
+
+/*
+ * WHICH DUPLICATE SURVIVES.
+ *
+ * In order of authority:
+ *   1. the officer who actually SERVED him this month - the work is done and
+ *      the credit is already his, so the round must agree with the ledger;
+ *   2. a real officer over the 'partners' / 'unassigned' placeholders;
+ *   3. a carried "priority" row over one a file added, because carried means
+ *      he was earned last month;
+ *   4. failing all that, the oldest row.
+ */
+function dedupe_base_rows($pdo) {
+  $rows = $pdo->query('SELECT id, month, bdo, agent_id, kind FROM base ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+  if (!$rows) return 0;
+
+  /* who served whom, so the ledger can win the argument */
+  $served = array();
+  foreach ($pdo->query("SELECT month, agent_id, bdo FROM agent_month_kpi WHERE kpi = 'served'")->fetchAll(PDO::FETCH_ASSOC) as $k) {
+    $served[$k['month'] . '|' . $k['agent_id']] = $k['bdo'];
+  }
+
+  $best = array(); $drop = array();
+  foreach ($rows as $r) {
+    $key = $r['month'] . '|' . $r['agent_id'];
+    if (!isset($best[$key])) { $best[$key] = $r; continue; }
+    $keep = base_row_rank($r, $served, $key) > base_row_rank($best[$key], $served, $key) ? $r : $best[$key];
+    $lose = ($keep === $r) ? $best[$key] : $r;
+    $drop[] = (int)$lose['id'];
+    $best[$key] = $keep;
+  }
+  if ($drop) {
+    foreach (array_chunk($drop, 500) as $chunk) {
+      $pdo->exec('DELETE FROM base WHERE id IN (' . implode(',', array_map('intval', $chunk)) . ')');
+    }
+    $pdo->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "base_dedupe", ?)')
+        ->execute(array(count($drop) . ' duplicate base rows removed - one owner per agent per month'));
+  }
+  return count($drop);
+}
+function base_row_rank($r, $served, $key) {
+  $rank = 0;
+  if (isset($served[$key]) && $served[$key] === $r['bdo']) $rank += 100;   /* he did the work */
+  if ($r['bdo'] !== 'partners' && $r['bdo'] !== 'unassigned') $rank += 10; /* a real officer */
+  if ($r['kind'] === 'priority') $rank += 1;                               /* earned last month */
+  return $rank;
 }
 
 /*
