@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.37.0';
+  var APP_VERSION = '1.38.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -174,7 +174,6 @@
     'Everything': 'Kila kitu',
     'Any': 'Yoyote',
     'High-earner list': 'Orodha ya mapato',
-    'Field Activity': 'Shughuli za uwandani',
     'Wake sleeping agents and recruit new ones - both build the SAME Activeness KPI this month.':
       'Amsha mawakala waliolala na sajili wapya - vyote vinajenga KPI ILE ILE ya Activeness mwezi huu.',
     'Recruit a new agent': 'Sajili wakala mpya',
@@ -234,7 +233,29 @@
     'The file says the PARTNER served this agent': 'Faili linasema MSHIRIKA ndiye alimhudumia wakala huyu',
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
-    'Team': 'Timu',
+    'Grow my round': 'Kuza mzunguko wangu',
+    'BDOs': 'Maafisa (BDO)',
+    'Officer': 'Afisa',
+    'Officers': 'Maafisa',
+    'Base': 'Msingi',
+    'Covered': 'Imefikiwa',
+    'High earners served': 'Wanaolipa zaidi waliohudumiwa',
+    'Still untouched': 'Bado hawajafikiwa',
+    'High earners NOT served': 'Wanaolipa zaidi AMBAO hawajahudumiwa',
+    'The money still sitting in his round. Biggest list first.':
+      'Fedha bado zipo kwenye mzunguko wake. Orodha kubwa kwanza.',
+    'Ordered by high earners still untouched - the officer at the top is the one to speak to today.':
+      'Imepangwa kwa wanaolipa zaidi ambao hawajafikiwa - afisa wa juu ndiye wa kuzungumza naye leo.',
+    'Every officer\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.':
+      'Mzunguko wa kila afisa, amefikia wapi, na wanaolipa zaidi ambao hajawafikia. Gusa jina kumfungua.',
+    'All officers': 'Maafisa wote',
+    'His round': 'Mzunguko wake',
+    'His whole round': 'Mzunguko wake wote',
+    'Still to serve': 'Bado kuhudumia',
+    'not served': 'hajahudumiwa',
+    'all served': 'wote wamehudumiwa',
+    'to go': 'zimebaki',
+    'left': 'zimebaki',
     'More': 'Zaidi',
     'Database Upload': 'Upakiaji wa Database',
     'Every office file comes in here. Pick what kind it is - only the performance file scores anybody or raises a flag.':
@@ -834,14 +855,13 @@
     { key: 'mybase', label: 'My Agent Base', icon: 'phone' },
     { key: 'daily', label: 'Daily Report', icon: 'cal' },
     { key: 'agents', label: 'Agents', icon: 'users' },
+    { key: 'bdos', label: 'BDOs', icon: 'users' },
     { key: 'upload', label: 'Database Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'reports', label: 'Reports & Ranks', icon: 'chart' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
     { key: 'combined', label: 'Real Performance', icon: 'percent' },
-    { key: 'team', label: 'Team', icon: 'chart' },
-    { key: 'field', label: 'Field Activity', icon: 'pin' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
     { key: 'data', label: 'Settings & Data', icon: 'lock' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
@@ -989,17 +1009,17 @@
    * enforced by the server) so the uploaded list is visible to everyone. */
   function visibleModules() {
     return MODULES.filter(function (m) {
-      if (m.key === 'daily') return can('mybase', 'e'); // BDO's own daily-report tab
+      if (m.key === 'mybase' || m.key === 'daily') {
+        if (isOfficeRole()) return false;      /* he manages the round, he does not walk it */
+        return can('mybase', m.key === 'daily' ? 'e' : 'v');
+      }
       if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
-      if (m.key === 'field') return can('mybase', 'v'); // BDO take-over + wake list
       /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
        * (viewFlags branches on the role). Both need the tab. */
       if (m.key === 'flags') return isManager() || can('mybase', 'v');
+      if (m.key === 'bdos') return isManager();     // the officer window: OM / MD
       if (m.key === 'combined') return isManager(); // OM / super admin only
-      /* Team: the read-only live board + ranking, for field users. Managers get
-       * the same thing inside their own Dashboard / Reports. */
-      if (m.key === 'team') return isFieldUser();
       /* a BDO's report days + ranking now live on HIS dashboard - one less tab */
       if (m.key === 'reports') return !isFieldUser() && can('reports', 'v');
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
@@ -1050,7 +1070,7 @@
    * letters - a truncated label teaches nobody anything. */
   var BOTNAV_SHORT = {
     mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home',
-    field: 'Field', inbox: 'Messages', combined: 'Real Perf.', upload: 'Upload',
+    bdos: 'BDOs', inbox: 'Messages', combined: 'Real Perf.', upload: 'Upload',
     targets: 'Targets', commission: 'Commission', reports: 'Reports', data: 'Settings'
   };
   function botLabel(m) { return t(BOTNAV_SHORT[m.key] || m.label); }
@@ -1121,8 +1141,7 @@
     else if (state.tab === 'daily') viewDaily(v);
     else if (state.tab === 'data') viewData(v);
     else if (state.tab === 'inbox') viewInbox(v);
-    else if (state.tab === 'field') viewField(v);
-    else if (state.tab === 'team') viewTeam(v);
+    else if (state.tab === 'bdos') viewBdos(v);
     else if (state.tab === 'combined') viewCombined(v);
     /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
     else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
@@ -1199,16 +1218,17 @@
     }).join('') || '<tr><td class="note">' + t('No report days yet.') + '</td></tr>';
     return { head: head, body: body, days: shown.length };
   }
-  /* HIS dashboard answers one question: how is MY day and MY month going.
-   * Everything that is not about his own work lives elsewhere now - the team
-   * board and the ranking in the Team tab, his flags in the Flags tab, his
-   * report days beside the Daily Report he writes, and messages only in
-   * Messages (the nav badge is what tells him a new one arrived). */
+  /* HIS ONE PAGE: how is MY day and MY month going, and where do I stand.
+   * The Team tab used to hold the second half of that answer - his high-earner
+   * value and the whole-team board - which meant two tabs to learn one thing,
+   * and his weighted score rendered in both places. It is all here now. His
+   * flags stay in the Flags tab (it carries the red badge), his report days sit
+   * beside the Daily Report he writes, and messages only in Messages. */
   function personalDashboard(v) {
-    var calls = [api('base'), api('my_live_today'),
+    var calls = [api('base'), api('my_live_today'), api('bdo_rank_public'),
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
-      var d = rr[0], live = rr[1], sum = rr[2];
+      var d = rr[0], live = rr[1], wrk = rr[2], sum = rr[3];
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -1345,6 +1365,7 @@
           '<div class="tg-row"><span class="tg-name">' + t('My coverage') + '</span>' +
           '<div class="bar" style="flex:1"><i class="' + (covPct < 50 ? 'red' : covPct >= 80 ? 'green' : '') + '" style="width:' + Math.max(0, Math.min(100, covPct)) + '%"></i></div>' +
           '<span class="tg-pct">' + covPct + '%</span></div>' +
+          weightedBoard(wrk) +
           '<div class="note" style="margin-top:8px">' +
           (behind != null && behind > 0
             ? t('The biggest base in the office holds') + ' <b>' + fmt(sd.biggestBase) + '</b> ' + t('agents') + ' &mdash; ' +
@@ -1353,35 +1374,8 @@
           '</div></div>';
       }
 
-      v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
-        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
-        idlePanel +
-        '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
-        scorePanel +
-        standPanel +
-        livePanel;
-    }).catch(function (e) { v.innerHTML = errBox(e); });
-  }
-
-  /* ---------------- Team (field users): the live board + the ranking --------
-   * Read-only by design: he watches the day and sees where he stands, but the
-   * export stays with management. */
-  function viewTeam(v) {
-    Promise.all([api('bdo_rank_public'), api('base'), api('my_live_today')]).then(function (rr) {
-      var wrk = rr[0], d = rr[1], live = rr[2];
-
-      /* HIS OWN MONTH - moved off the dashboard, which is now strictly his day.
-       * This is the "where do I stand" page, so his weighted score belongs here
-       * beside the ranking it feeds. */
-      var perf = d.performance;
-      var mePanel = perf
-        ? '<div class="panel"><h2>' + svg('percent') + t('My Performance') + ' ' + flagPill(perf.flag, perf.score) + '</h2>' +
-          perfBars(perf.kpis) + '</div>'
-        : '<div class="panel"><div class="note">' + t('Your OM has not set your targets for') + ' ' + esc(d.month || '') + ' ' + t('yet - your weighted score will appear here.') + '</div></div>';
-
-      /* HIGH EARNERS he served - day / week / month, per list. The money view
-       * of his effort: not just "how many", but "how valuable". */
+      /* HIGH EARNERS HE SERVED - the money view of his effort: not just how
+       * many agents, but how valuable they were. */
       var B = live.bands || {};
       function bandCells(sp) {
         var b = B[sp] || {};
@@ -1400,18 +1394,9 @@
         '<tr><td><b>' + t('This month') + '</b></td>' + bandCells('month') + '</tr>' +
         '</tbody></table></div></div>';
 
-      var rankPanel = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
-        (((wrk && wrk.rows) || []).map(function (r, i) {
-          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '>' +
-            '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
-        }).join('') || '<tr><td colspan="3" class="note">' + t('No targets set yet.') + '</td></tr>') +
-        '</tbody></table></div></div>';
-
-      v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('Team') + '</h1>' +
-        '<p class="page-sub">' + t('Your month so far, and where you stand against the rest.') + '</p>' +
-        mePanel + heScorePanel +
+      /* THE WHOLE TEAM'S DAY, read-only. He watches it; the export stays with
+       * management. */
+      var teamBoard =
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
         '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
@@ -1425,11 +1410,22 @@
         '<button class="ghost mini" data-action="liveWinEvening" title="17:00-23:59">' + t('Evening') + '</button>' +
         '<button class="ghost" data-action="liveLoad">' + svg('rotate') + ' ' + t('Refresh') + '</button></div>' +
         '<p class="note">' + t('What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.') + '</p>' +
-        '<div id="liveBox"></div></div>' +
-        rankPanel;
+        '<div id="liveBox"></div></div>';
+
+      v.innerHTML =
+        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        idlePanel +
+        '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
+        scorePanel +
+        standPanel +
+        heScorePanel +
+        livePanel +
+        teamBoard;
       liveTodayLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+
 
   /* ---------------- Flags, a field user's own page ----------------
    * The same panel that used to sit on his dashboard, now a tab of its own with
@@ -1687,6 +1683,21 @@
                 : '') + '</span>'
           : '<span class="note">' + t('All stations combined') + '</span>') +
         '</div></div>' +
+        /* NO TARGET, NO SCORE - and say which it is.
+         * A weighted average has no meaning without a denominator, so with no
+         * target typed the whole screen reads blank however hard the team is
+         * working. That looked exactly like the app had stopped counting. Now
+         * it says what is actually missing, and offers the way to fix it. */
+        (d.targetsFrom === 'none'
+          ? '<div class="panel" style="border-color:var(--bad)"><div class="row" style="align-items:flex-start">' +
+            '<span class="idle-ic">' + svg('alert') + '</span><div style="flex:1">' +
+            '<b>' + t('No targets set for') + ' ' + esc(d.month || '') + '</b>' +
+            '<div class="note" style="margin-top:4px">' +
+            t('The team\'s work IS being recorded - every serve, visit and wake is counted. But a weighted average needs a target to measure against, so it cannot be worked out until you set one.') +
+            '</div><div class="row" style="margin-top:8px">' +
+            '<button class="btn mini" data-action="tab" data-tab="targets">' + t('Set this month\'s targets') + '</button>' +
+            '</div></div></div></div>'
+          : '') +
         /* The calendar opened this month by itself. Anything it rolled past is
          * AWAITING its final performance file - say so loudly, because the
          * month's achievement and commission cannot be settled until it lands. */
@@ -1941,6 +1952,21 @@
     if (flag === 'red') return '<span class="pill bad">' + score + '% &mdash; BELOW 50</span>';
     if (flag === 'excellent') return '<span class="pill ok">' + score + '% &mdash; EXCELLENT</span>';
     return '<span class="pill gold">' + score + '%</span>';
+  }
+  /* THE weighted leaderboard. Written once and called from everywhere it is
+   * needed: the BDO's own standing panel and the OM's Reports page. Two copies
+   * of this table is how the app ended up with three different rankings of the
+   * same people. `me` bolds the reader's own row. */
+  function weightedBoard(wrk, compact) {
+    var rows = (wrk && wrk.rows) || [];
+    if (!rows.length) return '<div class="note">' + t('No targets set yet.') + '</div>';
+    var mine = state.user && state.user.username;
+    return '<div class="tablewrap"' + (compact ? '' : ' style="margin-top:6px"') + '><table><thead><tr><th>#</th><th>BDO</th>' +
+      '<th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
+      rows.map(function (r, i) {
+        return '<tr' + (r.bdo === mine ? ' style="font-weight:800"' : '') + '>' +
+          '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
   }
   function perfBars(kpis) {
     /* loop variable must not be `t` - it would shadow the t() translator */
@@ -2211,7 +2237,16 @@
         (fk || fb || q || fs || fl || fbr || fld ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
         '</div>' +
         (bandChips ? '<div class="row" style="margin-bottom:10px">' + bandChips + '</div>' : '') +
-        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+        /* GROWING the round, directly under the round itself: a brand-new agent
+         * counts in Activeness exactly like waking a sleeping one, so the two
+         * belong together and belong here. */
+        '<div class="panel"><div class="row" style="align-items:center">' +
+        '<h2 style="margin:0">' + svg('zap') + t('Grow my round') + '</h2><div class="spacer"></div>' +
+        (editable ? '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>' : '') + '</div>' +
+        '<p class="note">' + t('A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.') + '</p></div>' +
+        '<div id="inactivePanel"></div>';
+      inactivePanelLoad();
       var sb = elById('baseSearch');
       if (sb) {
         sb.addEventListener('input', function () {
@@ -2961,18 +2996,6 @@
       toast(d.rows.length + ' BDOs exported', 'ok');
     }).catch(function (e) { toast(e.message, 'err'); });
   }
-  function bdoPerfPanel(perf) {
-    var rows = (perf.rows || []).map(function (r, i) {
-      var mini = TARGET_DEFS.map(function (def) {
-        var k = r.kpis[def.key];
-        var cls = !k || k.pct == null ? 'dim' : (k.pct < 50 ? 'bad' : (k.pct >= 80 ? 'ok' : 'gold'));
-        return '<span class="pill ' + cls + '" title="' + esc(def.label) + ': ' + (k ? fmt(k.actual) + '/' + fmt(k.target) : '-') + '">' + esc(def.label.split(' ')[0]) + ' ' + (k && k.pct != null ? k.pct + '%' : '-') + '</span>';
-      }).join(' ');
-      return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td><td><div class="kchips">' + mini + '</div></td></tr>';
-    }).join('') || '<tr><td colspan="4" class="note">No BDOs yet.</td></tr>';
-    return '<div class="panel"><h2>' + svg('percent') + 'BDO Performance &mdash; ' + esc(perf.month) + ' (all BDOs, top to bottom)</h2>' +
-      '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Weighted Score</th><th>Per-KPI</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
-  }
   function btSave() {
     var body = { month: elById('tgMonth') ? elById('tgMonth').value : (state.month || state.openMonth), bdo: elById('btBdo').value };
     TARGET_DEFS.forEach(function (td) { body[td.key] = elById('bt_' + td.key).value; body[td.key + '_w'] = elById('btw_' + td.key).value; });
@@ -3010,8 +3033,9 @@
    * CAREFUL: never name a local variable `t` in here - `t` is the translator. */
   function viewTargets(v) {
     var m0 = state.month || state.openMonth || curMonth();
-    Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 }), api('bdo_performance', { qs: '&month=' + m0 })]).then(function (rr) {
-      var list = (rr[0] && rr[0].rows) || [], bt = rr[1], perf = rr[2];
+    /* no bdo_performance call any more - that table moved to the BDOs window */
+    Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 })]).then(function (rr) {
+      var list = (rr[0] && rr[0].rows) || [], bt = rr[1];
       var stations = (rr[0] && rr[0].stations) || [];
       var home = (rr[0] && rr[0].homeStation) || 'ARUSHA';
       var m = m0;
@@ -3055,8 +3079,6 @@
         (cur.month ? '' : ' &middot; <span class="pill dim">' + t('nothing saved here yet') + '</span>') + '</p>' +
         fields + '</div>' +
         bdoTargetsPanel(bt) +
-        bdoPerfPanel(perf) +
-        rangeReportPanel() +
         '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
@@ -3206,19 +3228,12 @@
 
       /* weighted TOP-PERFORMING ranking - the one list every member sees */
       var weightRank = '<div class="panel"><h2>' + svg('percent') + t('Top performing - weighted score') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>' + t('Weighted score') + '</th></tr></thead><tbody>' +
-        ((wrk.rows || []).map(function (r, i) {
-          return '<tr' + (state.user && r.bdo === state.user.username ? ' style="font-weight:800"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
-        }).join('') || '<tr><td colspan="3" class="note">No targets set yet.</td></tr>') + '</tbody></table></div></div>';
+        weightedBoard(wrk) + '</div>';
 
       /* --- daily report matrix: BDO x day, OK / LATE / MISSING(red) --- */
       var mx = reportDaysMatrix(dr, m);
       var head = mx.head, matrix = mx.body, shown = { length: mx.days };
 
-      /* --- rankings --- */
-      var rankRows = (rk.rows || []).map(function (r, i) {
-        return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + fmt(r.served) + '</td><td>' + fmt(r.visit) + '</td><td>' + fmt(r.active) + '</td>' + (rk.hasApk ? '<td>' + fmt(r.apk) + '</td>' : '') + '</tr>';
-      }).join('') || '<tr><td colspan="6" class="note">No KPI activity in this period.</td></tr>';
 
       /* Flag details moved to their own tab (viewFlags) - keep the response
        * loaded so `fl` is still valid, but don't render anything here. */
@@ -3288,13 +3303,7 @@
         '<div class="panel"><h2>' + svg('cal') + 'Daily reports - last ' + shown.length + ' days</h2>' +
         '<p class="note"><span class="pill ok">OK</span> on time &middot; <span class="pill gold">LATE</span> after midnight &middot; <span class="pill bad">MISS</span> working day without a report</p>' +
         '<div class="tablewrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + matrix + '</tbody></table></div></div>' +
-        '<div class="panel"><h2>' + svg('chart') + 'BDO Ranking</h2>' +
-        '<div class="row" style="margin-bottom:8px">' +
-        ['daily', 'weekly', 'monthly'].map(function (p) { return '<button class="role-chip' + (p === period ? ' active' : '') + '" data-action="rankPeriod" data-p="' + p + '">' + p.charAt(0).toUpperCase() + p.slice(1) + '</button>'; }).join('') +
-        '<div class="field"><label>Date</label><input id="rankDate" type="date" value="' + esc(state._rankDate || new Date().toISOString().slice(0, 10)) + '"></div>' +
-        '<button class="ghost" data-action="rankLoad">Load</button>' +
-        '<div class="spacer"></div><span class="note">' + esc(rk.from) + (rk.from !== rk.to ? ' to ' + esc(rk.to) : '') + '</span></div>' +
-        '<div class="tablewrap"><table><thead><tr><th>#</th><th>BDO</th><th>Unique Served</th><th>Visits (ODK)</th><th>Activeness</th>' + (rk.hasApk ? '<th>APK</th>' : '') + '</tr></thead><tbody>' + rankRows + '</tbody></table></div></div>' +
+
         (isManager()
           ? '<div class="panel"><div class="row" style="align-items:center"><span class="note">' + svg('alert') + ' ' + t('Flag details moved to their own tab.') + '</span>' +
             '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open Flags') + '</button></div></div>'
@@ -3567,6 +3576,181 @@
     toast(t('Downloaded'), 'ok');
   }
 
+  /* ---------------- BDOs: the officer window (OM) ----------------
+   *
+   * Everything the OM used to hunt for across Real Performance, Reports and the
+   * Upload tab, on one screen: who has how big a round, how much of it he has
+   * covered, what he is scoring - and how many of the HIGH EARNERS in his round
+   * are still untouched. Sorted by untouched earners, so the officer the OM
+   * needs to speak to today is at the top.
+   */
+  function viewBdos(v) {
+    var m = state._bdMonth || state.openMonth || curMonth();
+    state._bdMonth = m;
+    if (state._bdOpen) return bdoDetail(v, state._bdOpen, m);
+    api('bdos', { qs: '&month=' + m }).then(function (d) {
+      state._bdos = d;
+      var rows = d.rows || [];
+      var T = d.totals || {};
+
+      var body = rows.map(function (r) {
+        var cov = r.coverage == null ? 0 : r.coverage;
+        var covCls = r.coverage == null ? '' : (cov < 50 ? ' red' : cov >= 80 ? ' green' : '');
+        /* the untouched-earner cell is the point of the screen: red while there
+         * is money left in his round, green only when there is none */
+        var leftPill = !d.hasHighEarners
+          ? '<span class="note">' + t('no list uploaded') + '</span>'
+          : r.heLeft > 0
+            ? '<span class="pill bad">' + fmt(r.heLeft) + ' ' + t('left') + '</span>' +
+              bandsLeftHtml(r.bandsLeft)
+            : (r.he > 0 ? '<span class="pill ok">' + t('all served') + '</span>'
+                        : '<span class="note">' + t('none in his round') + '</span>');
+        return '<tr class="clickrow" data-action="bdOpen" data-bdo="' + esc(r.bdo) + '">' +
+          '<td><b>' + esc(r.name) + '</b>' +
+            (r.specialty === 'activeness' ? ' <span class="pill gold">' + t('activeness') + '</span>' : '') +
+            '<div class="note">' + esc(r.bdo) + '</div></td>' +
+          '<td><b>' + fmt(r.base) + '</b></td>' +
+          '<td><div class="row" style="align-items:center;gap:6px">' +
+            '<div class="bar" style="flex:1;min-width:60px"><i class="' + covCls + '" style="width:' + Math.max(0, Math.min(100, cov)) + '%"></i></div>' +
+            '<span class="tg-pct">' + (r.coverage == null ? '-' : cov + '%') + '</span></div>' +
+            '<div class="note">' + fmt(r.served) + ' ' + t('served') + ' · ' + fmt(r.left) + ' ' + t('to go') + '</div></td>' +
+          '<td>' + fmt(r.heServed) + ' / ' + fmt(r.he) + '</td>' +
+          '<td>' + leftPill + '</td>' +
+          '<td>' + (r.hasTargets ? flagPill(r.flag, r.score) : '<span class="pill dim">' + t('no targets') + '</span>') + '</td>' +
+          '<td>' + (r.flags ? '<span class="pill bad">' + fmt(r.flags) + '</span>' : '<span class="note">-</span>') + '</td>' +
+          '</tr>';
+      }).join('') || '<tr><td colspan="7" class="note">' + t('No officers with a round this month.') + '</td></tr>';
+
+      v.innerHTML =
+        greetingLine() +
+        '<h1 class="page-title">' + t('BDOs') + '</h1>' +
+        '<p class="page-sub">' + t('Every officer\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.') + '</p>' +
+        '<div class="panel"><div class="row">' +
+        '<div class="field"><label>' + t('Month') + '</label><input id="bdMonth" type="month" value="' + esc(m) + '"></div>' +
+        '<button class="btn" data-action="bdLoad">' + t('Load') + '</button>' +
+        '<div class="spacer"></div>' +
+        '<button class="ghost" data-action="bdDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
+        '</div></div>' +
+        '<div class="grid cards" style="margin-bottom:12px">' +
+        card('users', t('Agents in all rounds'), fmt(T.base), fmt(T.served) + ' ' + t('served so far')) +
+        card('flame', t('High earners in rounds'), fmt(T.he), fmt(T.heServed) + ' ' + t('served')) +
+        card('alert', t('High earners not reached'), fmt(T.heLeft), t('across every officer')) +
+        card('alert', t('Flags standing'), fmt(T.flags), t('this month')) +
+        '</div>' +
+        '<div class="panel"><h2>' + svg('users') + t('Officers') + ' &mdash; ' + esc(m) +
+          (d.station ? ' · ' + esc(d.station) : '') + '</h2>' +
+        '<p class="note">' + t('Ordered by high earners still untouched - the officer at the top is the one to speak to today.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>' + t('Officer') + '</th><th>' + t('Base') + '</th>' +
+        '<th>' + t('Covered') + '</th><th>' + t('High earners served') + '</th><th>' + t('Still untouched') + '</th>' +
+        '<th>' + t('Score') + '</th><th>' + t('Flags') + '</th></tr></thead><tbody>' + body + '</tbody></table></div></div>' +
+        /* the date-range officer report - it was stranded in the target-setting
+         * screen, which is not where anybody looks for a report */
+        rangeReportPanel();
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* the untouched earners broken down by list, so "8 left" says WHICH 8 */
+  function bandsLeftHtml(bl) {
+    if (!bl) return '';
+    var out = ['A', 'B', 'C', 'D', 'E'].filter(function (b) { return bl[b] > 0; })
+      .map(function (b) { return b + ':' + bl[b]; }).join(' · ');
+    return out ? '<div class="note">' + esc(out) + '</div>' : '';
+  }
+
+  /* One officer. High earners first - served on one side, still untouched on
+   * the other - because that is the question the OM opens him to answer. */
+  function bdoDetail(v, bdo, m) {
+    api('bdo_detail', { qs: '&month=' + m + '&bdo=' + encodeURIComponent(bdo) }).then(function (d) {
+      state._bdDetail = d;
+      function heTable(list, served) {
+        if (!list.length) {
+          return '<div class="note">' + (served ? t('None of his high earners are served yet.')
+                                                : t('Nothing left - every high earner in his round is served.')) + '</div>';
+        }
+        return '<div class="tablewrap"><table><thead><tr><th>' + t('List') + '</th><th>' + t('Agent') + '</th>' +
+          '<th>' + t('Branch') + '</th><th>' + t('Location') + '</th>' +
+          '<th>' + (served ? t('Served') : t('Status')) + '</th></tr></thead><tbody>' +
+          list.map(function (a) {
+            return '<tr><td>' + bandPill(a.band) + '</td>' +
+              '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+              '<td>' + esc(a.branch || '-') + '</td>' +
+              '<td>' + esc(a.location || '-') + '</td>' +
+              '<td>' + (served
+                ? '<span class="pill ok">' + esc(a.servedAt || t('yes')) + '</span>' +
+                  (a.servedBy && a.servedBy !== d.bdo ? '<div class="note">' + t('by') + ' ' + esc(a.servedBy) + '</div>' : '')
+                : '<span class="pill bad">' + t('not served') + '</span>' +
+                  (a.active === 'INACTIVE' ? ' <span class="pill dim">' + t('inactive') + '</span>' : '')) +
+              '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+      }
+      var cov = d.baseCount > 0 ? Math.round(d.servedCount / d.baseCount * 100) : 0;
+      var flagTotal = 0;
+      Object.keys(d.flags || {}).forEach(function (k) { flagTotal += d.flags[k]; });
+
+      var baseRows = (d.base || []).map(function (a) {
+        return '<tr><td>' + bandPill(a.band) + '</td>' +
+          '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td>' + esc(a.branch || '-') + '</td>' +
+          '<td>' + esc(a.location || '-') + '</td>' +
+          '<td>' + (a.served ? '<span class="pill ok">' + t('served') + '</span>'
+                             : '<span class="pill dim">' + t('not yet') + '</span>') + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="note">' + t('His round is empty this month.') + '</td></tr>';
+
+      v.innerHTML =
+        '<div class="row" style="margin-bottom:10px"><button class="ghost" data-action="bdBack">&larr; ' + t('All officers') + '</button></div>' +
+        '<h1 class="page-title">' + esc(d.name) + '</h1>' +
+        '<p class="page-sub">' + esc(d.month) + ' · ' + esc(d.bdo) +
+          (d.specialty === 'activeness' ? ' · ' + t('activeness specialist') : '') + '</p>' +
+        '<div class="grid cards" style="margin-bottom:12px">' +
+        card('users', t('His round'), fmt(d.baseCount), fmt(d.servedCount) + ' ' + t('served') + ' · ' + cov + '%') +
+        card('flame', t('High earners served'), fmt((d.heServed || []).length),
+             t('of') + ' ' + fmt((d.heServed || []).length + (d.heLeft || []).length)) +
+        card('alert', t('Still untouched'), fmt((d.heLeft || []).length), t('high earners')) +
+        card('percent', t('Weighted score'), d.performance ? d.performance.score + '%' : '-',
+             d.performance ? '' : t('no targets set')) +
+        '</div>' +
+        (d.performance
+          ? '<div class="panel"><h2>' + svg('percent') + t('His score against target') + ' ' +
+            flagPill(d.performance.flag, d.performance.score) + '</h2>' + perfBars(d.performance.kpis) + '</div>'
+          : '') +
+        /* untouched FIRST: it is the list he has to act on */
+        '<div class="panel"><h2>' + svg('alert') + t('High earners NOT served') +
+          ' <span class="pill bad">' + fmt((d.heLeft || []).length) + '</span></h2>' +
+        '<p class="note">' + t('The money still sitting in his round. Biggest list first.') + '</p>' +
+        heTable(d.heLeft || [], false) + '</div>' +
+        '<div class="panel"><h2>' + svg('check') + t('High earners served') +
+          ' <span class="pill ok">' + fmt((d.heServed || []).length) + '</span></h2>' +
+        heTable(d.heServed || [], true) + '</div>' +
+        (flagTotal
+          ? '<div class="panel"><h2>' + svg('alert') + t('Flags against him') +
+            ' <span class="pill bad">' + fmt(flagTotal) + '</span></h2>' +
+            '<p class="note">' + Object.keys(d.flags).map(function (k) { return k + ': ' + d.flags[k]; }).join(' · ') + '</p>' +
+            '<button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open the Flags panel') + '</button></div>'
+          : '') +
+        '<div class="panel"><h2>' + svg('users') + t('His whole round') +
+          ' <span class="pill dim">' + fmt(d.baseCount) + '</span></h2>' +
+        '<div class="tablewrap tall"><table><thead><tr><th>' + t('List') + '</th><th>' + t('Agent') + '</th>' +
+        '<th>' + t('Branch') + '</th><th>' + t('Location') + '</th><th>' + t('Served') + '</th></tr></thead><tbody>' +
+        baseRows + '</tbody></table></div></div>';
+    }).catch(function (e) { v.innerHTML = errBox(e); });
+  }
+  /* Officer workbook: the summary, then one sheet holding every untouched high
+   * earner across the whole team - the call list the OM actually works from. */
+  function bdosDownload() {
+    var d = state._bdos;
+    if (!d) { toast(t('Load a month first'), 'warn'); return; }
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
+      return { 'Officer': r.name, 'Username': r.bdo, 'Base': r.base, 'Served': r.served,
+               'Still to serve': r.left, 'Covered %': r.coverage == null ? '' : r.coverage,
+               'High earners': r.he, 'HE served': r.heServed, 'HE untouched': r.heLeft,
+               'A left': r.bandsLeft.A, 'B left': r.bandsLeft.B, 'C left': r.bandsLeft.C,
+               'D left': r.bandsLeft.D, 'E left': r.bandsLeft.E,
+               'Weighted score': r.score == null ? '' : r.score, 'Flags': r.flags };
+    })), 'Officers');
+    XLSX.writeFile(wb, 'bdo_window_' + (d.month || '') + (d.station ? '_' + d.station : '') + '.xlsx');
+    toast(t('Downloaded'), 'ok');
+  }
+
   /* ---------------- Flags (OM / management): all KPI, all BDO, live search ----- */
   function viewFlags(v) {
     var m = state._flagsMonth || state.openMonth || curMonth();
@@ -3738,30 +3922,6 @@
     var t2 = elById('flShown'); if (t2) t2.textContent = shown;
   }
 
-  /* ---------------- FIELD ACTIVITY ----------------
-   * Everything that grows the ACTIVENESS KPI lives here: waking sleeping agents
-   * (by SA station) and recruiting brand-new ones. Both count in the same
-   * Activeness figure for the month. */
-  function viewField(v) {
-    Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' }),
-                 isSpecial() ? api('recruit_pipe_list') : Promise.resolve(null)]).then(function (rr) {
-      var d = rr[0], pipe = rr[1];
-      var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
-      v.innerHTML =
-        greetingLine() +
-        '<h1 class="page-title">' + t('Field Activity') + '</h1>' +
-        '<p class="page-sub">' + t('Wake sleeping agents and recruit new ones - both build the SAME Activeness KPI this month.') + '</p>' +
-        '<div class="panel"><div class="row" style="align-items:center"><h2 style="margin:0">' + svg('zap') + t('Recruit a new agent') + '</h2>' +
-        '<div class="spacer"></div>' +
-        (editable ? (isSpecial()
-          ? '<button class="btn mini" data-action="pipeAdd">+ ' + t('New agent form') + '</button>'
-          : '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>') : '') + '</div>' +
-        '<p class="note">' + t('A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.') + '</p></div>' +
-        (pipe ? pipePanel(pipe) : '') +
-        '<div id="inactivePanel"></div>';
-      inactivePanelLoad();
-    }).catch(function (e) { v.innerHTML = errBox(e); });
-  }
   /* ---------------- Messages (every member's box) ---------------- */
   function viewInbox(v) {
     /* Opening the tab IS reading them - clear the nav badge. Messages no longer
@@ -4165,6 +4325,10 @@
         .catch(function (e) { toast(e.message, 'err'); });
       return;
     }
+    if (a === 'bdOpen') { state._bdOpen = node.getAttribute('data-bdo'); renderTab(); return; }
+    if (a === 'bdBack') { state._bdOpen = null; renderTab(); return; }
+    if (a === 'bdLoad') { state._bdMonth = elById('bdMonth').value; state._bdOpen = null; renderTab(); return; }
+    if (a === 'bdDownload') { bdosDownload(); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {

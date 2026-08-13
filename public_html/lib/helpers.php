@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.37.0');
+define('APP_VERSION', '1.38.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -296,6 +296,76 @@ function ensure_base_carry($cur) {
       ->execute(array($prev . ' -> ' . $cur . ': ' . $n . ' agents carried into their BDO base'));
 }
 
+/*
+ * THE TARGETS COME WITH THE MONTH.
+ *
+ * The base carried, activeness carried, the round carried - but the TARGETS did
+ * not. So on the 1st the office and every officer woke up with no target at
+ * all, and a weighted average has no meaning without a denominator: the team
+ * went out and served, every tap was recorded, and the score stayed blank
+ * because there was nothing to weigh it against. It read as "the app is not
+ * counting my work", when the truth was "nobody has said what the work is
+ * measured against this month".
+ *
+ * Last month's targets are the sensible default - a monthly target rarely
+ * changes shape - so they are copied forward and the OM edits them if they
+ * have. Copied ONLY when the new month has none of its own, so this can never
+ * overwrite targets somebody has already typed.
+ */
+function ensure_targets_carry($cur) {
+  $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+  $lock->execute(array('tgcarry_' . $cur, date('Y-m-d H:i:s')));
+  if ($lock->rowCount() !== 1) return;          /* already carried for this month */
+
+  /* the most recent month that actually HAS targets - not merely the previous
+   * one, so a gap month cannot break the chain */
+  $pq = db()->prepare('SELECT month FROM targets WHERE month < ? ORDER BY month DESC LIMIT 1');
+  $pq->execute(array($cur));
+  $prevOffice = ($r = $pq->fetch()) ? $r['month'] : '';
+
+  $n1 = 0;
+  if ($prevOffice !== '') {
+    $has = db()->prepare('SELECT COUNT(*) c FROM targets WHERE month = ?');
+    $has->execute(array($cur));
+    if (!(int)$has->fetch()['c']) {
+      $ins = db()->prepare('INSERT IGNORE INTO targets
+              (month, station, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
+               serving_w, float_w, visits_w, apk_w, activeness_w, withdraw_w)
+              SELECT ?, station, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
+                     serving_w, float_w, visits_w, apk_w, activeness_w, withdraw_w
+              FROM targets WHERE month = ?');
+      $ins->execute(array($cur, $prevOffice));
+      $n1 = $ins->rowCount();
+    }
+  }
+
+  $pq2 = db()->prepare('SELECT month FROM bdo_targets WHERE month < ? ORDER BY month DESC LIMIT 1');
+  $pq2->execute(array($cur));
+  $prevBdo = ($r2 = $pq2->fetch()) ? $r2['month'] : '';
+
+  $n2 = 0;
+  if ($prevBdo !== '') {
+    $has2 = db()->prepare('SELECT COUNT(*) c FROM bdo_targets WHERE month = ?');
+    $has2->execute(array($cur));
+    if (!(int)$has2->fetch()['c']) {
+      $ins2 = db()->prepare('INSERT IGNORE INTO bdo_targets
+              (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
+               serving_w, float_w, visits_w, apk_w, activeness_w)
+              SELECT ?, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
+                     serving_w, float_w, visits_w, apk_w, activeness_w
+              FROM bdo_targets WHERE month = ?');
+      $ins2->execute(array($cur, $prevBdo));
+      $n2 = $ins2->rowCount();
+    }
+  }
+
+  if ($n1 || $n2) {
+    db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "targets_carry", ?)')
+        ->execute(array($cur . ': ' . $n1 . ' office target rows from ' . $prevOffice .
+                        ', ' . $n2 . ' officer targets from ' . $prevBdo));
+  }
+}
+
 function maybe_roll_month() {
   static $checked = false;
   if ($checked) return;
@@ -305,7 +375,7 @@ function maybe_roll_month() {
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
   /* Already on this month - but it may have been opened by an older build that
    * did not carry the bases, so make sure that has happened before leaving. */
-  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); return; }
+  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_targets_carry($cur); return; }
   $ended = $r['month'];
 
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
@@ -339,6 +409,7 @@ function maybe_roll_month() {
   repair_misfiled_marks($cur);
   month_start_messages($ended, $cur);
   ensure_base_carry($cur);
+  ensure_targets_carry($cur);
 
   /* user_id NULL: nobody pressed anything, the calendar did it */
   db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "month_auto_roll", ?)')

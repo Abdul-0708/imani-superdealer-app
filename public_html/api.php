@@ -422,10 +422,14 @@ try {
       $u = require_auth();
       if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
       $month = open_month();
+      /* No placeholder in this statement - passing $month made PDO throw
+       * "invalid parameter number" on every call, which the router turned into
+       * a generic database error and the panel swallowed. The sleeping-agent
+       * list has been coming back empty ever since. */
       $st = db()->prepare('SELECT id, acc, name, phone, branch, station, physical_location, act_prev
                            FROM agents WHERE act_current = "INACTIVE"
                            ORDER BY station, (act_prev = "ACTIVE") DESC, name LIMIT 500');
-      $st->execute(array($month));
+      $st->execute();
       $all = $st->fetchAll();
       $lost = array_values(array_filter($all, function ($a) { return $a['act_prev'] === 'ACTIVE'; }));
       respond(array('month' => $month, 'all' => $all, 'lost' => $lost,
@@ -2657,6 +2661,177 @@ try {
      * Read this next to the plain dashboard: that one answers "what did the
      * office file say", this one answers "what did we actually do".
      */
+    /*
+     * THE OFFICER WINDOW.
+     *
+     * One row per BDO: the size of the round he was given, how much of it he
+     * has covered, what he is scoring against his own target - and, because
+     * that is where the money actually is, how many of the HIGH EARNERS in his
+     * round he has served and how many are still untouched.
+     *
+     * "He served 40 agents" says nothing on its own. 40 of 45 is a month nearly
+     * finished; 40 of 400 is barely started; and 40 that are all LIST F while
+     * six LIST A earners sit unvisited is a month spent on the wrong agents.
+     * The OM needs those three facts side by side, for every officer, on one
+     * screen - which is what this returns.
+     */
+    case 'bdos': {
+      $u = require_auth(); require_manager($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
+      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stV = $station !== '' ? array($station) : array();
+
+      /* every active officer, so one with an empty round still shows up as a
+       * row reading zero rather than vanishing from the OM's list entirely */
+      $who = array();
+      foreach (db()->query("SELECT username, name, specialty FROM users WHERE role = 'bdo' AND active = 1 ORDER BY name")->fetchAll() as $r) {
+        $who[$r['username']] = array(
+          'bdo' => $r['username'], 'name' => $r['name'] !== '' ? $r['name'] : $r['username'],
+          'specialty' => $r['specialty'],
+          'base' => 0, 'served' => 0, 'left' => 0, 'coverage' => null,
+          'he' => 0, 'heServed' => 0, 'heLeft' => 0,
+          'bands' => array('A' => 0, 'B' => 0, 'C' => 0, 'D' => 0, 'E' => 0, 'F' => 0),
+          'bandsLeft' => array('A' => 0, 'B' => 0, 'C' => 0, 'D' => 0, 'E' => 0, 'F' => 0),
+          'score' => null, 'flag' => null, 'flags' => 0, 'hasTargets' => false,
+        );
+      }
+
+      /* his whole round in one sweep: every agent, whether he is served, and
+       * which high-earner band he sits in */
+      $bandMap = he_band_map();
+      $q = db()->prepare("SELECT b.bdo, a.acc,
+                            EXISTS(SELECT 1 FROM agent_month_kpi k
+                                   WHERE k.month = b.month AND k.agent_id = b.agent_id AND k.kpi = 'served') srv
+                          FROM base b JOIN agents a ON a.id = b.agent_id
+                          WHERE b.month = ? AND b.bdo NOT IN ('partners','unassigned')" . $stF);
+      $q->execute(array_merge(array($month), $stV));
+      foreach ($q->fetchAll() as $r) {
+        $b = $r['bdo'];
+        if (!isset($who[$b])) continue;                 /* left the company mid-month */
+        $band = isset($bandMap[$r['acc']]) ? $bandMap[$r['acc']] : 'F';
+        $srv = (int)$r['srv'] === 1;
+        $who[$b]['base']++;
+        if ($srv) $who[$b]['served']++;
+        $who[$b]['bands'][$band]++;
+        /* F means "not on the high-earner list at all" - never counted as one */
+        if ($band !== 'F') {
+          $who[$b]['he']++;
+          if ($srv) $who[$b]['heServed']++; else $who[$b]['bandsLeft'][$band]++;
+        }
+      }
+
+      /* flags standing against each of them right now */
+      $fq = db()->prepare('SELECT bdo, COUNT(*) c FROM flags WHERE month = ? GROUP BY bdo');
+      $fq->execute(array($month));
+      foreach ($fq->fetchAll() as $r) if (isset($who[$r['bdo']])) $who[$r['bdo']]['flags'] = (int)$r['c'];
+
+      /* his weighted score against the target the OM set him */
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      foreach ($who as $b => $row) {
+        $tq->execute(array($month, $b));
+        if (!($tg = $tq->fetch())) continue;
+        $sc = $row['specialty'] === 'activeness'
+            ? bdo_score_specialist(bdo_actuals($month, $b), $tg)
+            : bdo_score(bdo_actuals($month, $b), $tg);
+        $who[$b]['hasTargets'] = true;
+        $who[$b]['score'] = $sc['score'];
+        $who[$b]['flag'] = $sc['flag'];
+      }
+
+      foreach ($who as $b => $row) {
+        $who[$b]['left'] = max(0, $row['base'] - $row['served']);
+        $who[$b]['heLeft'] = max(0, $row['he'] - $row['heServed']);
+        $who[$b]['coverage'] = $row['base'] > 0 ? (int)round($row['served'] / $row['base'] * 100) : null;
+      }
+      $rows = array_values($who);
+      /* the officer sitting on the most untouched money comes first - he is the
+       * one the OM has to talk to today */
+      usort($rows, function ($x, $y) {
+        if ($y['heLeft'] !== $x['heLeft']) return $y['heLeft'] - $x['heLeft'];
+        return $y['base'] - $x['base'];
+      });
+
+      $tot = array('base' => 0, 'served' => 0, 'he' => 0, 'heServed' => 0, 'heLeft' => 0, 'flags' => 0);
+      foreach ($rows as $r) foreach ($tot as $k2 => $v2) $tot[$k2] += $r[$k2];
+
+      respond(array('month' => $month, 'monthStatus' => month_status($month), 'station' => $station,
+                    'rows' => $rows, 'totals' => $tot, 'hasHighEarners' => count($bandMap) > 0));
+    }
+
+    /* One officer, opened from the window above: the high earners in his round
+     * split into served and still-untouched (the OM's first question), with his
+     * whole base underneath. */
+    case 'bdo_detail': {
+      $u = require_auth(); require_manager($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      if ($bdo === '') fail('Which officer?');
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
+      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stV = $station !== '' ? array($station) : array();
+
+      $uq = db()->prepare('SELECT username, name, specialty FROM users WHERE username = ?');
+      $uq->execute(array($bdo));
+      $who = $uq->fetch();
+      if (!$who) fail('No such officer', 404);
+
+      $bandMap = he_band_map();
+      $q = db()->prepare("SELECT a.id, a.acc, a.name, a.branch, a.physical_location, a.station, a.act_current,
+                            k.at served_at, k.bdo served_by, (k.agent_id IS NOT NULL) srv
+                          FROM base b
+                          JOIN agents a ON a.id = b.agent_id
+                          LEFT JOIN agent_month_kpi k
+                                 ON k.month = b.month AND k.agent_id = b.agent_id AND k.kpi = 'served'
+                          WHERE b.month = ? AND b.bdo = ?" . $stF . "
+                          ORDER BY a.name");
+      $q->execute(array_merge(array($month, $bdo), $stV));
+
+      $heServed = array(); $heLeft = array(); $base = array();
+      foreach ($q->fetchAll() as $r) {
+        $band = isset($bandMap[$r['acc']]) ? $bandMap[$r['acc']] : 'F';
+        $row = array('id' => (int)$r['id'], 'acc' => $r['acc'], 'name' => $r['name'],
+                     'branch' => $r['branch'], 'location' => $r['physical_location'],
+                     'station' => $r['station'], 'active' => $r['act_current'],
+                     'band' => $band, 'served' => (int)$r['srv'] === 1,
+                     'servedAt' => $r['served_at'] ? substr($r['served_at'], 0, 16) : '',
+                     'servedBy' => $r['served_by'] ? $r['served_by'] : '');
+        $base[] = $row;
+        if ($band !== 'F') { if ($row['served']) $heServed[] = $row; else $heLeft[] = $row; }
+      }
+      /* biggest earners first in both columns - the OM reads down from the top
+       * and stops when the names stop being worth a special trip */
+      $byBand = function ($x, $y) {
+        $o = array('A' => 0, 'B' => 1, 'C' => 2, 'D' => 3, 'E' => 4, 'F' => 5);
+        if ($o[$x['band']] !== $o[$y['band']]) return $o[$x['band']] - $o[$y['band']];
+        return strcmp($x['name'], $y['name']);
+      };
+      usort($heServed, $byBand); usort($heLeft, $byBand);
+
+      $fq = db()->prepare('SELECT kpi, COUNT(*) c FROM flags WHERE month = ? AND bdo = ? GROUP BY kpi');
+      $fq->execute(array($month, $bdo));
+      $flags = array();
+      foreach ($fq->fetchAll() as $r) $flags[$r['kpi']] = (int)$r['c'];
+
+      $perf = null;
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      $tq->execute(array($month, $bdo));
+      if ($tg = $tq->fetch()) {
+        $perf = $who['specialty'] === 'activeness'
+              ? bdo_score_specialist(bdo_actuals($month, $bdo), $tg)
+              : bdo_score(bdo_actuals($month, $bdo), $tg);
+      }
+
+      $servedTotal = 0;
+      foreach ($base as $r) if ($r['served']) $servedTotal++;
+      respond(array('month' => $month, 'bdo' => $bdo,
+                    'name' => $who['name'] !== '' ? $who['name'] : $who['username'],
+                    'specialty' => $who['specialty'],
+                    'base' => $base, 'baseCount' => count($base), 'servedCount' => $servedTotal,
+                    'heServed' => $heServed, 'heLeft' => $heLeft,
+                    'flags' => $flags, 'performance' => $perf));
+    }
+
     case 'combined_performance': {
       $u = require_auth();
       if (!is_manager($u)) fail('Management access only', 403);

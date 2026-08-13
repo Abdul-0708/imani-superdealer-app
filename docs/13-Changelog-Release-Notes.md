@@ -5,6 +5,70 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.38.0 — 2026-08-13 · "The officer window, and four fewer places to look"
+
+**Fix: the month took the targets with it.** The base carried into the new month, activeness
+carried, the round carried — **the targets did not**. So on the 1st the office and every officer
+woke up with no target at all, and a weighted average has no denominator without one: the team went
+out and served, every tap was recorded, and the score stayed blank because there was nothing to
+weigh it against. It read exactly like the app had stopped counting the work.
+Verified on the live database: August had **0 office targets and 0 officer targets** while July had
+them; `office_attainment` returned `achievement = NULL, targetsFrom = none`. Last month's targets
+are now carried forward on the roll — from the most recent month that *has* them, so a gap month
+cannot break the chain, and **only when the new month has none of its own**, so it can never
+overwrite what somebody has already typed. After the carry: `targetsFrom = office`, and four served
+agents moved that officer's weighted score from 0% to 28%.
+And when there genuinely are no targets, the dashboard now **says so** — *"The team's work IS being
+recorded… but a weighted average needs a target to measure against"* — with a button to set them,
+instead of a silently blank screen.
+
+**The OM and MD no longer carry My Agent Base or Daily Report.** They manage the round; they do not
+walk it. Hidden **by role**, the same rule the server uses for office powers — verified by ticking
+`mybase` for the OM role in Access Control and confirming the tab still does not appear.
+
+**Officer reporting left the target-setting screen.** *Download BDO Report (Excel)* moved to the
+**BDOs** window, and the *BDO Performance* table — a **fourth** copy of the same ranking — is gone;
+the only thing it showed that the officer list does not, his per-KPI breakdown, now opens with the
+officer himself. **Monthly Targets is now only about setting targets.**
+
+
+**The OM can now open any officer.** A new **BDOs** tab: one row per officer showing the round he
+was given, how much of it he has covered, his weighted score and his standing flags — and, because
+that is where the money is, **how many of the high earners in his round he has served and how many
+he has not reached**. The untouched ones are broken down by list (*A:1 · B:1 · C:1 · D:1*), and the
+table is **ordered by untouched earners**, so the officer the OM needs to speak to today sits at
+the top. An officer with an empty round still appears as a row reading zero rather than vanishing.
+
+Tap a name and his high earners open **untouched first** — the list he has to act on — with branch,
+location and status, biggest list first; then the ones he has served with the time and who served
+them; then his flags; then his whole round. Downloads as a workbook.
+
+**Four fewer places to look.** The app had grown three separate rankings of the same people and two
+tabs that led nowhere new:
+
+- **Field Activity is gone.** Recruiting an agent and waking a sleeping one were never a different
+  job from working your round — they now sit under **My Agent Base**, where the BDO is already
+  standing, as *"Grow my round"*.
+- **Team is gone.** Its two unique panels — *High earners I served* and the whole-team live board —
+  moved onto his **Dashboard**, which already carried his score and his standing. His weighted
+  score was being rendered on both screens; now it exists once.
+- **The duplicated leaderboard** (written out separately in Team and in Reports, which is exactly
+  how the two drifted apart) is now a single `weightedBoard()` renderer called from both places.
+- **The raw-count "BDO Ranking"** table in Reports is removed — the weighted board answers the same
+  question, and the per-officer detail it half-showed is what the BDOs window is for.
+
+**BDO: 8 tabs → 6.** *Home · My Base · Report · Agents · Flags · Messages.*
+
+**Fix: the sleeping-agent list has been coming back empty.** `inactive_agents` prepared a statement
+with no placeholder and then passed one, so PDO threw *invalid parameter number* on every single
+call; the router turned that into a generic database error and the panel swallowed it silently.
+Nobody could see it was broken — the list just looked like there were no sleeping agents. Verified
+after the fix: **5 sleeping agents with working Wake buttons** where the panel had been blank.
+
+- Assets `?v=55`, SW `imani-v55`
+
+---
+
 ## v1.37.0 — 2026-08-12 · "What the flags cost, and what the base is worth"
 
 The rest of the ten-item batch. Schema unchanged (v16 already carried the columns).
