@@ -5,6 +5,33 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.40.0 — 2026-08-13 · "One dashboard, two sections"
+
+**Real Performance is now section two of the Dashboard — two labelled sections, never one number.**
+The OM was opening two tabs to hold one thought, so both now live on one page under the same month
+and the same station picker:
+
+- **SECTION 1 — FROM THE PERFORMANCE FILE.** *"The office result exactly as the uploaded file
+  reports it. This is the number the commission is settled on."*
+- **SECTION 2 — THE FILE PLUS THE FIELD.** The same month counted the other way: the file's credits
+  plus the field work it does not yet contain, with the no-double-count rule stated on the panel.
+
+They are deliberately **not** blended. Section one is the auditable office result the commission is
+settled on; section two adds what the team has done since the file landed. Which number came from
+where is the entire reason for having both, so each gets its own heading and a rule above it.
+Verified on one screen with a real upload: Section 1 read **Serving 2 / 1,700**, Section 2 read
+**2 from file + 5 from field = 7 combined** — the same month, correctly disagreeing.
+
+The Real Performance tab, its duplicate month and station pickers and its separate load button are
+gone; the dashboard's controls drive both sections, and the Excel download stays with section two.
+
+**OM: 10 tabs → 9.** Also fixed a note that collapsed to one word per line on a phone (a `flex:1`
+label sharing a row with a button — the same shape as the gap-note fixed in v1.37.0).
+
+- Assets `?v=57`, SW `imani-v57`
+
+---
+
 ## v1.39.0 — 2026-08-13 · "Reports & Ranks folds into BDOs; sending joins reading"
 
 **Reports & Ranks is gone — it was the officer window seen from the other side.** The leaderboard,

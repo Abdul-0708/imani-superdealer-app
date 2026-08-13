@@ -145,6 +145,18 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible,.kchip.todo:focus-visible{outline:2px solid var(--fire2);outline-offset:2px}
 .mini{padding:4px 10px!important;font-size:12px!important;border-radius:8px!important}
 
+/* SECTION DIVIDER on a page that carries two of them.
+ * The dashboard holds the file result and the file-plus-field result. They must
+ * never read as one number, so each gets a heading with a rule above it - the
+ * reader can see where one answer stops and the other starts. */
+.sec-head{display:flex;align-items:center;gap:8px;margin:26px 0 2px;padding-top:16px;
+  border-top:2px solid var(--line);font-size:13px;font-weight:800;letter-spacing:.9px;
+  text-transform:uppercase;color:var(--fire2)}
+.sec-head svg{width:16px;height:16px;flex:none}
+.sec-head+.page-sub{margin-top:2px}
+/* the first section opens the page - no rule needed above it */
+.sec-head:first-of-type{margin-top:8px}
+
 /* PHOTO SOURCE: camera or gallery.
  * The real <input type=file> is hidden and driven by its <label>, because the
  * two inputs differ only by the `capture` attribute - which a phone reads as

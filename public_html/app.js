@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.39.0';
+  var APP_VERSION = '1.40.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -234,6 +234,11 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Grow my round': 'Kuza mzunguko wangu',
+    'SECTION 1 - FROM THE PERFORMANCE FILE': 'SEHEMU 1 - KUTOKA FAILI LA UTENDAJI',
+    'SECTION 2 - THE FILE PLUS THE FIELD': 'SEHEMU 2 - FAILI PAMOJA NA KAZI YA UWANDANI',
+    'The office result exactly as the uploaded file reports it. This is the number the commission is settled on.':
+      'Matokeo ya ofisi kama faili lililopakiwa linavyoripoti. Hii ndiyo namba kamisheni inayolipwa kwayo.',
+    'Same month and station as the section above.': 'Mwezi na kituo sawa na sehemu iliyo juu.',
     'BDOs': 'Maafisa (BDO)',
     'Officer': 'Afisa',
     'Officers': 'Maafisa',
@@ -860,7 +865,6 @@
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
     { key: 'flags', label: 'Flags', icon: 'alert' },
-    { key: 'combined', label: 'Real Performance', icon: 'percent' },
     { key: 'inbox', label: 'Messages', icon: 'mail' },
     { key: 'data', label: 'Settings & Data', icon: 'lock' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
@@ -1021,7 +1025,6 @@
        * could read Reports still reaches it - the team leader above all, since
        * approving route plans and float shortages is his job. */
       if (m.key === 'bdos') return isManager() || (!isFieldUser() && can('reports', 'v'));
-      if (m.key === 'combined') return isManager(); // OM / super admin only
       if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
       if (can(m.key, 'v')) return true;
       return m.key === 'agents' && can('mybase', 'v');
@@ -1070,7 +1073,7 @@
    * letters - a truncated label teaches nobody anything. */
   var BOTNAV_SHORT = {
     mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home',
-    bdos: 'BDOs', inbox: 'Messages', combined: 'Real Perf.', upload: 'Upload',
+    bdos: 'BDOs', inbox: 'Messages', upload: 'Upload',
     targets: 'Targets', commission: 'Commission', data: 'Settings'
   };
   function botLabel(m) { return t(BOTNAV_SHORT[m.key] || m.label); }
@@ -1142,7 +1145,6 @@
     else if (state.tab === 'data') viewData(v);
     else if (state.tab === 'inbox') viewInbox(v);
     else if (state.tab === 'bdos') viewBdos(v);
-    else if (state.tab === 'combined') viewCombined(v);
     /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
     else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
     else if (state.tab === 'upload') viewUpload(v);
@@ -1618,7 +1620,17 @@
      * sees his own day here; the team board lives on the Team tab, read-only. */
     if (isFieldUser() || !can('dashboard', 'v')) { personalDashboard(v); return; }
     var m = state.month || '';
-    api('dashboard', { qs: (m ? '&month=' + m : '') + (state._dashStation ? '&station=' + encodeURIComponent(state._dashStation) : '') }).then(function (d) {
+    var qs = (m ? '&month=' + m : '') + (state._dashStation ? '&station=' + encodeURIComponent(state._dashStation) : '');
+    Promise.all([
+      api('dashboard', { qs: qs }),
+      /* Real Performance was a separate tab asking the same question of the
+       * same month. It is section two of this page now - never merged into one
+       * figure, because the file result and the file-plus-field result mean
+       * different things and the commission is settled on the first. */
+      api('combined_performance', { qs: '&month=' + (m || curMonth()) +
+          '&station=' + encodeURIComponent(state._dashStation || '') }).catch(function () { return null; })
+    ]).then(function (rr) {
+      var d = rr[0], cb = rr[1];
       state.month = d.month;
       var att = d.attainment;
       /* a chosen SA station swaps the CARD numbers to that station's share
@@ -1725,10 +1737,13 @@
         '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download window') + '</button></div>' +
         '<p class="note">' + t('Every KPI your BDOs ticked inside the chosen time window (EAT).') + '</p>' +
         '<div id="liveBox"></div></div>' +
+        '<h2 class="sec-head">' + svg('upload') + ' ' + t('SECTION 1 - FROM THE PERFORMANCE FILE') + '</h2>' +
+        '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
         (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
-        (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>';
+        (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>' +
+        (cb ? combinedSection(cb) : '');
       liveTodayLoad();
       flagAlertLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
@@ -3341,11 +3356,17 @@
    * the file WITHOUT counting anything twice - the ledger's UNIQUE(month,
    * agent, kpi) key makes the two columns disjoint by construction, so their
    * sum is the honest combined figure rather than an estimate. */
-  function viewCombined(v) {
-    var m = state._cbMonth || state.openMonth || curMonth();
-    var st = state._cbStation === undefined ? '' : state._cbStation;
-    state._cbMonth = m;
-    api('combined_performance', { qs: '&month=' + m + '&station=' + encodeURIComponent(st) }).then(function (d) {
+  /* SECTION TWO OF THE DASHBOARD: the same month and the same station as the
+   * section above it, counted the other way.
+   *
+   * These two are NOT one number and must never be blended into one. Section
+   * one is the uploaded performance file - the auditable office result, the
+   * figure the commission is settled on. Section two adds the field work the
+   * file does not yet contain. Same page, because the OM was opening two tabs
+   * to hold one thought; two labelled sections, because which number came from
+   * where is the whole point of having both. */
+  function combinedSection(d) {
+    {
       state._combined = d;
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
 
@@ -3401,19 +3422,12 @@
       var bdoOpts = (d.bdos || []).map(function (b) {
         return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>';
       }).join('');
-      var stOpts = '<option value="">' + t('All stations') + '</option>' + (d.stations || []).map(function (s) {
-        return '<option value="' + esc(s) + '"' + (s === d.station ? ' selected' : '') + '>' + esc(s) + '</option>';
-      }).join('');
 
-      v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('Real Performance') + '</h1>' +
+      return '<h2 class="sec-head">' + svg('percent') + ' ' + t('SECTION 2 - THE FILE PLUS THE FIELD') + '</h2>' +
         '<p class="page-sub">' + t('The uploaded file PLUS the work your BDOs did in the field, added together and counted once.') + '</p>' +
 
-        '<div class="panel"><div class="row">' +
-        '<div class="field"><label>' + t('Month') + '</label><input id="cbMonth" type="month" value="' + esc(m) + '"></div>' +
-        '<div class="field"><label>SA Station</label><select data-change="cbStation">' + stOpts + '</select></div>' +
-        '<button class="btn" data-action="cbLoad">' + t('Load') + '</button>' +
-        '<div class="spacer"></div>' +
+        '<div class="panel"><div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">' +
+        '<span class="note" style="flex:1 1 220px;min-width:180px">' + t('Same month and station as the section above.') + '</span>' +
         '<button class="ghost" data-action="cbDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
         '</div>' +
         '<p class="note" style="margin-top:8px">' + svg('check') + ' ' +
@@ -3486,11 +3500,11 @@
         '<tr><td><b>' + t('TOTAL') + '</b></td><td><b>' + fmt(rt.pipeline) + '</b></td><td><b>' + fmt(rt.became) + '</b></td>' +
         '<td><b>' + fmt(rt.bank) + '</b></td><td><b>' + fmt(rt.total) + '</b></td><td></td></tr>' +
         '</tbody></table></div></div>';
-    }).catch(function (e) { v.innerHTML = errBox(e); });
+    }
   }
   function brSave() {
     api('bank_recruits_save', { body: {
-      month: elById('cbMonth').value, bdo: elById('brBdo').value,
+      month: elById('dashMonth') ? elById('dashMonth').value : (state.month || state.openMonth), bdo: elById('brBdo').value,
       submitted: elById('brN').value, note: elById('brNote').value
     } }).then(function () { toast(t('Saved'), 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
@@ -4298,7 +4312,6 @@
     if (a === 'heUpload') { heUpload(); return; }
     if (a === 'heLoad') { heLoad(); return; }
     if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
-    if (a === 'cbLoad') { state._cbMonth = elById('cbMonth').value; renderTab(); return; }
     if (a === 'cbDownload') { cbDownload(); return; }
     if (a === 'brSave') { brSave(); return; }
     if (a === 'filingRepair') {
@@ -4726,7 +4739,6 @@
       return;
     }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'tgStationPick') { state.tgStation = n.value; renderTab(); return; }
-    if (n && n.getAttribute && n.getAttribute('data-change') === 'cbStation') { state._cbStation = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseKpi') { state._baseKpi = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseServed') { state._baseServed = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseLoc') { state._baseLoc = n.value; renderTab(); return; }
