@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.41.0';
+  var APP_VERSION = '1.42.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -3713,6 +3713,7 @@
         '<div class="panel"><h2>' + svg('check') + t('High earners served') +
           ' <span class="pill ok">' + fmt((d.heServed || []).length) + '</span></h2>' +
         heTable(d.heServed || [], true) + '</div>' +
+        (isManager() && d.rules ? officerRulesPanel(d) : '') +
         (flagTotal
           ? '<div class="panel"><h2>' + svg('alert') + t('Flags against him') +
             ' <span class="pill bad">' + fmt(flagTotal) + '</span></h2>' +
@@ -3845,6 +3846,43 @@
     toast(t('Downloaded'), 'ok');
   }
 
+  /* HOW MUCH PROOF THIS ONE OFFICER OWES.
+   * The office rule is the default and most officers stay on it; this is for
+   * the man the OM wants to hold to a stricter standard - or release from one -
+   * without changing what the whole team has to do. */
+  function officerRulesPanel(d) {
+    var R = d.rules;
+    function pick(id, cur, office, opts) {
+      return '<select id="' + id + '"><option value=""' + (cur === '' ? ' selected' : '') + '>' +
+        t('Follow the office rule') + ' (' + t(opts[office] || office) + ')</option>' +
+        Object.keys(opts).map(function (k) {
+          return '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + t(opts[k]) + '</option>';
+        }).join('') + '</select>';
+    }
+    var overridden = R.serveReceipt !== '' || R.wakeReceipt !== '';
+    return '<div class="panel"><h2>' + svg('camera') + t('Proof rules for this officer') +
+      (overridden ? ' <span class="pill fire">' + t('own rule') + '</span>'
+                  : ' <span class="pill dim">' + t('office rule') + '</span>') + '</h2>' +
+      '<p class="note">' + t('Set the standard on the man, not on the whole team. Leave both on "follow the office rule" and he changes whenever the office setting changes.') + '</p>' +
+      '<div class="row" style="flex-wrap:wrap;gap:10px">' +
+      '<div class="field"><label>' + t('Serving receipt photo') + '</label>' +
+      pick('orServe', R.serveReceipt, R.officeServe,
+           { required: 'Compulsory - no serve without a photo', optional: 'Optional' }) + '</div>' +
+      '<div class="field"><label>' + t('Waking proof') + '</label>' +
+      pick('orWake', R.wakeReceipt, R.officeWake,
+           { photo: 'Photo only - a typed note is not accepted', photo_or_note: 'Photo OR a typed commitment' }) + '</div>' +
+      '<button class="btn" data-action="orSave" data-bdo="' + esc(d.bdo) + '">' + t('Save his rules') + '</button>' +
+      '</div></div>';
+  }
+  function officerRulesSave(bdo) {
+    api('bdo_rules_save', { body: { bdo: bdo,
+        serveReceipt: elById('orServe').value, wakeReceipt: elById('orWake').value } })
+      .then(function (r) {
+        toast(t('Saved') + ' - ' + t('serving') + ': ' + r.effectiveServe + ', ' + t('waking') + ': ' + r.effectiveWake, 'ok');
+        renderTab();
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
   /* Officer workbook: the summary, then one sheet holding every untouched high
    * earner across the whole team - the call list the OM actually works from. */
   function bdosDownload() {
@@ -4454,6 +4492,7 @@
     if (a === 'heDocAll') { heReport('', 'word'); return; }
     if (a === 'heXlsOne') { heReport(node.getAttribute('data-bdo'), 'excel'); return; }
     if (a === 'heDocOne') { heReport(node.getAttribute('data-bdo'), 'word'); return; }
+    if (a === 'orSave') { officerRulesSave(node.getAttribute('data-bdo')); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {

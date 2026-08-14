@@ -393,6 +393,31 @@ function upgrade_schema($pdo) {
     schema_v17_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "17" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 18) {
+    schema_v18_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "18" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v18: PROOF STRICTNESS PER OFFICER.
+ *
+ * "Everyone must attach a photo" is the wrong tool. One officer has been
+ * caught claiming visits he did not make and should have to prove every
+ * serve; another has never been questioned and only gets slowed down by it.
+ * The OM can now set the rule on the man rather than on the whole team.
+ *
+ * Empty means FOLLOW THE OFFICE RULE - so nothing changes for anybody until
+ * the OM deliberately singles someone out, and clearing the override puts him
+ * back under the office setting rather than under some remembered value.
+ */
+function schema_v18_apply($pdo) {
+  foreach (array(
+    'ALTER TABLE users ADD COLUMN serve_receipt VARCHAR(16) NOT NULL DEFAULT ""',
+    'ALTER TABLE users ADD COLUMN wake_receipt VARCHAR(16) NOT NULL DEFAULT ""',
+  ) as $sql) {
+    try { $pdo->exec($sql); } catch (Exception $e) { /* already there */ }
+  }
 }
 
 /*

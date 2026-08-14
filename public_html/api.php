@@ -370,8 +370,12 @@ try {
         'stations' => $stations, 'station' => $station, 'stationStats' => $stationStats,
         'targetsFrom' => $oa['targetsFrom'],
         'visibleKpis' => $visible, 'apkRequired' => setting_get('apk_required_version', '2.0'),
-        'serveReceipt' => setting_get('serve_receipt', 'optional'),
-        'wakeReceipt' => setting_get('wake_receipt', 'photo'),
+        /* the rule that applies to THIS user - an officer the OM singled out
+         * must see his own, not the office default */
+        'serveReceipt' => receipt_rule_for($u['username'], 'serve'),
+        'wakeReceipt' => receipt_rule_for($u['username'], 'wake'),
+        'officeServeReceipt' => setting_get('serve_receipt', 'optional'),
+        'officeWakeReceipt' => setting_get('wake_receipt', 'photo'),
       ));
     }
 
@@ -818,7 +822,8 @@ try {
       if ($kpi === 'served') {
         $loc = trim((string)bval('location'));
         $confirmed = (string)bval('confirmed') !== '';
-        $rule = $partnerServed ? 'required' : setting_get('serve_receipt', 'optional');
+        /* his own rule if the OM set him one, otherwise the office rule */
+        $rule = $partnerServed ? 'required' : receipt_rule_for($bdo, 'serve');
         if (!$confirmed) {
           fail('Confirm the location and attach the serving receipt', 400,
                array('needLocation' => true, 'receiptRule' => $rule,
@@ -838,8 +843,8 @@ try {
                array('needLocation' => true, 'receiptRule' => 'required', 'partnerServed' => true,
                      'agentLoc' => (string)$agent['physical_location']));
         }
-        elseif (setting_get('serve_receipt', 'optional') === 'required') {
-          fail('Attach the serving receipt photo - the OM has made it compulsory', 400,
+        elseif (receipt_rule_for($bdo, 'serve') === 'required') {
+          fail('Attach the serving receipt photo - the OM has made it compulsory for you', 400,
                array('needLocation' => true, 'receiptRule' => 'required', 'agentLoc' => (string)$agent['physical_location']));
         }
       }
@@ -859,7 +864,7 @@ try {
         $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
         $wakeLoc = trim((string)bval('location'));
         /* the OM decides whether a typed commitment is still acceptable */
-        $wakeMode = setting_get('wake_receipt', 'photo');
+        $wakeMode = receipt_rule_for($bdo, 'wake');
         if ($img === '' && $wakeMode === 'photo') {
           fail('Attach the receipt photo - a typed note is not accepted for waking', 400,
                array('needProof' => true, 'photoOnly' => true, 'agentLoc' => (string)$agent['physical_location']));
@@ -897,17 +902,20 @@ try {
         db()->prepare('UPDATE agents SET act_current = "ACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
       }
       /*
-       * SERVING TAKES OWNERSHIP - IMMEDIATELY.
+       * SERVING - AND ONLY SERVING - PUTS AN AGENT IN A ROUND.
        *
-       * The man who went out, served the agent and captured his physical
-       * location has earned him. The agent moves into HIS round the moment the
-       * mark lands and leaves whoever was holding him before, so two officers
-       * are never sent to the same door and the round each one sees is the
-       * round he is actually responsible for. The credit already follows the
-       * same rule: agent_month_kpi records who did the work.
+       * The round is the list of agents this officer has actually served, with
+       * their physical locations captured. Nothing else earns an agent:
+       * ticking a visit, an APK upgrade or an activeness wake is work done on
+       * somebody else's agent, not a claim on him, and it used to quietly move
+       * him into the ticker's round anyway - which is how officers ended up
+       * holding agents they had never served.
        *
-       * Only SERVING transfers. A visit or an APK tick is work on somebody
-       * else's agent, not a claim on him.
+       * When serving DOES happen the transfer is immediate: the agent leaves
+       * whoever held him before, so two officers are never sent to the same
+       * door, and next month he carries to the man who served him. The credit
+       * already follows the same rule - agent_month_kpi records who did the
+       * work.
        */
       if ($kpi === 'served') {
         $prev = db()->prepare('SELECT bdo FROM base WHERE month = ? AND agent_id = ?');
@@ -922,11 +930,8 @@ try {
                   $month . ': agent ' . $agentId . ' moved from ' . $before . ' to ' . $bdo . ' - ' . $bdo . ' served him');
           }
         }
-      } else {
-        /* one owner per agent per month, so this can only ever add him where
-         * nobody holds him yet */
-        db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "uploaded")')->execute(array($month, $bdo, $agentId));
       }
+      /* NB: no base write for visit / apk / active. Deliberate - see above. */
       /* Claiming an agent the file credits to the PARTNER raises the flag right
        * now, not at the next upload: the OM should see the dispute while the
        * visit is fresh, and the BDO keeps the credit meanwhile. */
@@ -2035,14 +2040,23 @@ try {
          * touches the office snapshot - those agents are last months' known
          * base, not this month's claims. */
         if ($priorityMode) {
-          base_assign($month, $key, $id, $kind);
+          /* A DATABASE SEED HANDS OUT NO ROUNDS. It refreshes the agent record
+           * and stops. Who holds an agent is decided by who serves him, not by
+           * whose name a spreadsheet put beside him - otherwise an officer
+           * opens the month already "holding" hundreds of agents he has never
+           * been to. Unclaimed agents are visible to everyone under
+           * "NEW - not yet mine" in My Agent Base, and the first man to serve
+           * one takes him. */
           continue;
         }
 
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'], $uploadId));
-        base_assign($month, $key, $id, $kind);
+        /* SERVED, and nothing else, puts him in this officer's round. A row
+         * that merely names him beside an agent - a visit, an APK, a blank -
+         * is not a claim on that agent. */
+        if ($r['served'] === 'SERVED') base_assign($month, $key, $id, $kind);
         /* Ledger credits (BDO personal scores; first credit wins). */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key, $uploadId));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
@@ -2790,6 +2804,28 @@ try {
                     'rows' => $rows, 'totals' => $tot, 'hasHighEarners' => count($bandMap) > 0));
     }
 
+    /* The OM sets the proof rule on ONE officer. Empty puts him back under the
+     * office rule rather than freezing him at whatever it happened to be. */
+    case 'bdo_rules_save': {
+      $u = require_auth(); require_manager($u);
+      $bdo = strtolower(trim((string)bval('bdo')));
+      if ($bdo === '') fail('Which officer?');
+      $q = db()->prepare("SELECT username FROM users WHERE username = ? AND role = 'bdo'");
+      $q->execute(array($bdo));
+      if (!$q->fetch()) fail('No such officer', 404);
+      $sr = trim((string)bval('serveReceipt'));
+      $wr = trim((string)bval('wakeReceipt'));
+      if (!in_array($sr, array('', 'required', 'optional'), true)) fail('Bad serving rule');
+      if (!in_array($wr, array('', 'photo', 'photo_or_note'), true)) fail('Bad waking rule');
+      db()->prepare('UPDATE users SET serve_receipt = ?, wake_receipt = ? WHERE username = ?')
+          ->execute(array($sr, $wr, $bdo));
+      audit($u['id'], 'bdo_rules', $bdo . ' serve=' . ($sr ?: 'office') . ' wake=' . ($wr ?: 'office'));
+      respond(array('ok' => true, 'bdo' => $bdo,
+                    'serveReceipt' => $sr, 'wakeReceipt' => $wr,
+                    'effectiveServe' => $sr !== '' ? $sr : setting_get('serve_receipt', 'optional'),
+                    'effectiveWake' => $wr !== '' ? $wr : setting_get('wake_receipt', 'photo')));
+    }
+
     /* One officer, opened from the window above: the high earners in his round
      * split into served and still-untouched (the OM's first question), with his
      * whole base underneath. */
@@ -2802,7 +2838,7 @@ try {
       $stF = $station !== '' ? ' AND a.station = ?' : '';
       $stV = $station !== '' ? array($station) : array();
 
-      $uq = db()->prepare('SELECT username, name, specialty FROM users WHERE username = ?');
+      $uq = db()->prepare('SELECT username, name, specialty, serve_receipt, wake_receipt FROM users WHERE username = ?');
       $uq->execute(array($bdo));
       $who = $uq->fetch();
       if (!$who) fail('No such officer', 404);
@@ -2858,6 +2894,11 @@ try {
       respond(array('month' => $month, 'bdo' => $bdo,
                     'name' => $who['name'] !== '' ? $who['name'] : $who['username'],
                     'specialty' => $who['specialty'],
+                    'rules' => array(
+                      'serveReceipt' => (string)$who['serve_receipt'],
+                      'wakeReceipt' => (string)$who['wake_receipt'],
+                      'officeServe' => setting_get('serve_receipt', 'optional'),
+                      'officeWake' => setting_get('wake_receipt', 'photo')),
                     'base' => $base, 'baseCount' => count($base), 'servedCount' => $servedTotal,
                     'heServed' => $heServed, 'heLeft' => $heLeft,
                     'flags' => $flags, 'performance' => $perf));

@@ -5,6 +5,49 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.42.0 — 2026-08-13 · "Serving is the only way into a round" — schema v18
+
+**Fix: ticking a visit, an APK or an activeness wake used to claim the agent.** Every live mark
+quietly wrote the agent into the ticker's round, so an officer ended up "holding" agents he had
+never served — just visited, or upgraded, or woken. **Only serving, with the physical location
+captured, puts an agent in a round now.** A visit or an APK tick is work done on somebody else's
+agent, not a claim on him.
+Verified: one officer ticked a visit, an APK and an activeness wake on three different agents — all
+three marks recorded, her round stayed at **zero**. She then served a fourth with his location and
+he appeared, alone.
+
+The same rule reaches the uploaded file. A row that merely names an officer beside an agent no
+longer hands the agent over — **only `Served Status = SERVED` does**. Verified with a file naming one
+officer against four agents, one SERVED: his round grew by exactly one. And a file row claiming an
+agent another officer had **served in the field failed to take him** — the field serve is the
+strongest claim there is.
+
+**The database seed hands out no rounds at all.** A monthly baseline refreshes the agent record and
+stops; who holds an agent is decided by who serves him, not by whose name a spreadsheet put beside
+him — otherwise an officer opens the month already holding hundreds of agents he has never been to.
+Unclaimed agents stay visible to everyone under **NEW — not yet mine**, and the first man to serve
+one takes him. Next month he carries to whoever served him.
+
+**Proof strictness per officer (schema v18).** "Everyone attaches a photo" is a blunt instrument:
+one officer has been caught claiming work he did not do and should have to prove every serve;
+another has never been questioned and is only slowed down by it. The OM can now set **serving
+receipt** and **waking proof** on the man, from his page in the BDOs window. Empty means *follow the
+office rule*, which is where every officer starts and where clearing an override returns him — not
+frozen at whatever the office setting happened to be that day.
+Verified: with the office rule at *optional*, the OM made it compulsory for one officer only — she
+was refused a serve without a photo (*"the OM has made it compulsory for you"*) while a colleague on
+the office rule served without one. Each officer's serve dialog shows **his own** rule. Clearing the
+override put her straight back under the office rule.
+
+**Also fixed:** `base_assign()` was declared `($month, $agentId, $bdo, …)` but called
+`($month, $bdo, $agentId, …)` — the swapped arguments meant uploads wrote a row with `agent_id = 0`
+instead of assigning anybody. Caught in verification, argument order now follows the table itself,
+and the function refuses a non-positive agent id or a blank officer outright.
+
+- Schema **v18**. Assets `?v=59`, SW `imani-v59`
+
+---
+
 ## v1.41.0 — 2026-08-13 · "One agent, one owner, one row" — schema v17
 
 **Fix: the same agent could sit in a round twice.** The base was keyed on

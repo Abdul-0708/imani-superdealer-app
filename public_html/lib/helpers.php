@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.41.0');
+define('APP_VERSION', '1.42.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -300,7 +300,42 @@ function repair_misfiled_marks($cur) {
  *
  * Returns true when the owner changed.
  */
-function base_assign($month, $agentId, $bdo, $kind) {
+/*
+ * HOW MUCH PROOF THIS OFFICER OWES - his own rule, or the office's.
+ *
+ * "Everyone attaches a photo" is a blunt instrument. One officer has been
+ * caught claiming work he did not do and should have to prove every serve;
+ * another has never been questioned and is only slowed down by it. So the rule
+ * can be set on the man. An empty override means FOLLOW THE OFFICE, which is
+ * what every officer starts as and what clearing an override returns him to.
+ *
+ * $which is 'serve' or 'wake'.
+ */
+function receipt_rule_for($username, $which) {
+  $office = $which === 'wake' ? setting_get('wake_receipt', 'photo')
+                              : setting_get('serve_receipt', 'optional');
+  $valid  = $which === 'wake' ? array('photo', 'photo_or_note')
+                              : array('required', 'optional');
+  $username = trim((string)$username);
+  if ($username === '') return $office;
+  static $cache = array();
+  $key = $username . '|' . $which;
+  if (isset($cache[$key])) return $cache[$key];
+  $col = $which === 'wake' ? 'wake_receipt' : 'serve_receipt';
+  $own = '';
+  try {
+    $q = db()->prepare("SELECT $col v FROM users WHERE username = ?");
+    $q->execute(array($username));
+    if ($r = $q->fetch()) $own = trim((string)$r['v']);
+  } catch (Exception $e) { /* column not migrated yet - office rule stands */ }
+  $cache[$key] = in_array($own, $valid, true) ? $own : $office;
+  return $cache[$key];
+}
+
+/* argument order follows the table itself: month, bdo, agent, kind */
+function base_assign($month, $bdo, $agentId, $kind) {
+  $agentId = (int)$agentId;
+  if ($agentId <= 0 || trim((string)$bdo) === '') return false;
   static $look = null, $del = null, $ins = null;
   if ($look === null) {
     $look = db()->prepare("SELECT b.bdo,
