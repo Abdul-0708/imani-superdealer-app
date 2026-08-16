@@ -5,6 +5,37 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.43.0 — 2026-08-13 · "No location, not his agent" — schema v19
+
+**An agent nobody has pinned to a place is in nobody's round.** A round is the list of doors an
+officer can walk to; an agent with no physical location is a name on a spreadsheet, not a call he
+can make. Counting him inflated every round, every coverage percentage and every high-earner total
+with agents no one could actually go and serve.
+
+The rule is enforced in three places at once, because there were three ways in:
+
+- **`base_assign()`** refuses an agent whose location is blank, so no file can place him.
+- **The month carry** brings forward only served agents whose location is known.
+- **The round list itself** no longer counts a bare served credit — a file can credit a serve
+  without anybody ever capturing where the man is.
+
+**Schema v19 clears the ones already sitting there** — but only in the **open and future** months.
+Closed and awaiting months are left exactly as they were: their numbers have been reported and, in
+the awaiting case, are about to settle a commission, so rewriting history under a new rule would
+change figures somebody has already been paid against. Every removal is audited.
+
+**Nothing disappears.** An agent dropped this way lands in **NEW — not yet mine**, where any officer
+can see him — including the case that would otherwise have made him invisible: served by a file yet
+never located, so in no round *and* previously excluded from the unclaimed list. He is listed until
+somebody goes out, finds him and pins the place.
+Verified end to end: a round of six (three located, three not, one of the three credited SERVED by a
+file) → migration left the three located ones → all three dropped agents appeared under *NEW*, none
+in both lists → an officer served one with his location and he came straight back into her round.
+
+- Schema **v19**. Assets `?v=60`, SW `imani-v60`
+
+---
+
 ## v1.42.0 — 2026-08-13 · "Serving is the only way into a round" — schema v18
 
 **Fix: ticking a visit, an APK or an activeness wake used to claim the agent.** Every live mark

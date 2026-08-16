@@ -397,6 +397,42 @@ function upgrade_schema($pdo) {
     schema_v18_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "18" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 19) {
+    schema_v19_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "19" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v19: NO LOCATION, NOT HIS AGENT.
+ *
+ * A round is the list of doors an officer can walk to. An agent nobody has
+ * pinned to a place is not one of them - he is a name on a spreadsheet, and
+ * counting him inflated every round, every coverage percentage and every
+ * high-earner total with agents no one could actually go and serve.
+ *
+ * Rows for agents with no physical location are cleared out of the OPEN and
+ * future months. Closed and awaiting months are left exactly as they were:
+ * their numbers have already been reported and, in the awaiting case, are
+ * about to settle a commission - rewriting history under a new rule would
+ * change figures somebody has already been paid against.
+ */
+function schema_v19_apply($pdo) {
+  $keep = $pdo->query("SELECT month FROM months WHERE status IN ('CLOSED','AWAITING')")->fetchAll(PDO::FETCH_COLUMN);
+  $sql = "DELETE b FROM base b JOIN agents a ON a.id = b.agent_id
+          WHERE TRIM(a.physical_location) = ''";
+  $vals = array();
+  if ($keep) {
+    $sql .= ' AND b.month NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . ')';
+    $vals = $keep;
+  }
+  $st = $pdo->prepare($sql);
+  $st->execute($vals);
+  $gone = $st->rowCount();
+  if ($gone) {
+    $pdo->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "base_no_location", ?)')
+        ->execute(array($gone . ' base rows removed - the agent had no physical location, so he was nobody\'s agent'));
+  }
 }
 
 /*

@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.42.0');
+define('APP_VERSION', '1.43.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -336,8 +336,9 @@ function receipt_rule_for($username, $which) {
 function base_assign($month, $bdo, $agentId, $kind) {
   $agentId = (int)$agentId;
   if ($agentId <= 0 || trim((string)$bdo) === '') return false;
-  static $look = null, $del = null, $ins = null;
+  static $look = null, $del = null, $ins = null, $loc = null;
   if ($look === null) {
+    $loc = db()->prepare('SELECT physical_location FROM agents WHERE id = ?');
     $look = db()->prepare("SELECT b.bdo,
                              EXISTS(SELECT 1 FROM agent_month_kpi k
                                     WHERE k.month = b.month AND k.agent_id = b.agent_id
@@ -346,6 +347,15 @@ function base_assign($month, $bdo, $agentId, $kind) {
     $del = db()->prepare('DELETE FROM base WHERE month = ? AND agent_id = ?');
     $ins = db()->prepare('INSERT IGNORE INTO base (month, bdo, agent_id, kind) VALUES (?,?,?,?)');
   }
+  /* NO LOCATION, NOT HIS AGENT.
+   * A round is the list of doors this officer can walk to. An agent nobody has
+   * pinned to a place cannot be one of them - he is a name on a spreadsheet,
+   * not a call the officer can make - so he stays unclaimed until somebody
+   * goes out, finds him and captures where he is. */
+  $loc->execute(array($agentId));
+  $where = $loc->fetch();
+  if (!$where || trim((string)$where['physical_location']) === '') return false;
+
   $look->execute(array($month, $agentId));
   $cur = $look->fetch();
   if ($cur) {
@@ -366,12 +376,16 @@ function ensure_base_carry($cur) {
   $m--; if ($m < 1) { $m = 12; $y--; }
   $prev = sprintf('%04d-%02d', $y, $m);
 
-  /* whoever he served last month becomes his priority round this month */
+  /* Whoever he served last month becomes his priority round this month - but
+   * only the ones whose physical location is known. An agent with no place
+   * pinned to him is not a door anybody can walk to, so he is not a round. */
   $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
                         SELECT ?, k.bdo, k.agent_id, 'priority'
                         FROM agent_month_kpi k
+                        JOIN agents a ON a.id = k.agent_id
                         WHERE k.month = ? AND k.kpi = 'served'
-                          AND k.bdo NOT IN ('partners','unassigned')");
+                          AND k.bdo NOT IN ('partners','unassigned')
+                          AND TRIM(a.physical_location) <> ''");
   $ins->execute(array($cur, $prev));
   $n = $ins->rowCount();
   db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "base_carry", ?)')

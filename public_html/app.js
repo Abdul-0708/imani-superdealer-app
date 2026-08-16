@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.42.0';
+  var APP_VERSION = '1.43.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -291,6 +291,8 @@
     'New agents to claim': 'Mawakala wapya wa kuchukua',
     'My round': 'Mzunguko wangu',
     'NEW - not yet mine': 'MPYA - bado si wangu',
+    'Agents whose physical location nobody has captured are here too - go, find the place, serve him, and he becomes yours.':
+      'Mawakala ambao hakuna aliyerekodi mahali walipo wapo hapa pia - nenda, tafuta mahali, mhudumie, naye atakuwa wako.',
     'Agents in the company database that no BDO owns this month. Serve one and he joins your round.':
       'Mawakala waliopo kwenye database ambao hakuna BDO aliyewachukua mwezi huu. Mhudumie mmoja naye anaingia kwenye mzunguko wako.',
     'All sections': 'Sehemu zote',
@@ -2217,7 +2219,8 @@
         ' <span class="pill ' + (d.counts.unclaimed ? 'fire' : 'dim') + '">' + fmt(d.counts.unclaimed || 0) + '</span></button>' +
         '</div>' +
         (showNew ? '<p class="note" style="margin:0 0 8px">' +
-          t('Agents in the company database that no BDO owns this month. Serve one and he joins your round.') + '</p>' : '') +
+          t('Agents in the company database that no BDO owns this month. Serve one and he joins your round.') + ' ' +
+          t('Agents whose physical location nobody has captured are here too - go, find the place, serve him, and he becomes yours.') + '</p>' : '') +
         '<div class="row filters" style="margin-bottom:6px">' +
         '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
         '<input id="baseSearch" placeholder="' + esc(t('name, acc, phone, branch, location...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +

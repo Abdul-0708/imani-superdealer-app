@@ -601,7 +601,15 @@ try {
        * rather than an empty page he has to rebuild from the Agents tab. The
        * KPI chips are month-scoped, so everyone still starts the month at zero.
        */
-      $mineQ = db()->prepare('SELECT agent_id FROM agent_month_kpi WHERE month = ? AND bdo = ? AND kpi = "served"');
+      /* NO LOCATION, NOT HIS AGENT.
+       * The round is the list of doors he can walk to, so a served credit is
+       * not enough on its own - a file can credit a serve without anybody ever
+       * capturing where the man is. Such an agent is in nobody's round and
+       * shows up under "NEW - not yet mine" for whoever goes and finds him. */
+      $mineQ = db()->prepare('SELECT k.agent_id FROM agent_month_kpi k
+                              JOIN agents a ON a.id = k.agent_id
+                              WHERE k.month = ? AND k.bdo = ? AND k.kpi = "served"
+                                AND TRIM(a.physical_location) <> ""');
       $mineQ->execute(array($month, $bdo));
       $ids = array();
       foreach ($mineQ->fetchAll() as $r) $ids[] = (int)$r['agent_id'];
@@ -717,7 +725,14 @@ try {
                        a.act_current, a.act_prev, a.act_month
                 FROM agents a
                 WHERE NOT EXISTS (SELECT 1 FROM base b WHERE b.month = ? AND b.agent_id = a.id)
-                  AND NOT EXISTS (SELECT 1 FROM agent_month_kpi k WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served')";
+                  /* Served already? Then he is somebody's and does not belong
+                   * here - UNLESS nobody knows where he is. A file can credit a
+                   * serve without ever capturing a location, and such an agent
+                   * is in no round (see v19) and would otherwise be invisible
+                   * to everyone. He belongs on this list until a BDO goes out,
+                   * finds him and pins the place. */
+                  AND (TRIM(a.physical_location) = ''
+                       OR NOT EXISTS (SELECT 1 FROM agent_month_kpi k WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served'))";
       $ucVals = array($month, $month);
       if ($scope2 !== '') { $ucSql .= ' AND (a.station = ? OR a.station = "")'; $ucVals[] = $scope2; }
       $ucSql .= ' ORDER BY a.name LIMIT 300';
