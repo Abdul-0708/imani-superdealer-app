@@ -60,6 +60,11 @@ jobs:
           curl -sf -c /tmp/cj -H "Content-Type: application/json" -H "X-Requested-With: imani" \
             -d '{"username":"superadmin","password":"imani123"}' \
             "http://127.0.0.1:8080/api.php?action=login" | grep '"superadmin"'
-          # authenticated call
+          # A FRESH INSTALL SHIPS A KNOWN SEED PASSWORD, so the app must refuse
+          # every action until it is replaced - assert the block is real...
+          curl -s -b /tmp/cj "http://127.0.0.1:8080/api.php?action=months" | grep '"mustChange":true'
+          # ...then set a real password, which is the one action allowed
+          curl -sf -b /tmp/cj -H "Content-Type: application/json" -H "X-Requested-With: imani" \n            -d '{"current":"imani123","new":"CiSmoke#2026"}' \n            "http://127.0.0.1:8080/api.php?action=change_password" | grep '"ok":true'
+          # and only now does the app answer normally
           curl -sf -b /tmp/cj "http://127.0.0.1:8080/api.php?action=months" | grep '"open"'
           echo "API smoke OK"
