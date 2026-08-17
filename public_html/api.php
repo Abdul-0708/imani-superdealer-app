@@ -179,10 +179,30 @@ try {
       $up = db()->prepare('INSERT INTO permissions (role, module, v, e, d) VALUES (?,?,?,?,?)
                            ON DUPLICATE KEY UPDATE v=VALUES(v), e=VALUES(e), d=VALUES(d)');
       $moduleKeys = array_map(function ($m) { return $m['key']; }, modules_meta());
+      $mayGrantAdmin = ($u['role'] === 'superadmin');
       foreach ($matrix as $role => $mods) {
         if ($role === 'superadmin' || !is_array($mods)) continue;
         foreach ($mods as $mod => $lvl) {
           if (!in_array($mod, $moduleKeys, true)) continue;
+          /*
+           * Handing the Admin module to another role hands over this very
+           * screen - and with it every account. Only a super admin may widen
+           * that circle.
+           *
+           * The screen posts the WHOLE matrix on every save, so an unchanged
+           * Admin cell is not an attempt at anything and must pass quietly.
+           * A cell that actually DIFFERS is refused out loud - silently
+           * dropping it would tell the admin his change was saved when it was
+           * not, which is how a security control becomes a lie.
+           */
+          if ($mod === 'admin' && !$mayGrantAdmin) {
+            $cur = perms_for_role($role);
+            $same = (!empty($lvl['v']) == !empty($cur['admin']['v']))
+                 && (!empty($lvl['e']) == !empty($cur['admin']['e']))
+                 && (!empty($lvl['d']) == !empty($cur['admin']['d']));
+            if ($same) continue;
+            fail('Only a Super Admin can change who holds Admin access', 403);
+          }
           $up->execute(array($role, $mod, !empty($lvl['v'])?1:0, !empty($lvl['e'])?1:0, !empty($lvl['d'])?1:0));
         }
       }
@@ -217,7 +237,7 @@ try {
       $roleOk = db()->prepare('SELECT 1 FROM roles WHERE name = ?');
       $roleOk->execute(array($role));
       if (!$roleOk->fetch()) fail('Unknown role: ' . $role);
-      if ($role === 'superadmin' && $u['role'] !== 'superadmin') fail('Only a super admin can create another super admin', 403);
+      require_can_grant_role($u, $role);
       try {
         db()->prepare('INSERT INTO users (username, role, name, station, password_hash) VALUES (?,?,?,?,?)')
             ->execute(array($username, $role, $name, trim((string)bval('station')), password_hash($password, PASSWORD_BCRYPT)));
@@ -234,6 +254,11 @@ try {
       $target = $st->fetch();
       if (!$target) fail('User not found', 404);
       $b = body();
+      /* You may not act on an account above your own level - and that covers
+       * the PASSWORD, which is how the old "cannot demote a Super Admin" guard
+       * was walked around: reset it and sign in as him instead. */
+      require_can_manage_user($u, $target);
+      require_not_self_privilege($u, $target, $b);
       if ($target['role'] === 'superadmin') {
         if ((isset($b['active']) && !$b['active']) || (isset($b['role']) && $b['role'] !== 'superadmin')) fail('Cannot demote or disable a Super Admin');
       }
@@ -242,6 +267,7 @@ try {
       if (isset($b['role']) && $b['role'] !== '') {
         $rk = db()->prepare('SELECT 1 FROM roles WHERE name = ?'); $rk->execute(array($b['role']));
         if (!$rk->fetch()) fail('Unknown role');
+        require_can_grant_role($u, (string)$b['role']);   /* no promoting above yourself */
         $sets[] = 'role = ?'; $vals[] = $b['role'];
       }
       if (isset($b['active'])) { $sets[] = 'active = ?'; $vals[] = $b['active'] ? 1 : 0; }
@@ -269,6 +295,7 @@ try {
       $st->execute(array($id));
       $target = $st->fetch();
       if (!$target) fail('User not found', 404);
+      require_can_manage_user($u, $target);
       if ($target['role'] === 'superadmin') fail('Cannot delete a Super Admin account');
       if ((int)$target['id'] === (int)$u['id']) fail('You cannot delete your own account');
       db()->prepare('DELETE FROM users WHERE id = ?')->execute(array($id));

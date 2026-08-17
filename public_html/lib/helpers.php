@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.45.0');
+define('APP_VERSION', '1.46.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -165,6 +165,53 @@ function require_officer_view($user) {
   if (is_manager($user)) return;
   if (!is_field_user($user) && can($user, 'reports', 'v')) return;
   fail('Management access only', 403);
+}
+
+/*
+ * ================= THE PRIVILEGE BOUNDARY =================
+ *
+ * A permission says WHAT you may do. It must never say WHO you may do it to.
+ * Holding "Admin: Edit" is the right to run the member list - it is not the
+ * right to reach ABOVE yourself, and the two were the same thing until now:
+ *
+ *   - admin_user_add refused to CREATE a super admin unless you were one,
+ *     but admin_user_update happily PROMOTED anyone - including the caller -
+ *     to super admin;
+ *   - the super-admin guard blocked demoting and disabling that account but
+ *     said nothing about its PASSWORD, so instead of demoting the owner you
+ *     simply reset his password and signed in as him;
+ *   - and admin_perms_save would hand the "admin" module to any role at all,
+ *     so one delegated tick could be spread to everybody.
+ *
+ * All three are the same missing rule, so it lives in one place now: you may
+ * not act on an account above your level, and you may not hand out a level
+ * you do not hold yourself.
+ */
+function require_can_manage_user($actor, $target) {
+  if ($actor['role'] === 'superadmin') return;              /* the top may act on anyone */
+  if ($target['role'] === 'superadmin') {
+    fail('Only a Super Admin can change a Super Admin account', 403);
+  }
+}
+/* You cannot grant a role you do not hold. */
+function require_can_grant_role($actor, $role) {
+  if ($role === 'superadmin' && $actor['role'] !== 'superadmin') {
+    fail('Only a Super Admin can grant the Super Admin role', 403);
+  }
+}
+/*
+ * Nobody edits their OWN role or active flag - not even a super admin, who
+ * would otherwise be one request away from locking himself out. Changing
+ * somebody's level is a decision about that person, made by another person.
+ */
+function require_not_self_privilege($actor, $target, $body) {
+  if ((int)$actor['id'] !== (int)$target['id']) return;
+  if (array_key_exists('role', $body) && (string)$body['role'] !== '' && (string)$body['role'] !== (string)$target['role']) {
+    fail('You cannot change your own role - ask another administrator', 403);
+  }
+  if (array_key_exists('active', $body) && !$body['active']) {
+    fail('You cannot deactivate your own account', 403);
+  }
 }
 
 function can($user, $module, $level) {

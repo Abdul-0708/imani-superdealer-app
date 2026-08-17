@@ -5,6 +5,57 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.46.0 — 2026-08-17 · SECURITY: the privilege boundary
+
+**🔴 CRITICAL — fixed: one delegated permission was a path to total takeover.**
+
+A permission says *what* you may do. It must never say *who* you may do it to — and until now the
+two were the same thing. `admin_user_add` refused to CREATE a super admin unless you already were
+one, but `admin_user_update` had no equivalent guard. The super-admin protection blocked demoting
+and disabling that account and said nothing about its **password**.
+
+Verified by running the attack, not by reading the code. Precondition: an admin ticks
+*Admin: Edit* for the OM role — which the Access Control matrix exists to allow. Signed in as `om`,
+three API calls, no UI involved:
+
+| Attack | Before |
+|---|---|
+| `admin_user_update {id:self, role:"superadmin"}` | **role became `superadmin`, every permission true** |
+| `admin_user_update {id:1, password:"…"}` | **logged in as the real super admin** |
+| `admin_perms_save {bdo:{admin:{v,e,d}}}` | **every BDO gained admin rights** |
+
+**The rule now lives in one place** (`require_can_manage_user`, `require_can_grant_role`,
+`require_not_self_privilege`) and is applied at every door — create, update, delete and the
+permission matrix:
+
+- You may not act on an account **above your own level**, and that covers the password.
+- You may not **grant a level you do not hold**.
+- **Nobody edits their own role or active flag** — not even a super admin, who would otherwise be
+  one request away from locking himself out.
+- Only a super admin may change **who holds Admin access**. The screen posts the whole matrix on
+  every save, so an unchanged Admin cell passes quietly; a cell that actually differs is refused
+  **out loud** — silently dropping it would tell the admin his change was saved when it was not.
+
+**Re-verified after the fix, same scenario, same requests:**
+
+| Attack | After |
+|---|---|
+| Self-promote to super admin | *You cannot change your own role* |
+| Reset the super admin's password | *Only a Super Admin can change a Super Admin account* |
+| Grant BDO the admin module | *Only a Super Admin can change who holds Admin access* |
+| Create a new super admin | *Only a Super Admin can grant the Super Admin role* |
+| Delete / demote the super admin | *Only a Super Admin can change a Super Admin account* |
+| Deactivate myself | *You cannot deactivate your own account* |
+
+Database state confirms nothing was written: roles unchanged, super-admin password untouched, no
+admin rows created. **And a real super admin still has full control** — granting Admin, creating
+super admins, resetting passwords and changing roles all still work; only self-demotion is refused.
+A normal permission save by a non-super-admin is unaffected.
+
+- Assets `?v=63`, SW `imani-v63`. Schema unchanged.
+
+---
+
 ## v1.45.0 — 2026-08-17 · "The month sets up its own KPIs"
 
 **The performance file is not the same file every month** — a column gets renamed, a KPI stops being
