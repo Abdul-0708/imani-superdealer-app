@@ -5,6 +5,38 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.44.0 — 2026-08-17 · "Three lists, three downloads"
+
+**Each of an officer's three lists downloads on its own, from its own panel.** They are three
+different jobs — the untouched list is a route to walk, the served list is a month to check, the
+whole round is his territory — so each panel heading in the BDOs window now carries its own
+**Excel** button:
+
+- **High earners NOT served** → `<bdo>_not_served_<month>.xlsx`
+- **High earners served** → `<bdo>_served_<month>.xlsx`
+- **His whole round** → `<bdo>_round_<month>.xlsx`
+
+**Laid out, not dumped.** Each sheet opens with a title block — the officer, the month and station,
+what the list is for, the generation time — then a count with the band tally
+(*LIST A: 2  LIST B: 2  LIST C: 1  LIST D: 1  LIST E: 1  not listed: 3*), then the agents **grouped
+under a heading per band, LIST A through E** (and *NOT ON THE HIGH-EARNER LIST* for the whole
+round), **alphabetical by name inside each band**, with a running number so a printed page can be
+ticked off door by door. Column widths are set and the title rows are merged across the table.
+
+Columns: **# · LIST · Agent name · Account · Phone · Branch · Physical location · SA station**, and
+a last column that reads *SERVED* (with the timestamp) on the served and whole-round sheets, or
+*Agent status* on the untouched sheet — where what matters is whether he is active, not when he was
+served. The officer detail endpoint now carries the agent's **phone**, because these sheets are call
+lists.
+
+Verified across a full A–F round: ordering came out *Amina, Zainabu* under LIST A, *Baraka, Yusuf*
+under B, and *Orphan, Salma, Tatu* under the unlisted block — alphabetical within every band, bands
+in order, running numbers 1–10 unbroken.
+
+- Assets `?v=61`, SW `imani-v61`
+
+---
+
 ## v1.43.0 — 2026-08-13 · "No location, not his agent" — schema v19
 
 **An agent nobody has pinned to a place is in nobody's round.** A round is the list of doors an

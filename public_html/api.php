@@ -2859,7 +2859,7 @@ try {
       if (!$who) fail('No such officer', 404);
 
       $bandMap = he_band_map();
-      $q = db()->prepare("SELECT a.id, a.acc, a.name, a.branch, a.physical_location, a.station, a.act_current,
+      $q = db()->prepare("SELECT a.id, a.acc, a.name, a.phone, a.branch, a.physical_location, a.station, a.act_current,
                             k.at served_at, k.bdo served_by, (k.agent_id IS NOT NULL) srv
                           FROM base b
                           JOIN agents a ON a.id = b.agent_id
@@ -2873,7 +2873,7 @@ try {
       foreach ($q->fetchAll() as $r) {
         $band = isset($bandMap[$r['acc']]) ? $bandMap[$r['acc']] : 'F';
         $row = array('id' => (int)$r['id'], 'acc' => $r['acc'], 'name' => $r['name'],
-                     'branch' => $r['branch'], 'location' => $r['physical_location'],
+                     'phone' => $r['phone'], 'branch' => $r['branch'], 'location' => $r['physical_location'],
                      'station' => $r['station'], 'active' => $r['act_current'],
                      'band' => $band, 'served' => (int)$r['srv'] === 1,
                      'servedAt' => $r['served_at'] ? substr($r['served_at'], 0, 16) : '',

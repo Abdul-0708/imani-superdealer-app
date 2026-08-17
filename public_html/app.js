@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.43.0';
+  var APP_VERSION = '1.44.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -3710,11 +3710,13 @@
           : '') +
         /* untouched FIRST: it is the list he has to act on */
         '<div class="panel"><h2>' + svg('alert') + t('High earners NOT served') +
-          ' <span class="pill bad">' + fmt((d.heLeft || []).length) + '</span></h2>' +
+          ' <span class="pill bad">' + fmt((d.heLeft || []).length) + '</span>' +
+          listBtn('notserved') + '</h2>' +
         '<p class="note">' + t('The money still sitting in his round. Biggest list first.') + '</p>' +
         heTable(d.heLeft || [], false) + '</div>' +
         '<div class="panel"><h2>' + svg('check') + t('High earners served') +
-          ' <span class="pill ok">' + fmt((d.heServed || []).length) + '</span></h2>' +
+          ' <span class="pill ok">' + fmt((d.heServed || []).length) + '</span>' +
+          listBtn('served') + '</h2>' +
         heTable(d.heServed || [], true) + '</div>' +
         (isManager() && d.rules ? officerRulesPanel(d) : '') +
         (flagTotal
@@ -3724,12 +3726,119 @@
             '<button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open the Flags panel') + '</button></div>'
           : '') +
         '<div class="panel"><h2>' + svg('users') + t('His whole round') +
-          ' <span class="pill dim">' + fmt(d.baseCount) + '</span></h2>' +
+          ' <span class="pill dim">' + fmt(d.baseCount) + '</span>' +
+          listBtn('round') + '</h2>' +
         '<div class="tablewrap tall"><table><thead><tr><th>' + t('List') + '</th><th>' + t('Agent') + '</th>' +
         '<th>' + t('Branch') + '</th><th>' + t('Location') + '</th><th>' + t('Served') + '</th></tr></thead><tbody>' +
         baseRows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* ---------------- one officer's three lists, as Excel ----------------
+   *
+   * The OM asked for these separately because they are three different jobs:
+   * the untouched list is a route to walk, the served list is a month to check,
+   * the whole round is the officer's territory. Each is built as a laid-out
+   * sheet rather than a raw dump - a title block, a count, then the agents
+   * grouped under LIST A, B, C, D, E (and F, "not on the list", for the whole
+   * round), alphabetical inside each band, with a band heading and a running
+   * number so a printed page can be ticked off door by door.
+   */
+  /* each list downloads from its own panel heading, so it is obvious which
+   * list the file will contain */
+  function listBtn(which) {
+    return ' <button class="ghost mini" data-action="bdList" data-w="' + which + '">' +
+      svg('download') + ' ' + t('Excel') + '</button>';
+  }
+  var BAND_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'];
+  var BAND_TITLE = {
+    A: 'LIST A  -  above 2,000,000',
+    B: 'LIST B  -  above 1,000,000',
+    C: 'LIST C  -  above 500,000',
+    D: 'LIST D  -  above 100,000',
+    E: 'LIST E  -  above 50,000',
+    F: 'NOT ON THE HIGH-EARNER LIST'
+  };
+  /* LIST A first, then alphabetical by name inside every band */
+  function byBandThenName(a, b) {
+    var x = BAND_ORDER.indexOf(a.band || 'F'), y = BAND_ORDER.indexOf(b.band || 'F');
+    if (x !== y) return x - y;
+    return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+  }
+  function bdoListXls(which) {
+    var d = state._bdDetail;
+    if (!d) { toast(t('Open the officer first'), 'warn'); return; }
+    var rows, title, note;
+    if (which === 'served') {
+      rows = (d.heServed || []).slice();
+      title = 'HIGH EARNERS SERVED';
+      note = 'The high earners in his round he has already served this month.';
+    } else if (which === 'notserved') {
+      rows = (d.heLeft || []).slice();
+      title = 'HIGH EARNERS NOT SERVED';
+      note = 'The money still sitting in his round. Work down from LIST A.';
+    } else {
+      rows = (d.base || []).slice();
+      title = 'HIS WHOLE ROUND';
+      note = 'Every agent in his round this month, high earners first.';
+    }
+    rows.sort(byBandThenName);
+    if (!rows.length) { toast(t('Nothing to download in that list'), 'warn'); return; }
+
+    var showServed = (which !== 'notserved');
+    var head = ['#', 'LIST', 'AGENT NAME', 'ACCOUNT', 'PHONE', 'BRANCH', 'PHYSICAL LOCATION', 'SA STATION'];
+    head.push(showServed ? 'SERVED' : 'AGENT STATUS');
+
+    var aoa = [];
+    aoa.push(['IMANI SUPERDEALER  -  ' + title]);
+    aoa.push([d.name + '   (' + d.bdo + ')']);
+    aoa.push([d.month + (d.base && d.base.length && d.base[0].station ? '   ' + d.base[0].station : '') +
+              '     generated ' + nowStamp() + ' EAT']);
+    aoa.push([note]);
+    aoa.push([]);
+    aoa.push([rows.length + ' agents   -   ' + bandTally(rows)]);
+    aoa.push([]);
+    aoa.push(head);
+
+    var seen = {}, num = 0;
+    rows.forEach(function (a) {
+      var band = a.band || 'F';
+      if (!seen[band]) {                       /* a heading before each band */
+        seen[band] = true;
+        aoa.push([]);
+        aoa.push([BAND_TITLE[band] + '   (' + rows.filter(function (x) { return (x.band || 'F') === band; }).length + ')']);
+      }
+      num++;
+      var line = [num, band, a.name || '', a.acc || '', a.phone || '', a.branch || '',
+                  a.location || '', a.station || ''];
+      line.push(showServed
+        ? (a.served === false ? 'NOT SERVED' : (a.servedAt || 'YES'))
+        : (a.active || 'unknown'));
+      aoa.push(line);
+    });
+
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 5 }, { wch: 7 }, { wch: 30 }, { wch: 18 }, { wch: 15 },
+                   { wch: 20 }, { wch: 32 }, { wch: 14 }, { wch: 18 }];
+    /* the title block spans the table so it reads as a heading, not a stray cell */
+    ws['!merges'] = [0, 1, 2, 3, 5].map(function (r) {
+      return { s: { r: r, c: 0 }, e: { r: r, c: head.length - 1 } };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 28));
+    XLSX.writeFile(wb, d.bdo + '_' + which.replace('notserved', 'not_served') + '_' + d.month + '.xlsx');
+    toast(t('Downloaded'), 'ok');
+  }
+  function bandTally(rows) {
+    return BAND_ORDER.map(function (b) {
+      var n = rows.filter(function (x) { return (x.band || 'F') === b; }).length;
+      return n ? (b === 'F' ? 'not listed: ' + n : 'LIST ' + b + ': ' + n) : null;
+    }).filter(Boolean).join('   ') || '-';
+  }
+  function nowStamp() {
+    var n = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; };
+    return n.getFullYear() + '-' + p(n.getMonth() + 1) + '-' + p(n.getDate()) + ' ' + p(n.getHours()) + ':' + p(n.getMinutes());
+  }
+
   /* ---------------- high-earner report: Excel or Word ----------------
    *
    * The OM needs this off the screen and into somebody's hands - a workbook to
@@ -4496,6 +4605,7 @@
     if (a === 'heXlsOne') { heReport(node.getAttribute('data-bdo'), 'excel'); return; }
     if (a === 'heDocOne') { heReport(node.getAttribute('data-bdo'), 'word'); return; }
     if (a === 'orSave') { officerRulesSave(node.getAttribute('data-bdo')); return; }
+    if (a === 'bdList') { bdoListXls(node.getAttribute('data-w')); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {
