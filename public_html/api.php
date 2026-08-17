@@ -13,6 +13,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' &&
 
 $action = isset($_GET['action']) ? $_GET['action'] : '';
 
+/*
+ * FORCED PASSWORD CHANGE.
+ *
+ * An account still carrying the old shared setup password is a live account
+ * anybody can sign into. Locking it out would strand the officer mid-month, so
+ * instead it is allowed exactly one action - setting a new password - and
+ * nothing else, whichever way the request arrives.
+ */
+if (!in_array($action, array('login', 'login_2fa', 'logout', 'health', 'me', 'change_password'), true)) {
+  try {
+    $cu = current_user();
+    if ($cu && password_is_default($cu['password_hash'])) {
+      fail('Set your own password before using the app - the setup password is not private.', 403,
+           array('mustChange' => true));
+    }
+  } catch (Exception $e) { /* never block on a lookup failure */ }
+}
+
 /* Turn the calendar over BEFORE anything is read. Doing it lazily inside
  * open_month() was not enough: a handler that queries month data first (the
  * months list did exactly that) would answer from the old month on the very
@@ -62,6 +80,8 @@ try {
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
         'serverVersion' => APP_VERSION,
+        /* still on the shared setup password - he must replace it first */
+        'mustChange' => password_is_default($u['password_hash']),
       ));
     }
 
@@ -109,6 +129,7 @@ try {
                         'totp_on' => (isset($u['totp_secret']) && $u['totp_secret'] !== '')),
         'perms' => perms_for_role($u['role']),
         'serverVersion' => APP_VERSION,
+        'mustChange' => password_is_default($u['password_hash']),
       ));
     }
 
@@ -1924,7 +1945,11 @@ try {
       $kind = ($mode === 'priority') ? 'priority' : ($mode === 'fixed' ? 'fixed' : 'uploaded');
       /* base writes go through base_assign(): one owner per agent, and a file
        * never takes an agent off the officer who actually served him */
-      $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash) VALUES (?, "bdo", ?, ?)');
+      /* An officer the file names but the app has never seen gets an account -
+       * but a LOCKED one, with a password nobody knows, not a live login on a
+       * fixed password written into the source. The OM activates him and sets
+       * his credentials from Admin. */
+      $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash, active) VALUES (?, "bdo", ?, ?, 0)');
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
@@ -2045,7 +2070,7 @@ try {
             $slug = substr(preg_replace('/[^a-z0-9]/', '', $lk), 0, 40);
             if ($slug !== '') {
               if (!isset($userByKey[$slug])) {
-                $insUser->execute(array($slug, $label, password_hash('imani123', PASSWORD_BCRYPT)));
+                $insUser->execute(array($slug, $label, password_hash(bin2hex(random_bytes(24)), PASSWORD_BCRYPT)));
                 $userByKey[$slug] = array('username' => $slug);
                 $created[] = $slug;
               }

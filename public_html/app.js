@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.46.0';
+  var APP_VERSION = '1.47.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -741,7 +741,13 @@
     }).then(function (r) {
       return r.json().catch(function () { return { error: 'Bad server response' }; }).then(function (d) {
         if (r.status === 401) { state.user = null; render(); throw new Error(d.error || 'Please sign in'); }
-        if (!r.ok) { var err = new Error(d.error || ('Error ' + r.status)); err.data = d; throw err; }
+        if (!r.ok) {
+          var err = new Error(d.error || ('Error ' + r.status)); err.data = d;
+          /* the account is blocked until its setup password is replaced - a
+           * resumed session never sees the login screen, so ask here too */
+          if (d && d.mustChange && !state._pwdForced) pwdModal(true);
+          throw err;
+        }
         return d;
       });
     }).then(function (d) { done(); return d; }, function (e) { done(); throw e; });
@@ -1161,23 +1167,37 @@
       .then(function (d) {
         if (d.need2fa) { render2fa(); return; }
         state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.tab = defaultTab(); render();
+        /* still on the shared setup password: the server will refuse
+         * everything else, so ask for a new one straight away */
+        if (d.mustChange) pwdModal(true);
       })
       .catch(function (e) { elById('lErr').textContent = e.message; });
   }
   function doLogout() {
     api('logout', { body: {} }).catch(function () { }).then(function () { state.user = null; render(); });
   }
-  function pwdModal() {
-    openModal('<h2>Change password</h2>' +
-      '<div class="field"><label>Current password</label><input id="cpCur" type="password"></div>' +
-      '<div class="field"><label>New password (min 8)</label><input id="cpNew" type="password"></div>' +
+  /* `forced` = his account still carries the shared setup password. The server
+   * refuses every other action until he replaces it, so the dialog offers no
+   * way out - a Cancel button here would only produce a dead app. */
+  function pwdModal(forced) {
+    state._pwdForced = !!forced;
+    openModal((forced
+        ? '<h2>' + svg('lock') + ' ' + t('Set your own password') + '</h2>' +
+          '<p class="note">' + t('Your account still uses the shared setup password, which is not private - anyone who knows it can sign in as you. Choose your own before continuing.') + '</p>'
+        : '<h2>Change password</h2>') +
+      '<div class="field"><label>' + (forced ? t('Setup password') : t('Current password')) + '</label><input id="cpCur" type="password"></div>' +
+      '<div class="field"><label>' + t('New password (min 8)') + '</label><input id="cpNew" type="password"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
-      '<button class="ghost" data-action="closeModal">Cancel</button>' +
-      '<button class="btn" data-action="pwdSave">Update</button></div>');
+      (forced ? '' : '<button class="ghost" data-action="closeModal">Cancel</button>') +
+      '<button class="btn" data-action="pwdSave">' + (forced ? t('Set it and continue') : 'Update') + '</button></div>');
   }
   function pwdSave() {
     api('change_password', { body: { current: elById('cpCur').value, new: elById('cpNew').value } })
-      .then(function () { closeModal(); toast('Password updated', 'ok'); })
+      .then(function () {
+        closeModal();
+        toast(t('Password updated'), 'ok');
+        if (state._pwdForced) { state._pwdForced = false; render(); }   /* the app was blocked until now */
+      })
       .catch(function (e) { toast(e.message, 'err'); });
   }
 

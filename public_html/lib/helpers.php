@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.46.0');
+define('APP_VERSION', '1.47.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -187,6 +187,23 @@ function require_officer_view($user) {
  * not act on an account above your level, and you may not hand out a level
  * you do not hold yourself.
  */
+/*
+ * THE SETUP PASSWORD.
+ *
+ * A performance file naming an unknown officer creates his login for him. That
+ * account used to be born ACTIVE with a fixed password written into the source
+ * - so anyone who could read the code, or guess once, could sign in as any
+ * auto-created officer and mark KPIs, claim agents and answer flags as him.
+ *
+ * New accounts are now born locked with a random password (see the upload).
+ * Accounts already carrying the old default are not locked out - that would
+ * strand the field team mid-month - but they may do exactly one thing until
+ * they fix it: set a new password.
+ */
+function password_is_default($hash) {
+  return (string)$hash !== '' && password_verify('imani123', (string)$hash);
+}
+
 function require_can_manage_user($actor, $target) {
   if ($actor['role'] === 'superadmin') return;              /* the top may act on anyone */
   if ($target['role'] === 'superadmin') {
@@ -1401,5 +1418,20 @@ function he_band($acc) {
  */
 function station_scope($user) {
   if (is_manager($user)) return strtoupper(trim(setting_get('view_station', setting_get('home_station', 'ARUSHA'))));
-  return setting_get('home_station', 'ARUSHA');
+  /*
+   * A FIELD USER IS PINNED TO HIS OWN STATION.
+   *
+   * This used to return the ONE global home_station for every officer, so the
+   * per-user station on his account was decoration: a Manyara officer read
+   * Arusha's agent list - names, phones, physical locations, high-earner bands
+   * - and Arusha read his. There was no segregation between field users at all,
+   * only the appearance of it.
+   *
+   * Uppercased because agent stations are stored uppercase while the account
+   * column is typed by hand ("Arusha"); comparing the two raw matched nothing.
+   * An officer with no station set still falls back to the office default
+   * rather than being shown an empty app.
+   */
+  $own = strtoupper(trim((string)(isset($user['station']) ? $user['station'] : '')));
+  return $own !== '' ? $own : strtoupper(trim(setting_get('home_station', 'ARUSHA')));
 }

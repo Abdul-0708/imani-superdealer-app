@@ -5,6 +5,45 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.47.0 — 2026-08-17 · SECURITY: the setup password, and real station segregation
+
+**🟠 HIGH — fixed: auto-created officer accounts shared one password written into the source.**
+A performance file naming an unknown officer created his login *for* him — **active**, with
+`password_hash('imani123')`, a constant anyone reading the code could see. That account could mark
+KPIs, claim agents and answer flags as him.
+
+- **New accounts are born locked** — `active = 0` and a 24-byte random password nobody holds, not
+  even the server operator. The OM activates the officer and sets his credentials from Admin.
+  Verified: an upload naming *"Brand New Officer"* created `brandnewofficer` with `active=0`, and
+  signing in with the old default was refused.
+- **Accounts already carrying the default are not locked out** — that would strand the field team
+  mid-month. They may do **exactly one thing**: set a new password. Every other request, by any
+  route, is refused with *"Set your own password before using the app."*
+  Verified on an account still holding `imani123`: the agent list, his round and marking a KPI were
+  all refused; `change_password` was allowed; after setting his own password the app unblocked
+  immediately, and the old shared password stopped working.
+- The dialog offers **no Cancel** when it is forced — a way out would only produce a dead app.
+
+**🟠 HIGH — fixed: field users had no station segregation at all.**
+`station_scope()` returned the single **global** `home_station` for every officer, so the station on
+his account was decoration: a Manyara officer read Arusha's agent list — names, phones, physical
+locations, high-earner bands — and Arusha read his.
+
+Now a field user is pinned to **his own** station. Uppercased on the way out, because agent stations
+are stored uppercase while the account column is typed by hand (*"Arusha"*), and comparing the two
+raw matched nothing — the fix would have silently emptied every officer's list.
+Verified with two officers on the same data: the Arusha officer saw **14 Arusha agents, 0 Manyara**;
+the Manyara officer saw **4 Manyara, 0 Arusha**. An officer with no station set still falls back to
+the office default rather than being shown an empty app.
+
+*Note:* agents whose SA STATION cell is blank (15 in the test data) stay visible to everyone. That
+is the existing deliberate rule — a missing cell must not hide an agent from the man who has to
+serve him — and is unchanged here.
+
+- Assets `?v=64`, SW `imani-v64`. Schema unchanged.
+
+---
+
 ## v1.46.0 — 2026-08-17 · SECURITY: the privilege boundary
 
 **🔴 CRITICAL — fixed: one delegated permission was a path to total takeover.**
