@@ -1942,7 +1942,9 @@ try {
       /* PASS 1: parse everything (needed for office snapshot totals). */
       $apkRequired = setting_get('apk_required_version', '2.0');
       $parsed = array();
-      $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0);
+      $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0,
+                    /* the month's own KPIs, whatever the OM set up */
+                    'custom' => array());
       $stats = $zero;
       $byStation = array(); /* SA-station breakdown (ARUSHA / MANYARA / ...) */
       /* A blank SA STATION cell is a missing value, not a separate region: the
@@ -1977,6 +1979,16 @@ try {
         if ($r['lost']) { $stats['lost']++; $byStation[$stKey]['lost']++; }
         $stats['withdraw'] += $r['withdraw'];
         $byStation[$stKey]['withdraw'] += $r['withdraw'];
+        /* whatever else this month is measuring - summed for a number KPI,
+         * counted for a flag/word/version one, exactly as the OM set it up */
+        if (!empty($r['custom'])) {
+          foreach ($r['custom'] as $ck => $cv) {
+            if (!isset($stats['custom'][$ck])) $stats['custom'][$ck] = 0;
+            if (!isset($byStation[$stKey]['custom'][$ck])) $byStation[$stKey]['custom'][$ck] = 0;
+            $stats['custom'][$ck] += $cv;
+            $byStation[$stKey]['custom'][$ck] += $cv;
+          }
+        }
       }
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
@@ -2735,6 +2747,110 @@ try {
      * The OM needs those three facts side by side, for every officer, on one
      * screen - which is what this returns.
      */
+    /*
+     * THE MONTH'S KPI SET-UP - read it, and save it.
+     *
+     * Which KPIs count this month, which spreadsheet column each is read from,
+     * and how to read it. Saving is per month, so changing September never
+     * rewrites what August was scored on.
+     */
+    case 'kpi_config_get': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $cfg = kpi_config($month);
+      /* the headers the last uploaded file actually carried, so the OM maps
+       * against what is really in the spreadsheet instead of guessing */
+      $heads = json_decode(setting_get('last_upload_headers', '[]'), true);
+      respond(array('month' => $month,
+                    'saved' => setting_get('kpi_config_' . $month, '') !== '',
+                    'kpis' => array_values(array_map(function ($k, $d) {
+                      $d['key'] = $k; return $d;
+                    }, array_keys($cfg['kpis']), $cfg['kpis'])),
+                    'custom' => array_values($cfg['custom']),
+                    'readModes' => kpi_read_modes(),
+                    'fileHeaders' => is_array($heads) ? $heads : array()));
+    }
+
+    case 'kpi_config_save': {
+      $u = require_auth(); require_perm($u, 'targets', 'e');
+      $month = (string)bval('month');
+      if (!preg_match('/^\d{4}-\d{2}$/', $month)) fail('Provide month as YYYY-MM');
+      if (month_status($month) === 'CLOSED') fail('Month ' . $month . ' is closed - its KPIs cannot be changed');
+
+      $modes = kpi_read_modes();
+      $out = array('kpis' => array(), 'custom' => array());
+      foreach ((array)bval('kpis', array()) as $k) {
+        if (!is_array($k) || empty($k['key'])) continue;
+        $key = (string)$k['key'];
+        if (!isset(kpi_builtin_defs()[$key])) continue;
+        $out['kpis'][$key] = array(
+          'on'   => !empty($k['on']),
+          'cols' => mb_substr(trim((string)(isset($k['cols']) ? $k['cols'] : '')), 0, 400),
+          'read' => isset($modes[(string)($k['read'] ?? '')]) ? (string)$k['read'] : kpi_builtin_defs()[$key]['read'],
+        );
+      }
+      $seen = array();
+      foreach ((array)bval('custom', array()) as $c) {
+        if (!is_array($c)) continue;
+        $label = trim((string)(isset($c['label']) ? $c['label'] : ''));
+        if ($label === '') continue;
+        $key = kpi_custom_key(!empty($c['key']) ? $c['key'] : $label);
+        if ($key === '' || isset($seen[$key])) continue;
+        $seen[$key] = true;
+        $out['custom'][] = array(
+          'key'    => $key,
+          'label'  => mb_substr($label, 0, 60),
+          'on'     => !empty($c['on']),
+          'cols'   => mb_substr(trim((string)(isset($c['cols']) ? $c['cols'] : '')), 0, 400),
+          'read'   => isset($modes[(string)($c['read'] ?? '')]) ? (string)$c['read'] : 'number',
+          'match'  => mb_substr(trim((string)(isset($c['match']) ? $c['match'] : '')), 0, 40),
+          'target' => (float)(isset($c['target']) ? $c['target'] : 0),
+          'weight' => max(0, min(100, (int)(isset($c['weight']) ? $c['weight'] : 0))),
+        );
+      }
+      setting_set('kpi_config_' . $month, json_encode($out));
+      audit($u['id'], 'kpi_config', $month . ': ' . count($out['kpis']) . ' built-in, ' . count($out['custom']) . ' custom');
+      respond(array('ok' => true, 'month' => $month));
+    }
+
+    /*
+     * DRY RUN: read a sample of rows with the CURRENT set-up and report what
+     * each KPI found, so the OM can see a column mapping working (or reading
+     * nothing) before he trusts a month to it.
+     */
+    case 'kpi_config_test': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
+      $rows = (array)bval('rows', array());
+      if (!count($rows)) fail('Pick the Excel file to test against');
+      $rows = array_slice($rows, 0, 400);
+      $cfg = kpi_config($month);
+      $req = setting_get('apk_required_version', '2.0');
+
+      $heads = array();
+      foreach ($rows as $r) { if (is_array($r)) { foreach (array_keys($r) as $h) $heads[(string)$h] = true; } }
+      $heads = array_keys($heads);
+      setting_set('last_upload_headers', json_encode(array_slice($heads, 0, 120)));
+
+      $res = array();
+      foreach (array_merge($cfg['kpis'], $cfg['custom']) as $key => $def) {
+        if (empty($def['on'])) { $res[] = array('key' => $key, 'label' => $def['label'], 'off' => true); continue; }
+        $found = 0; $total = 0.0; $sample = '';
+        foreach ($rows as $r) {
+          if (!is_array($r)) continue;
+          $raw = kpi_cell($r, $def);
+          if (trim((string)$raw) !== '' && $sample === '') $sample = (string)$raw;
+          if (trim((string)$raw) !== '') $found++;
+          $total += (float)kpi_value($r, $def, $req);
+        }
+        $res[] = array('key' => $key, 'label' => $def['label'], 'off' => false,
+                       'cols' => $def['cols'], 'read' => $def['read'],
+                       'matched' => $found, 'rows' => count($rows),
+                       'value' => $total, 'sample' => mb_substr($sample, 0, 40));
+      }
+      respond(array('month' => $month, 'rows' => count($rows), 'headers' => $heads, 'results' => $res));
+    }
+
     case 'bdos': {
       $u = require_auth(); require_officer_view($u);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();

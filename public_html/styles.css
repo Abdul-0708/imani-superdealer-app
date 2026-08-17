@@ -145,6 +145,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible,.kchip.todo:focus-visible{outline:2px solid var(--fire2);outline-offset:2px}
 .mini{padding:4px 10px!important;font-size:12px!important;border-radius:8px!important}
 
+/* A KPI switched off for the month: still listed so the OM can switch it back
+   on, but visibly out of play rather than looking like a KPI reading zero. */
+.kpi-off{opacity:.45}
+.kpi-off input,.kpi-off select{opacity:.7}
+
 /* SECTION DIVIDER on a page that carries two of them.
  * The dashboard holds the file result and the file-plus-field result. They must
  * never read as one number, so each gets a heading with a rule above it - the

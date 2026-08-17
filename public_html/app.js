@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.44.0';
+  var APP_VERSION = '1.45.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1638,11 +1638,20 @@
       /* a chosen SA station swaps the CARD numbers to that station's share
        * (incl. its own withdraw sum); target attainment stays office-wide */
       var ss = d.stationStats;
-      function cardVal(k) { return ss ? (ss[k] || 0) : att[k].actual; }
+      function cardVal(k) { return ss ? (ss[k] || 0) : ((att[k] && att[k].actual) || 0); }
       var stTag = ss ? ' - ' + esc(d.station) : '';
       var visible = (d.visibleKpis || '').split(',');
-      function shown(k) { return visible.indexOf(k) >= 0; }
+      /* A KPI switched off for this month is absent from the attainment
+       * altogether, so a card for it must not be built - it is not a KPI
+       * reading zero, it is a KPI that did not exist this month. */
+      function shown(k) { return visible.indexOf(k) >= 0 && !!att[k]; }
       var defs = OFFICE_DEFS.filter(function (def) { return shown(def.key) && att[def.key]; });
+      /* KPIs the OM set up for this month arrive in the attainment carrying
+       * their own label, so they read on the board exactly like the rest. A
+       * KPI he switched off is simply not there. */
+      Object.keys(att).forEach(function (k) {
+        if (att[k] && att[k].custom) defs.push({ key: k, label: att[k].label || k, icon: 'chart' });
+      });
 
       /* NB: the loop variable must NOT be called `t` - that shadows the t()
        * translation helper used inside the body. */
@@ -1672,6 +1681,10 @@
       if (shown('activeness')) cards += card('zap', 'Activeness (net)' + stTag, fmt(ss ? (ss.net_active || 0) : att.activeness.actual),
         'waked ' + fmt(ss ? ss.waked : d.waked) + ' - lost ' + fmt(ss ? ss.lost : d.lost));
       if (shown('withdraw')) cards += card('chart', 'Withdraw Volume' + stTag, fmt(cardVal('withdraw')), ss ? esc(d.station) + ' only' : 'office-wide');
+      Object.keys(att).forEach(function (k) {
+        if (att[k] && att[k].custom) cards += card('chart', att[k].label + stTag, fmt(att[k].actual),
+          att[k].target > 0 ? 'target ' + fmt(att[k].target) : 'no target set');
+      });
       cards += card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
         d.achievement == null ? '-' : d.achievement + '%',
         d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
@@ -3051,8 +3064,12 @@
   function viewTargets(v) {
     var m0 = state.month || state.openMonth || curMonth();
     /* no bdo_performance call any more - that table moved to the BDOs window */
-    Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 })]).then(function (rr) {
-      var list = (rr[0] && rr[0].rows) || [], bt = rr[1];
+    Promise.all([api('targets_get'), api('bdo_targets_get', { qs: '&month=' + m0 }),
+                 api('kpi_config_get', { qs: '&month=' + m0 })]).then(function (rr) {
+      var list = (rr[0] && rr[0].rows) || [], bt = rr[1], kcfg = rr[2];
+      /* keep any unsaved custom rows the OM has just added */
+      if (state._kpiCfg && state._kpiCfg.month === kcfg.month && state._kpiCfg._touched) kcfg.custom = state._kpiCfg.custom;
+      state._kpiCfg = kcfg;
       var stations = (rr[0] && rr[0].stations) || [];
       var home = (rr[0] && rr[0].homeStation) || 'ARUSHA';
       var m = m0;
@@ -3095,6 +3112,7 @@
         '<p class="note">' + (st ? t('Editing') + ' <b>' + esc(st) + '</b>' : t('Editing the all-stations roll-up')) +
         (cur.month ? '' : ' &middot; <span class="pill dim">' + t('nothing saved here yet') + '</span>') + '</p>' +
         fields + '</div>' +
+        kpiSetupPanel(kcfg) +
         bdoTargetsPanel(bt) +
         '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
@@ -3733,6 +3751,153 @@
         baseRows + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
+  /* ---------------- the month's KPI set-up ----------------
+   *
+   * The performance file changes shape. A column gets renamed, a KPI stops
+   * being measured, a new one arrives - and each of those used to be a code
+   * change. This is where the OM says what THIS month measures and where each
+   * figure is read from, and proves the mapping against a real file before he
+   * trusts a month to it.
+   */
+  function kpiSetupPanel(k) {
+    if (!k) return '';
+    var canE = can('targets', 'e');
+    var modes = k.readModes || {};
+    function modeSel(id, cur) {
+      return '<select id="' + id + '"' + (canE ? '' : ' disabled') + '>' +
+        Object.keys(modes).map(function (m) {
+          return '<option value="' + m + '"' + (cur === m ? ' selected' : '') + '>' + esc(t(modes[m])) + '</option>';
+        }).join('') + '</select>';
+    }
+    var rows = (k.kpis || []).map(function (d, i) {
+      return '<tr' + (d.on ? '' : ' class="kpi-off"') + '>' +
+        '<td><label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="kcOn" data-i="' + i + '"' +
+          (d.on ? ' checked' : '') + (canE ? '' : ' disabled') + ' style="accent-color:var(--fire2);margin-right:5px">' +
+          esc(t(d.label)) + '</label>' +
+          '<div class="note">' + esc(t(d.hint || '')) + '</div></td>' +
+        '<td><input class="kcCols" data-i="' + i + '" value="' + esc(d.cols || '') + '"' + (canE ? '' : ' readonly') +
+          ' placeholder="' + esc(t('Column name, or several separated by commas')) + '" style="min-width:230px"></td>' +
+        '<td>' + modeSel('kcRead' + i, d.read) + '</td>' +
+        '<td class="note">' + esc(t('target & weight on the Targets panel above')) + '</td></tr>';
+    }).join('');
+
+    var customRows = (k.custom || []).map(function (c, i) {
+      return '<tr' + (c.on ? '' : ' class="kpi-off"') + '>' +
+        '<td><label class="kchip todo" style="cursor:pointer"><input type="checkbox" class="kxOn" data-i="' + i + '"' +
+          (c.on ? ' checked' : '') + (canE ? '' : ' disabled') + ' style="accent-color:var(--fire2);margin-right:5px">' +
+          t('on') + '</label></td>' +
+        '<td><input class="kxLabel" data-i="' + i + '" value="' + esc(c.label || '') + '"' + (canE ? '' : ' readonly') +
+          ' maxlength="60" placeholder="' + esc(t('e.g. Deposit Volume')) + '" style="min-width:150px"></td>' +
+        '<td><input class="kxCols" data-i="' + i + '" value="' + esc(c.cols || '') + '"' + (canE ? '' : ' readonly') +
+          ' placeholder="' + esc(t('the column in the file')) + '" style="min-width:190px"></td>' +
+        '<td>' + modeSel('kxRead' + i, c.read) + '</td>' +
+        '<td><input class="kxMatch" data-i="' + i + '" value="' + esc(c.match || '') + '"' + (canE ? '' : ' readonly') +
+          ' maxlength="40" placeholder="' + esc(t('word to match')) + '" style="width:110px"></td>' +
+        '<td><input class="kxTarget" data-i="' + i + '" type="number" min="0" value="' + esc(c.target || '') + '"' +
+          (canE ? '' : ' readonly') + ' style="width:120px"></td>' +
+        '<td><input class="kxWeight" data-i="' + i + '" type="number" min="0" max="100" value="' + esc(c.weight || '') + '"' +
+          (canE ? '' : ' readonly') + ' style="width:80px"></td>' +
+        '<td>' + (canE ? '<button class="danger mini" data-action="kxDel" data-i="' + i + '">&times;</button>' : '') + '</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="note">' + t('No KPIs of your own yet. Add one when the file starts carrying something new.') + '</td></tr>';
+
+    return '<div class="panel"><h2>' + svg('percent') + t('What this month measures') +
+      (k.saved ? '' : ' <span class="pill dim">' + t('carried from last month') + '</span>') + '</h2>' +
+      '<p class="note">' + t('The file is not the same file every month. Switch off a KPI that is not being measured, retype the column a KPI is read from when the header changes, and add a new KPI when the file starts carrying one. Saved against') + ' <b>' + esc(k.month) + '</b> ' + t('only - earlier months keep the set-up they were scored on.') + '</p>' +
+
+      '<div class="tablewrap"><table><thead><tr><th>' + t('KPI') + '</th><th>' + t('Read from column') + '</th>' +
+      '<th>' + t('How to read it') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+
+      '<h3 style="margin:16px 0 6px;font-size:13px">' + t('KPIs you added') + '</h3>' +
+      '<p class="note">' + t('A new measure the file started carrying. Give it a target and a weight and it joins the weighted average like any other - the weight is office-wide, not per station.') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('On') + '</th><th>' + t('Name') + '</th><th>' + t('Read from column') + '</th>' +
+      '<th>' + t('How to read it') + '</th><th>' + t('Match') + '</th><th>' + t('Target') + '</th><th>' + t('Weight %') + '</th><th></th></tr></thead><tbody>' +
+      customRows + '</tbody></table></div>' +
+
+      (canE ? '<div class="row" style="margin-top:12px;flex-wrap:wrap;gap:8px">' +
+        '<button class="ghost" data-action="kxAdd">+ ' + t('Add a KPI') + '</button>' +
+        '<div class="spacer"></div>' +
+        '<div class="field"><label>' + t('Test against a real file') + '</label>' +
+        '<input id="kcFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
+        '<button class="ghost" data-action="kcTest">' + svg('eye') + ' ' + t('Read it and show me') + '</button>' +
+        '<button class="btn" data-action="kcSave">' + t('Save this month\'s set-up') + '</button></div>'
+        : '<p class="note" style="margin-top:10px">' + t('View only.') + '</p>') +
+      '<div id="kcTestBox" style="margin-top:10px"></div>' +
+      '</div>';
+  }
+  /* read the form back into the shape the server saves */
+  function kpiSetupRead() {
+    var kpis = (state._kpiCfg.kpis || []).map(function (d, i) {
+      return { key: d.key,
+               on: !!document.querySelector('.kcOn[data-i="' + i + '"]:checked'),
+               cols: (elById('kcCols_' + i) || document.querySelectorAll('.kcCols')[i] || {}).value || d.cols,
+               read: (elById('kcRead' + i) || {}).value || d.read };
+    });
+    var custom = (state._kpiCfg.custom || []).map(function (c, i) {
+      function v(cls, dflt) { var el = document.querySelectorAll('.' + cls)[i]; return el ? el.value : dflt; }
+      return { key: c.key, label: v('kxLabel', c.label),
+               on: !!document.querySelector('.kxOn[data-i="' + i + '"]:checked'),
+               cols: v('kxCols', c.cols), read: (elById('kxRead' + i) || {}).value || c.read,
+               match: v('kxMatch', c.match), target: v('kxTarget', c.target), weight: v('kxWeight', c.weight) };
+    });
+    /* the typed column boxes are read positionally - keep them in step */
+    document.querySelectorAll('.kcCols').forEach(function (el, i) { if (kpis[i]) kpis[i].cols = el.value; });
+    return { kpis: kpis, custom: custom };
+  }
+  function kpiSetupSave() {
+    var body = kpiSetupRead();
+    body.month = state._kpiCfg.month;
+    api('kpi_config_save', { body: body })
+      .then(function () { state._kpiCfg._touched = false; toast(t('Set-up saved for') + ' ' + body.month, 'ok'); renderTab(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function kpiAddCustom() {
+    state._kpiCfg.custom = (state._kpiCfg.custom || []).concat([
+      { key: '', label: '', on: true, cols: '', read: 'number', match: '', target: 0, weight: 0 }
+    ]);
+    state._kpiCfg._touched = true;
+    renderTab();
+  }
+  function kpiDelCustom(i) {
+    var cur = kpiSetupRead();
+    cur.custom.splice(i, 1);
+    state._kpiCfg.custom = cur.custom;
+    state._kpiCfg._touched = true;
+    renderTab();
+  }
+  /* Read a real file with the CURRENT boxes and report what each KPI found. */
+  function kpiTest() {
+    var f = elById('kcFile');
+    if (!f || !f.files || !f.files[0]) { toast(t('Pick the Excel file first'), 'warn'); return; }
+    var box = elById('kcTestBox');
+    box.innerHTML = '<div class="skel skel-line"></div><div class="skel skel-line"></div>';
+    /* save first, so the test reads exactly what is typed on screen */
+    var body = kpiSetupRead();
+    body.month = state._kpiCfg.month;
+    api('kpi_config_save', { body: body }).then(function () {
+      readExcel(f, function (rows) {
+        api('kpi_config_test', { body: { month: state._kpiCfg.month, rows: rows } })
+          .then(function (d) {
+            box.innerHTML =
+              '<p class="note">' + t('Read') + ' <b>' + fmt(d.rows) + '</b> ' + t('rows') + '. ' +
+              t('A KPI that matched no rows is reading the wrong column.') + '</p>' +
+              '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Column read') + '</th>' +
+              '<th>' + t('Rows with a value') + '</th><th>' + t('Example cell') + '</th><th>' + t('This file gives') + '</th>' +
+              '</tr></thead><tbody>' +
+              (d.results || []).map(function (r) {
+                if (r.off) return '<tr class="kpi-off"><td>' + esc(r.label) + '</td><td colspan="4" class="note">' + t('switched off this month') + '</td></tr>';
+                var bad = !r.matched;
+                return '<tr><td><b>' + esc(r.label) + '</b></td>' +
+                  '<td class="note">' + esc(r.cols) + '</td>' +
+                  '<td>' + (bad ? '<span class="pill bad">0</span>' : '<span class="pill ok">' + fmt(r.matched) + ' / ' + fmt(r.rows) + '</span>') + '</td>' +
+                  '<td class="note">' + (r.sample ? esc(r.sample) : '-') + '</td>' +
+                  '<td><b>' + fmt(r.value) + '</b></td></tr>';
+              }).join('') + '</tbody></table></div>';
+          })
+          .catch(function (e) { box.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; });
+      });
+    }).catch(function (e) { box.innerHTML = '<div class="err">' + esc(e.message) + '</div>'; });
+  }
+
   /* ---------------- one officer's three lists, as Excel ----------------
    *
    * The OM asked for these separately because they are three different jobs:
@@ -4606,6 +4771,10 @@
     if (a === 'heDocOne') { heReport(node.getAttribute('data-bdo'), 'word'); return; }
     if (a === 'orSave') { officerRulesSave(node.getAttribute('data-bdo')); return; }
     if (a === 'bdList') { bdoListXls(node.getAttribute('data-w')); return; }
+    if (a === 'kcSave') { kpiSetupSave(); return; }
+    if (a === 'kcTest') { kpiTest(); return; }
+    if (a === 'kxAdd') { kpiAddCustom(); return; }
+    if (a === 'kxDel') { kpiDelCustom(parseInt(node.getAttribute('data-i'), 10)); return; }
     if (a === 'flLoad') { state._flagsMonth = elById('flMonth').value; renderTab(); return; }
     if (a === 'flDownload') { flagsDownload(); return; }
     if (a === 'flClear') {

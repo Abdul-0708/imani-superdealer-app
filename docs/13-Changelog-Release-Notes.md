@@ -5,6 +5,50 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.45.0 — 2026-08-17 · "The month sets up its own KPIs"
+
+**The performance file is not the same file every month** — a column gets renamed, a KPI stops being
+measured, a new one arrives — and until now every one of those was a code change. The OM would
+upload a perfectly good file and watch a KPI read zero with nothing to tell him why.
+
+**Monthly Targets gained "What this month measures".** For each KPI the OM now controls:
+
+- **Whether it counts this month.** A KPI switched off is not read, not scored and not shown — it
+  did not exist that month, rather than sitting on the board reading 0%.
+- **Which column it is read from** — a list of names tried in order, so the new header can go first
+  and the old one stay behind it: the file that arrives before the rename still reads, and so does
+  the one after. The app's own built-in names always remain as a safety net.
+- **How to read it** — a number to sum, a YES/NO flag to count, a word to match, a version to
+  compare against the minimum, or the SERVED status column.
+
+**And KPIs the OM adds himself.** Name it, point it at a column, say how to read it, give it a
+target and a weight, and **it joins the weighted average like any other** — read from the file into
+the office snapshot, shown as a dashboard card and an attainment bar. (Custom target and weight are
+office-wide, not per station.)
+
+**Test it before you trust a month to it.** *Read it and show me* takes the real Excel file and
+reports, per KPI, which column it matched, how many rows carried a value, an example cell and the
+figure this file would produce — so a mapping that reads nothing is visible before it becomes a
+month's score, not after.
+
+**The set-up carries forward** like the targets do: a new month inherits the last one rather than
+starting blank, and is saved against its own month — changing September never rewrites what August
+was scored on. A closed month cannot be changed at all.
+
+Verified end to end on a file whose visit column had been renamed to *ODK Visit Done* and which
+carried a brand-new *Deposit Volume*: the dry run first reported **Agent Visits: matched 0/3** — the
+exact diagnosis — then after remapping, switching APK and Withdraw off and adding the new KPI, the
+same upload produced **visits 2**, no APK or Withdraw on the board at all, and **Deposit Volume
+875,000 / 1,000,000 = 88%** weighted into the achievement. September then inherited the whole set-up.
+
+**Also fixed:** switching a KPI off exposed dashboard cards that assumed every KPI was always
+present — `att[k].actual` threw and blanked the page. Cards are now built only for KPIs actually in
+play.
+
+- Assets `?v=62`, SW `imani-v62`
+
+---
+
 ## v1.44.0 — 2026-08-17 · "Three lists, three downloads"
 
 **Each of an officer's three lists downloads on its own, from its own panel.** They are three

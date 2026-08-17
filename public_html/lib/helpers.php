@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.44.0');
+define('APP_VERSION', '1.45.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -617,9 +617,10 @@ function parse_weekly_row($row, $month = '') {
   $idx = row_index($row);
   $acc = trim((string)pick($idx, array('AGENT ACC','Agent Account','account','accountnumber','acc','agentacc')));
   if ($acc === '') return null;
-  $served = served_status(pick($idx, array('Served Status','Serving Status','served','servedstatus','servingstatus','status')));
+  $served = served_status(pick($idx, kpi_cols_for($month, 'serving',
+            array('Served Status','Serving Status','served','servedstatus','servingstatus','status'))));
   /* " Servicing " is the float column; it only counts when the agent is SERVED. */
-  $float = num(pick($idx, array('Servicing','Float Served','float','floatserved','serving')));
+  $float = num(pick($idx, kpi_cols_for($month, 'float', array('Servicing','Float Served','float','floatserved','serving'))));
   if ($served !== 'SERVED') $float = 0;
   return array(
     'acc' => $acc,
@@ -627,14 +628,23 @@ function parse_weekly_row($row, $month = '') {
     'phone' => trim((string)pick($idx, array('Phone','phonenumber','mobile','simu'))),
     'branch' => trim((string)pick($idx, array('BranchName','Branch','tawi'))),
     'float' => $float,
-    'visit' => yesno(pick($idx, array('Agent visit','Agent Visit','Agent Visits','visit','odk','agentvisitodk'))),
-    'apk_raw' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'apk'); return $c['cur']; })(),
+    'visit' => yesno(pick($idx, kpi_cols_for($month, 'visits',
+              array('Agent visit','Agent Visit','Agent Visits','visit','odk','agentvisitodk')))),
+    'apk_raw' => (function () use ($row, $month, $idx) {
+      $named = trim((string)pick($idx, kpi_cols_for($month, 'apk', array())));
+      if ($named !== '') return $named;          /* the OM named the column outright */
+      $c = pick_kpi_cols($row, $month, 'apk'); return $c['cur'];
+    })(),
     'apk_prev_raw' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'apk'); return $c['prev']; })(),
-    'activeness' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'activ'); return $c['cur']; })(),
+    'activeness' => (function () use ($row, $month, $idx) {
+      $named = trim((string)pick($idx, kpi_cols_for($month, 'activeness', array())));
+      if ($named !== '') return $named;
+      $c = pick_kpi_cols($row, $month, 'activ'); return $c['cur'];
+    })(),
     'activeness_prev' => (function () use ($row, $month) { $c = pick_kpi_cols($row, $month, 'activ'); return $c['prev']; })(),
     'sa' => num(pick($idx, array('SA Commission','sacommission','commission'))),
     'served' => $served,
-    'withdraw' => num(pick($idx, array('Withdraw Volume','withdrawvolume'))),
+    'withdraw' => num(pick($idx, kpi_cols_for($month, 'withdraw', array('Withdraw Volume','withdrawvolume')))),
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
@@ -642,7 +652,26 @@ function parse_weekly_row($row, $month = '') {
      * "Region"/"Mkoa" column in some files carried a different geography and
      * quietly overrode the station whenever SA STATION was blank. */
     'station' => strtoupper(trim((string)pick($idx, array('SA STATION','SA Station','Station','StationName','kituo')))),
+    /* Whatever else this month is measuring. The built-in KPIs above keep
+     * their own hand-tuned reading (month-suffixed APK columns, float that
+     * only counts when SERVED); a custom KPI is read straight off the column
+     * the OM named, the way he said to read it. */
+    'custom' => kpi_custom_row($row, $month),
   );
+}
+
+/* Every custom KPI in force this month, read out of one spreadsheet row. */
+function kpi_custom_row($row, $month) {
+  if ((string)$month === '') return array();
+  $cfg = kpi_config($month);
+  if (empty($cfg['custom'])) return array();
+  $req = setting_get('apk_required_version', '2.0');
+  $out = array();
+  foreach ($cfg['custom'] as $key => $def) {
+    if (empty($def['on']) || trim((string)$def['cols']) === '') continue;
+    $out[$key] = kpi_value($row, $def, $req);
+  }
+  return $out;
 }
 
 /*
@@ -758,7 +787,9 @@ function month_actuals($month, $station = '') {
         $per = isset($s['_stations']) && is_array($s['_stations']) ? $s['_stations'] : array();
         $s = isset($per[$station]) ? $per[$station] : array();
       }
+      $custom = (isset($s['custom']) && is_array($s['custom'])) ? $s['custom'] : array();
       return array(
+        'custom' => $custom,
         'served' => (int)($s['serving'] ?? 0),
         'float' => (float)($s['float'] ?? 0),
         'visit' => (int)($s['visits'] ?? 0),
@@ -780,7 +811,8 @@ function month_actuals($month, $station = '') {
   $st = db()->prepare('SELECT k.kpi, COUNT(*) n FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
                        WHERE k.month = ?' . $stFilter . ' GROUP BY k.kpi');
   $st->execute(array_merge(array($month), $stVals));
-  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0, 'fromUpload' => false);
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0,
+             'custom' => array(), 'fromUpload' => false);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
   $f = db()->prepare('SELECT COALESCE(SUM(s.float_served),0) f FROM service_history s JOIN agents a ON a.id = s.agent_id
                       WHERE s.month = ?' . $stFilter);
@@ -816,6 +848,180 @@ function mark_provenance($r) {
 }
 
 /* KPI catalogue for OFFICE targets/weights (6 KPIs incl. withdraw volume). */
+/*
+ * ===================== THE MONTH'S KPI SET UP =====================
+ *
+ * The performance file is not the same file every month. A column gets renamed,
+ * a KPI stops being measured, a new one arrives - and until now every one of
+ * those was a code change, because the column names and the KPI list were
+ * written into the app. The OM would upload a perfectly good file and watch a
+ * KPI read zero with nothing to tell him why.
+ *
+ * So the month carries its own set-up:
+ *   - WHICH KPIs count this month (a KPI switched off is not read, not scored
+ *     and not shown - it did not exist that month);
+ *   - WHICH COLUMN each one is read from, as a list of names to try in order,
+ *     so a renamed column is a typing job and not a release;
+ *   - HOW to read it - a number to sum, a YES/NO flag to count, a word to match,
+ *     or a version to compare against a minimum;
+ *   - and NEW KPIs the OM invents, read from the file the same way, with their
+ *     own target and weight so they can join the weighted average.
+ *
+ * Config is per month and CARRIES FORWARD: a new month inherits the last set-up
+ * rather than starting blank, exactly like the targets do. Nothing is inherited
+ * over a set-up the OM has already saved for that month.
+ */
+function kpi_builtin_defs() {
+  return array(
+    'serving'    => array('label' => 'Serving',        'read' => 'served', 'agg' => 'count',
+                          'cols' => 'Served Status, Serving Status, served, status',
+                          'hint' => 'Counts the agents the file marks SERVED.'),
+    'float'      => array('label' => 'Float (SERVED)', 'read' => 'number', 'agg' => 'sum',
+                          'cols' => 'Servicing, Float Served, float, floatserved',
+                          'hint' => 'Summed, and only for agents the file marks SERVED.'),
+    'visits'     => array('label' => 'Agent Visits',   'read' => 'yesno',  'agg' => 'count',
+                          'cols' => 'Agent visit, Agent Visits, visit, odk',
+                          'hint' => 'Counts YES / 1 / TRUE.'),
+    'apk'        => array('label' => 'Agent APK',      'read' => 'version','agg' => 'count',
+                          'cols' => 'APK',
+                          'hint' => 'Counts agents running at least the required version.'),
+    'activeness' => array('label' => 'Agent Activeness','read' => 'text',  'agg' => 'count',
+                          'cols' => 'Activeness',
+                          'hint' => 'Counts the word ACTIVE. Net of agents that fell asleep.'),
+    'withdraw'   => array('label' => 'Withdraw Volume','read' => 'number', 'agg' => 'sum',
+                          'cols' => 'Withdraw Volume, withdrawvolume',
+                          'hint' => 'Summed across every row.'),
+  );
+}
+function kpi_read_modes() {
+  return array(
+    'number'  => 'A number - add it up',
+    'yesno'   => 'YES / NO - count the YES',
+    'text'    => 'A word - count the rows that match',
+    'version' => 'A version - count those at or above the minimum',
+    'served'  => 'The SERVED status column',
+  );
+}
+
+/* The set-up in force for a month: saved config, else carried forward, else the
+ * built-in defaults. Never writes - reading a month must not create anything. */
+function kpi_config($month) {
+  static $cache = array();
+  if (isset($cache[$month])) return $cache[$month];
+
+  $raw = setting_get('kpi_config_' . $month, '');
+  if ($raw === '') {
+    /* inherit the most recent set-up so a new month opens configured */
+    try {
+      $q = db()->prepare("SELECT name, value FROM app_settings
+                          WHERE name LIKE 'kpi_config_%' AND name < ?
+                          ORDER BY name DESC LIMIT 1");
+      $q->execute(array('kpi_config_' . $month));
+      if ($r = $q->fetch()) $raw = $r['value'];
+    } catch (Exception $e) { /* fall through to defaults */ }
+  }
+  $saved = $raw !== '' ? json_decode($raw, true) : null;
+  if (!is_array($saved)) $saved = array();
+
+  $out = array('kpis' => array(), 'custom' => array());
+  foreach (kpi_builtin_defs() as $key => $def) {
+    $s = isset($saved['kpis'][$key]) && is_array($saved['kpis'][$key]) ? $saved['kpis'][$key] : array();
+    $out['kpis'][$key] = array(
+      'label' => $def['label'],
+      'on'    => array_key_exists('on', $s) ? (bool)$s['on'] : true,
+      'cols'  => (isset($s['cols']) && trim((string)$s['cols']) !== '') ? (string)$s['cols'] : $def['cols'],
+      'read'  => (isset($s['read']) && isset(kpi_read_modes()[$s['read']])) ? (string)$s['read'] : $def['read'],
+      'agg'   => $def['agg'],
+      'hint'  => $def['hint'],
+      'builtin' => true,
+    );
+  }
+  if (isset($saved['custom']) && is_array($saved['custom'])) {
+    foreach ($saved['custom'] as $c) {
+      if (!is_array($c)) continue;
+      $key = kpi_custom_key(isset($c['key']) ? $c['key'] : (isset($c['label']) ? $c['label'] : ''));
+      if ($key === '') continue;
+      $out['custom'][$key] = array(
+        'key'   => $key,
+        'label' => trim((string)(isset($c['label']) ? $c['label'] : $key)),
+        'on'    => array_key_exists('on', $c) ? (bool)$c['on'] : true,
+        'cols'  => (string)(isset($c['cols']) ? $c['cols'] : ''),
+        'read'  => (isset($c['read']) && isset(kpi_read_modes()[$c['read']])) ? (string)$c['read'] : 'number',
+        'agg'   => (isset($c['read']) && $c['read'] === 'number') ? 'sum' : 'count',
+        'match' => trim((string)(isset($c['match']) ? $c['match'] : '')),
+        'target' => (float)(isset($c['target']) ? $c['target'] : 0),
+        'weight' => (int)(isset($c['weight']) ? $c['weight'] : 0),
+        'builtin' => false,
+      );
+    }
+  }
+  $cache[$month] = $out;
+  return $out;
+}
+function kpi_custom_key($raw) {
+  $k = strtolower(preg_replace('/[^a-z0-9]+/i', '_', trim((string)$raw)));
+  $k = trim($k, '_');
+  /* saving sends the key back, so strip the prefix before adding it again -
+   * otherwise every save grew another x_ and the KPI changed identity */
+  while (strpos($k, 'x_') === 0) $k = substr($k, 2);
+  if ($k === '') return '';
+  return 'x_' . substr($k, 0, 28);
+}
+/* Only the KPIs actually in play this month. */
+function kpi_active($month) {
+  $cfg = kpi_config($month);
+  $out = array();
+  foreach ($cfg['kpis'] as $k => $d) if (!empty($d['on'])) $out[$k] = $d;
+  foreach ($cfg['custom'] as $k => $d) if (!empty($d['on'])) $out[$k] = $d;
+  return $out;
+}
+
+/*
+ * Read ONE value out of a spreadsheet row for one KPI.
+ *
+ * The column is found by trying the configured names in order, so the OM can
+ * put the new header first and leave the old one behind it - the file that
+ * arrives before the rename still reads, and so does the one after.
+ */
+/*
+ * The column names in force for one built-in KPI this month: what the OM typed
+ * if he has been in and changed it, otherwise the names the app has always
+ * known. This is what makes a renamed header a typing job instead of a release.
+ */
+function kpi_cols_for($month, $key, $fallback) {
+  if ((string)$month === '') return $fallback;
+  $cfg = kpi_config($month);
+  if (empty($cfg['kpis'][$key]['cols'])) return $fallback;
+  $out = array();
+  foreach (explode(',', (string)$cfg['kpis'][$key]['cols']) as $c) { $c = trim($c); if ($c !== '') $out[] = $c; }
+  /* the built-in names stay behind his as a safety net, so a file that still
+   * carries the old header keeps reading while the change lands */
+  foreach ($fallback as $f) if (!in_array($f, $out, true)) $out[] = $f;
+  return $out;
+}
+
+function kpi_cell($row, $def) {
+  $idx = row_index($row);
+  $names = array();
+  foreach (explode(',', (string)$def['cols']) as $c) { $c = trim($c); if ($c !== '') $names[] = $c; }
+  if (!$names) return '';
+  return (string)pick($idx, $names);
+}
+function kpi_value($row, $def, $requiredApk = '2.0') {
+  $v = kpi_cell($row, $def);
+  switch ($def['read']) {
+    case 'number':  return num($v);
+    case 'yesno':   return yesno($v) === 'YES' ? 1 : 0;
+    case 'served':  return served_status($v) === 'SERVED' ? 1 : 0;
+    case 'version': return apk_is_yes($v, $requiredApk) ? 1 : 0;
+    case 'text':
+      $want = strtoupper(trim((string)(isset($def['match']) ? $def['match'] : 'ACTIVE')));
+      if ($want === '') $want = 'ACTIVE';
+      return strtoupper(trim((string)$v)) === $want ? 1 : 0;
+  }
+  return 0;
+}
+
 function office_kpi_defs() {
   return array(
     'serving' => 'served',
@@ -852,12 +1058,29 @@ function office_attainment($month, $station = '') {
     if ($t) $targetsFrom = 'office-fallback';
   }
   $att = array(); $wsum = 0; $wacc = 0; $sum = 0; $nn = 0;
+  $cfg = kpi_config($month);
   foreach (office_kpi_defs() as $col => $ak) {
+    /* a KPI the OM switched off did not exist this month - it is not read, not
+     * scored and not shown, rather than sitting on the board reading 0% */
+    if (isset($cfg['kpis'][$col]) && empty($cfg['kpis'][$col]['on'])) continue;
     $target = $t ? (float)($t[$col . '_target'] ?? 0) : 0;
     $w = $t ? (int)($t[$col . '_w'] ?? 0) : 0;
     $actual = (float)($a[$ak] ?? 0);
     $pct = $target > 0 ? min(100, (int)round($actual / $target * 100)) : null;
     $att[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct);
+    if ($pct !== null) { $sum += $pct; $nn++; if ($w > 0) { $wacc += $pct * $w; $wsum += $w; } }
+  }
+  /* KPIs the OM added himself. Their target and weight live with the KPI (one
+   * office-wide figure, not per station) so a brand-new measure can join the
+   * weighted average the month it appears. */
+  foreach ($cfg['custom'] as $key => $def) {
+    if (empty($def['on'])) continue;
+    $actual = (float)(isset($a['custom'][$key]) ? $a['custom'][$key] : 0);
+    $target = (float)$def['target'];
+    $w = (int)$def['weight'];
+    $pct = $target > 0 ? min(100, (int)round($actual / $target * 100)) : null;
+    $att[$key] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct,
+                       'label' => $def['label'], 'custom' => true);
     if ($pct !== null) { $sum += $pct; $nn++; if ($w > 0) { $wacc += $pct * $w; $wsum += $w; } }
   }
   $achievement = $wsum > 0 ? (int)round($wacc / $wsum) : ($nn ? (int)round($sum / $nn) : null);
