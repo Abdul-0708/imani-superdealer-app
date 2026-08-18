@@ -5,6 +5,43 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.50.0 — 2026-08-18 · Phase 7: responsive & accessibility
+
+**The touch-target fix had a hole.** v1.49.0 keyed on `pointer: coarse` — but a tablet, and any
+touch laptop, can report a **fine** pointer and still be tapped. Measured at 768px: **ten controls
+back under size**. The rule now fires on a coarse pointer **or** a screen ≤860px, so the device no
+longer has to declare itself correctly to get thumb-sized controls. **10 → 0** at 768px.
+
+**A header cell now says what it heads.** This app is mostly tables — the round, the officer window,
+the flags — and **0 of 38 `<th>` carried a `scope`**. Without it a screen reader reads a cell as a
+bare value with no column name, which in a table of numbers is no information at all. Added by the
+same observer that links the labels, so it covers panels rendered later too. **38 of 38.**
+
+**The dialog had no name.** It already had `role="dialog"`, `aria-modal`, focus moved into the first
+field and Escape closed it — genuinely good. But it announced itself as just *"dialog"*. It now
+takes its name from its own heading (*"Change password"*). **And Tab no longer walks out of it** —
+focus could previously leave an open dialog for the page behind, where a keyboard user was typing
+into a screen he could not see.
+
+**`aria-current="page"` on the active tab** — the active state was a colour only, so a screen reader
+had no way to tell which section was open. Now set on both the sidebar and the phone bar.
+
+**A skip link.** Without one, a keyboard user tabs through the entire navigation on every page
+change before reaching what he came for. Invisible until focused, then lands top-left.
+
+**Verified at 375px and 768px, across all nine OM screens:** no horizontal scrolling anywhere, zero
+undersized controls, all headers scoped, `aria-current` present. Desktop density unchanged.
+
+*Two limits worth stating.* An automation window never matches `:focus`, so the skip link's reveal
+was verified structurally (the rule is in the stylesheet) and geometrically (applying the same
+declaration puts it at `left: 0`, 156px wide) rather than by tabbing. And genuine screen-reader and
+keyboard-order testing needs assistive tech I cannot drive — what is claimed here is what was
+measured.
+
+- Assets `?v=67`, SW `imani-v67`. Schema unchanged.
+
+---
+
 ## v1.49.0 — 2026-08-18 · Phase 6: thumbs, not cursors
 
 Audited by **measuring** the running app at 375px and 1280px rather than looking at it. Three things

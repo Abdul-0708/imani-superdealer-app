@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.49.0';
+  var APP_VERSION = '1.50.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1048,10 +1048,16 @@
       var n = m.key === 'inbox' ? (state.unreadMsgs || 0)
             : m.key === 'flags' ? (isFieldUser() ? (state.pendingFlags || 0) : 0) : 0;
       var badge = n ? '<span class="navbadge' + (m.key === 'flags' ? ' bad' : '') + '">' + (n > 99 ? '99+' : n) + '</span>' : '';
-      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' +
+      return '<button class="nav-item' + (m.key === state.tab ? ' active' : '') + '"' +
+        (m.key === state.tab ? ' aria-current="page"' : '') +
+        ' data-action="tab" data-tab="' + m.key + '">' +
         svg(m.icon) + '<span>' + esc(t(m.label)) + '</span>' + badge + '</button>';
     }).join('');
     elById('app').innerHTML =
+      /* The first thing a keyboard or screen-reader user meets. Without it he
+       * tabs through the whole navigation on every single page change before
+       * reaching the thing he came for. Invisible until focused. */
+      '<a class="skip-link" href="#main">' + t('Skip to the page') + '</a>' +
       '<div class="shell"><aside class="sidebar">' +
       '<div class="sb-brand"><div class="sb-mark">' + svg('flame') + '</div><div class="sb-title">IMANI<br>SUPERDEALER<small>Business Management</small></div></div>' +
       '<div class="today-chip">' + svg('cal') + '<span>' + esc(prettyToday()) + '</span></div>' +
@@ -1063,7 +1069,7 @@
       '<button class="ghost tiny" data-action="toggleLang" title="Language">' + (LANG === 'sw' ? 'EN' : 'SW') + '</button>' +
       '<button class="ghost tiny" data-action="pwd">' + t('Password') + '</button>' +
       '<button class="ghost tiny" data-action="logout">' + t('Sign out') + '</button></div></div>' +
-      '</aside><main class="main"><div id="view"></div></main></div>' +
+      '</aside><main class="main" id="main" tabindex="-1"><div id="view"></div></main></div>' +
       bottomNavHtml(tabs);
     renderTab();
   }
@@ -1104,7 +1110,9 @@
     }
     function item(m) {
       var n = botBadge(m.key);
-      return '<button class="bn-item' + (m.key === state.tab ? ' active' : '') + '" data-action="tab" data-tab="' + m.key + '">' +
+      return '<button class="bn-item' + (m.key === state.tab ? ' active' : '') + '"' +
+        (m.key === state.tab ? ' aria-current="page"' : '') +
+        ' data-action="tab" data-tab="' + m.key + '">' +
         '<span class="bn-ic">' + svg(m.icon) +
         (n ? '<span class="bn-dot' + (m.key === 'flags' ? ' bad' : '') + '">' + (n > 9 ? '9+' : n) + '</span>' : '') +
         '</span><span class="bn-lb">' + esc(botLabel(m)) + '</span></button>';
@@ -1150,13 +1158,21 @@
    */
   var _lblSeq = 0;
   function linkFieldLabels(root) {
-    (root || document).querySelectorAll('.field').forEach(function (f) {
+    var r = root || document;
+    r.querySelectorAll('.field').forEach(function (f) {
       var lab = f.querySelector('label');
       if (!lab || lab.getAttribute('for')) return;
       var ctl = f.querySelector('input, select, textarea');
       if (!ctl) return;
       if (!ctl.id) ctl.id = 'fld_' + (++_lblSeq);
       lab.setAttribute('for', ctl.id);
+    });
+    /* A HEADER CELL HAS TO SAY WHAT IT HEADS. This app is mostly tables - the
+     * agent round, the officer window, the flags. Without scope a screen
+     * reader reads a cell as a bare value with no column name, which in a
+     * table of numbers is no information at all. */
+    r.querySelectorAll('th:not([scope])').forEach(function (th) {
+      th.setAttribute('scope', th.closest('tbody') ? 'row' : 'col');
     });
   }
   /* Views render asynchronously and modals appear on their own schedule, so
@@ -4705,7 +4721,29 @@
     box.innerHTML = '<div class="modalbox" role="dialog" aria-modal="true">' + html + '</div>';
     box.addEventListener('click', function (e) { if (e.target === box) closeModal(); });
     document.body.appendChild(box);
-    var f = box.querySelector('input,select'); if (f) f.focus();
+
+    /* A DIALOG NEEDS A NAME. It announced itself as just "dialog" - true but
+     * useless. Its own heading is the name, so point at that. */
+    var dlg = box.querySelector('.modalbox');
+    var head = dlg.querySelector('h2');
+    if (head) {
+      if (!head.id) head.id = 'dlgh_' + (++_lblSeq);
+      dlg.setAttribute('aria-labelledby', head.id);
+    }
+
+    /* KEEP TAB INSIDE. Focus could walk straight out of an open dialog and
+     * into the page behind it, where a keyboard user was then typing into a
+     * screen he could not see. */
+    box.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      var f = dlg.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+
+    var f0 = box.querySelector('input,select,button'); if (f0) f0.focus();
   }
   function closeModal() { var m = elById('modalback'); if (m) m.remove(); }
 

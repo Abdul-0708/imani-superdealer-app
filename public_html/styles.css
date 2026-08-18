@@ -854,10 +854,12 @@ body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.1
  * WCAG/HIG touch minimum - the compact "mini" and "tiny" buttons were 24px
  * tall, about half a fingertip.
  *
- * Raised only where the pointer is COARSE, so a mouse keeps the dense layout
- * that lets an OM see a whole table at once. Same markup, same classes: the
- * device decides. */
-@media (pointer: coarse) {
+ * Raised where the pointer is COARSE **or** the screen is small: a tablet - and
+ * any touch laptop - can report a "fine" pointer and still be tapped, which
+ * left ten controls under size at 768px. A real mouse on a wide screen keeps
+ * the dense layout that lets an OM read a whole table at once. Same markup,
+ * same classes: the device decides. */
+@media (pointer: coarse), (max-width: 860px) {
   button, .pick-btn, .role-chip, select, input[type="file"],
   .kchip, .kchip.todo, [data-action] { min-height: 44px; }
   /* the compact modifiers stop being compact on a touch screen */
@@ -871,3 +873,10 @@ body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.1
   /* table action buttons sit in tight cells - give them their own line height */
   td button { min-height: 44px; }
 }
+
+/* The keyboard user's shortcut past the navigation. Off-screen until it is
+   focused, then it lands in the top-left like every other app that has one. */
+.skip-link{position:absolute;left:-9999px;top:0;z-index:200;
+  background:var(--grad);color:#2b1000;font-weight:800;padding:12px 18px;
+  border-radius:0 0 12px 0;text-decoration:none;box-shadow:var(--glow-strong)}
+.skip-link:focus{left:0}
