@@ -5,6 +5,54 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.51.0 — 2026-08-18 · Phase 8: performance — a bcrypt on every request
+
+Measured against **realistic volume**, not the test fixtures: 3,000 agents, 36k base rows, 48k
+ledger rows, 18k service rows, 12 months, 6 officers.
+
+**Every endpoint was paying 134ms to answer a question that cannot change mid-session.** Splitting
+the request path showed where the time went — a static file served in 4ms, `health` (database +
+schema check) in 50ms, but `me` in **196ms**. The 146ms gap was not queries: it was the forced
+password-change gate added in v1.47.0 calling `password_is_default()` on **every request**, and that
+is a bcrypt comparison — deliberately slow by design. **Two thirds of every API call in the app was
+one hash comparison.**
+
+The answer is now decided **once at sign-in**, while the hash is already in hand, and carried in the
+server-side session. Same protection, no weaker: the session is server-side, so the flag is no more
+forgeable than the session itself. Changing the password clears it, and **the setup password can no
+longer be set** — not by the user, not by an admin — so it cannot come back behind the flag.
+
+| endpoint | before | after |
+|---|---|---|
+| `me` | 196 ms | **51 ms** |
+| dashboard | 197 ms | **85 ms** |
+| agents list (50) | 181 ms | **68 ms** |
+| agents search | 187 ms | **75 ms** |
+| officer window | 225 ms | **113 ms** |
+| officer detail | 184 ms | **77 ms** |
+| high-earner team report | 289 ms | **141 ms** |
+| flags | 203 ms | **101 ms** |
+| a BDO's round | 238 ms | **128 ms** |
+| live board | 190 ms | **74 ms** |
+
+**Roughly half the latency, on every screen, for every user.** Query counts are unchanged — this
+was never a database problem, which is exactly why it needed measuring rather than guessing.
+
+**The optimisation silently switched the protection off, and the verification caught it.** The new
+check read `$_SESSION` *before* `current_user()` — and `current_user()` is what starts the session,
+so the flag was always empty and the gate never fired. An account on the setup password sailed
+straight through. Re-ordered, re-tested: blocked on the round, the agent list and marking a KPI;
+allowed to change its password; unblocked immediately afterwards; other users unaffected.
+
+**Nothing else was over threshold** (>400ms or >40 queries). `combined_performance` is now the
+slowest screen at 250ms / 30 queries — the heaviest analytical page in the app, and still fine. The
+per-officer N+1 in the officer window measures at 21 queries and 113ms; rewriting it as one
+aggregate would add real complexity to save a few milliseconds, so it stays.
+
+- Assets `?v=68`, SW `imani-v68`. Schema unchanged.
+
+---
+
 ## v1.50.0 — 2026-08-18 · Phase 7: responsive & accessibility
 
 **The touch-target fix had a hole.** v1.49.0 keyed on `pointer: coarse` — but a tablet, and any

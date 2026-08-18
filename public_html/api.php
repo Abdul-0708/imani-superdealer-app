@@ -23,8 +23,17 @@ $action = isset($_GET['action']) ? $_GET['action'] : '';
  */
 if (!in_array($action, array('login', 'login_2fa', 'logout', 'health', 'me', 'change_password'), true)) {
   try {
+    /* Decided ONCE at sign-in and carried in the server-side session. It used
+     * to be recomputed here on every single request - and "is this the setup
+     * password?" is a bcrypt comparison, which is deliberately slow: 134ms of
+     * a 200ms request, about two thirds of every API call in the app, spent
+     * re-answering a question that cannot change mid-session. The session is
+     * server-side, so the flag is no more forgeable than the session itself. */
+    /* current_user() FIRST: it is what starts the session. Reading
+     * $_SESSION before that always saw an empty array, which short-circuited
+     * the whole check and quietly switched this protection off. */
     $cu = current_user();
-    if ($cu && password_is_default($cu['password_hash'])) {
+    if ($cu && !empty($_SESSION['must_change'])) {
       fail('Set your own password before using the app - the setup password is not private.', 403,
            array('mustChange' => true));
     }
@@ -77,13 +86,15 @@ try {
       }
       $_SESSION['uid'] = (int)$u['id'];
       $_SESSION['auth_at'] = time(); /* absolute 12h session lifetime */
+      /* answered once, here, while the hash is already in hand */
+      $_SESSION['must_change'] = password_is_default($u['password_hash']) ? 1 : 0;
       audit($u['id'], 'login', $u['username']);
       respond(array(
         'user' => array('id'=>(int)$u['id'], 'username'=>$u['username'], 'role'=>$u['role'], 'name'=>$u['name'], 'specialty'=>isset($u['specialty'])?$u['specialty']:'', 'specialty'=>isset($u['specialty'])?$u['specialty']:''),
         'perms' => perms_for_role($u['role']),
         'serverVersion' => APP_VERSION,
         /* still on the shared setup password - he must replace it first */
-        'mustChange' => password_is_default($u['password_hash']),
+        'mustChange' => !empty($_SESSION['must_change']),
       ));
     }
 
@@ -131,7 +142,7 @@ try {
                         'totp_on' => (isset($u['totp_secret']) && $u['totp_secret'] !== '')),
         'perms' => perms_for_role($u['role']),
         'serverVersion' => APP_VERSION,
-        'mustChange' => password_is_default($u['password_hash']),
+        'mustChange' => !empty($_SESSION['must_change']),
       ));
     }
 
@@ -172,7 +183,9 @@ try {
       if (!password_verify((string)bval('current'), $u['password_hash'])) fail('Current password is incorrect');
       $new = (string)bval('new');
       if (strlen($new) < 8) fail('New password must be at least 8 characters');
+      if ($new === 'imani123') fail('That is the shared setup password - choose your own');
       db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute(array(password_hash($new, PASSWORD_BCRYPT), $u['id']));
+      $_SESSION['must_change'] = 0;   /* he has just fixed it */
       audit($u['id'], 'password_change', $u['username']);
       respond(array('ok' => true));
     }
@@ -300,6 +313,9 @@ try {
       }
       if (!empty($b['password'])) {
         if (strlen((string)$b['password']) < 8) fail('Password must be at least 8 characters');
+        /* the whole point of v1.47.0 was to retire this one - it cannot come
+         * back through the admin screen */
+        if ((string)$b['password'] === 'imani123') fail('That is the old shared setup password - set a real one');
         $sets[] = 'password_hash = ?'; $vals[] = password_hash((string)$b['password'], PASSWORD_BCRYPT);
         $sets[] = 'failed = 0'; $sets[] = 'locked_until = 0';
       }
