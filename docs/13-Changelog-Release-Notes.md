@@ -5,6 +5,58 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.52.0 — 2026-08-18 · Phase 9: security regression — and one hole the first audit missed
+
+Every original attack re-run against current code, under the **same preconditions** that made them
+work — including handing the OM role `Admin: Edit`, the delegation that opened the whole C-1 chain.
+
+| # | Finding | Original risk | Re-tested outcome |
+|---|---|---|---|
+| C-1a | Self-promote to super admin | 🔴 Full takeover | blocked |
+| C-1b | Reset the super admin's password | 🔴 Account takeover | blocked — **and the hash still verifies** |
+| C-1c | Grant every BDO the admin module | 🔴 Mass escalation | blocked |
+| C-1d | Create a new super admin | 🔴 Escalation | blocked |
+| C-1e/f | Delete or demote the super admin | 🔴 Lockout | blocked |
+| C-1g | Deactivate own account | 🔵 Self-lockout | blocked |
+| H-1 | Setup password still usable | 🟠 Impersonation | gated: agents, round, marking and the officer window all refused; only `change_password` allowed; unblocked immediately after |
+| H-1b | Set the setup password back | 🟠 Bypass | blocked for a user **and** for an admin |
+| H-2 | Cross-station data | 🟠 Exposure | Arusha officer: **14 Arusha / 0 Manyara**. Manyara officer: **4 Manyara / 0 Arusha** |
+| M-1 | Another officer's receipts | 🟡 Disclosure | own proof served, colleague's refused, OM sees both |
+| M-2 | No throttle | 🟡 Abuse | 12 allowed / 4 blocked |
+| M-3 | Username oracle | 🟡 Enumeration | identical message for a real and an invented user |
+
+**The surface added during this audit was attacked too.** As a plain BDO, all seven new endpoints
+refuse: `bdos`, `bdo_detail`, `he_report`, `bdo_rules_save`, `kpi_config_save`, `flags_clear`,
+`view_station_set`. The session `must_change` flag is not forgeable from a cookie. CSRF still dies
+without the header. **SQL injection through the new KPI column mapping** leaves every table intact,
+and **an XSS payload stored as a custom KPI label does not execute** — it comes back raw from the
+database and is escaped on render, which is the right way round.
+
+### 🟠 NEW — found by the regression, not by the original audit
+
+**An agent with a blank activeness status could be "waked" with no evidence at all.** The proof gate
+tested for `act_current === 'INACTIVE'` exactly. An agent whose activeness cell the performance file
+has never carried — status blank, which is common and documented behaviour — fell through it: **no
+photo, no note, no location, and the activeness credit was granted.** That credit feeds the
+officer's weighted score and the office achievement the commission is settled on, so it was
+evidence-free money.
+
+The gate now covers anyone **not already ACTIVE**. Verified across all three states:
+
+| Agent state | Result |
+|---|---|
+| Blank status, no proof | refused |
+| Blank status, typed note only | refused (office rule is photo-only) |
+| Blank status, real photo | **accepted** |
+| Already ACTIVE, with or without proof | *"already Active this month - nothing to wake"* |
+
+This is what a regression pass is for: the first audit read the code and judged the gate correct;
+re-running it against a state the code did not anticipate is what exposed it.
+
+- Assets `?v=69`, SW `imani-v69`. Schema unchanged.
+
+---
+
 ## v1.51.0 — 2026-08-18 · Phase 8: performance — a bcrypt on every request
 
 Measured against **realistic volume**, not the test fixtures: 3,000 agents, 36k base rows, 48k

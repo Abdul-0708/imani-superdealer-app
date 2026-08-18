@@ -936,11 +936,20 @@ try {
         fail('Agent is already Active this month - nothing to wake', 409);
       }
 
-      /* WAKING an INACTIVE agent needs proof: a photo of the agent's transaction
-       * receipts, OR a typed commitment that the BDO is sure the agent
-       * transacted. He must also CONFIRM the agent's physical location so the
-       * follow-up team knows where to find him. */
-      if ($kpi === 'active' && strtoupper((string)$agent['act_current']) === 'INACTIVE') {
+      /* WAKING needs proof: a photo of the agent's transaction receipts, OR a
+       * typed commitment that the BDO is sure the agent transacted. He must
+       * also CONFIRM the agent's physical location so the follow-up team knows
+       * where to find him.
+       *
+       * NOT ONLY the agents marked INACTIVE. This tested for INACTIVE exactly,
+       * so an agent whose activeness cell the file has never carried - status
+       * blank, which is common - could be claimed for the activeness credit
+       * with no photo, no note and no location at all. The credit feeds his
+       * weighted score and the office achievement the commission is settled
+       * on, so it was evidence-free money. Anyone not already ACTIVE now goes
+       * through the same gate; the agent who IS active was already refused
+       * above. */
+      if ($kpi === 'active' && strtoupper((string)$agent['act_current']) !== 'ACTIVE') {
         $img = (string)bval('proof');
         $proofNote = mb_substr(trim((string)bval('proofNote')), 0, 255);
         $wakeLoc = trim((string)bval('location'));
