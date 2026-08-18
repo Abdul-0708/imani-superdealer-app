@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.54.0';
+  var APP_VERSION = '1.55.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1885,6 +1885,8 @@
     api('agents', { qs: qs }).then(function (d) {
       if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
       state._agentsMeta = d;
+      /* the month decides which KPI chips this list draws */
+      if (d.activeKpis) state.activeKpis = d.activeKpis;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var cols = 6;
       var rows = (d.items || []).map(function (a) { return agentRowHtml(a, editable, d.restricted); }).join('')
@@ -2072,10 +2074,18 @@
           '<td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + flagPill(r.flag, r.score) + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   }
+  /* office key -> the per-agent mark it is scored from, so the bars can be
+   * filtered by the same list the chips use */
+  var BAR_MARK = { serving: 'served', visits: 'visit', apk: 'apk', activeness: 'active' };
   function perfBars(kpis) {
     /* loop variable must not be `t` - it would shadow the t() translator */
+    var live = state.activeKpis;
     return TARGET_DEFS.map(function (def) {
       var k = kpis[def.key]; if (!k) return '';
+      /* float has no per-agent mark and is always in play; the rest follow the
+       * month's set-up */
+      var mark = BAR_MARK[def.key];
+      if (mark && live && live.length && live.indexOf(mark) < 0) return '';
       /* negative = going backwards; clamp the width so it never paints full */
       var raw = k.pct == null ? null : k.pct;
       var neg = raw !== null && raw < 0;
@@ -2094,7 +2104,12 @@
   function isSpecial() { return state.user && state.user.specialty === 'activeness'; }
   function kpiChips(a, editable) {
     var isOM = isManager();
+    /* A KPI the OM switched off for this month did not exist that month, so no
+     * chip is drawn for it - the server refuses the mark anyway, and offering
+     * a button that will be rejected is worse than not offering it. */
+    var live = state.activeKpis;
     var list = isSpecial() ? KPI_CHIPS.filter(function (c) { return c.key === 'active'; }) : KPI_CHIPS;
+    if (live && live.length) list = list.filter(function (c) { return live.indexOf(c.key) >= 0; });
     return list.map(function (c) { return kpiChip(a, c, editable, isOM); }).join('') + wontReturnBtn(a);
   }
   /* Specialist info line: last transaction, days inactive, last month vs now.
@@ -2206,6 +2221,7 @@
     Promise.all([api('base', { qs: state.month ? '&month=' + state.month : '' })]).then(function (rr) {
       var d = rr[0];
       state.month = d.month;
+      if (d.activeKpis) state.activeKpis = d.activeKpis;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       /* NEW = agents the monthly database file brought in that nobody owns yet.
        * He serves one and it joins his round, so this is where his base grows. */

@@ -5,6 +5,47 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.55.0 — 2026-08-18 · Switching a KPI off now means everywhere
+
+**Reported:** a KPI removed from this month's targets still appeared on the BDO's agent list.
+Correct — and the fix in v1.45.0 was only half done.
+
+That release taught the **office dashboard** to skip a KPI the OM had switched off, and stopped
+there. Everything closer to the actual work carried on as though nothing had changed:
+
+- the BDO still saw the chip on **every agent in his round**, and could still tap it;
+- the **Agents** list drew it too;
+- his **weighted score** still counted it — so a KPI nobody was asked to do could sit at 0% and drag
+  his average down;
+- his **score panel** still drew a bar for it;
+- and the **API still accepted the mark**, which is the part hiding a button never fixes.
+
+Switching a KPI off has to mean it did not exist that month — everywhere, not only on the board the
+OM happens to be looking at. The month's set-up is written in office terms (*serving, visits, apk,
+activeness*) while the ledger and the chips speak per-agent terms (*served, visit, apk, active*), so
+the two are mapped in one place, `kpi_marks_active()`, and everything reads from that.
+
+**Enforced on the server first.** `kpi_mark` refuses a KPI the month is not measuring —
+*"That KPI is not being measured this month"* — because anyone can post straight to the endpoint;
+the chip disappearing is presentation, not protection.
+
+Verified by switching **Agent Visits** off for the month:
+
+| | Before | After |
+|---|---|---|
+| KPIs in play | served, visit, apk, active | **served, apk, active** |
+| Visit chips in My Agent Base | present | **0** |
+| Visit chips on the Agents list | present | **0** |
+| His score bars | serving, float, visits, apk, activeness | **serving, float, apk, activeness** |
+| A visit mark posted directly to the API | accepted | **refused** |
+| Other KPIs | — | still accepted |
+
+And fully reversible: switching it back on restored the chips, the bar and the mark in one step.
+
+- Assets `?v=72`, SW `imani-v72`. Schema unchanged.
+
+---
+
 ## v1.54.0 — 2026-08-18 · One word for one person
 
 The app called the same man a **BDO** 243 times and an **"officer"** 44 times. The second set was

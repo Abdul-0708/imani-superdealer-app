@@ -641,6 +641,7 @@ try {
       respond(array('items' => $items, 'total' => $total, 'page' => $page,
                     'pages' => max(1, (int)ceil($total / $limit)),
                     'restricted' => !$full, 'month' => $month, 'monthStatus' => month_status($month),
+                    'activeKpis' => kpi_marks_active($month),
                     'scope' => $scope));
     }
 
@@ -849,6 +850,8 @@ try {
 
       respond(array(
         'bdo' => $bdo, 'month' => $month, 'monthStatus' => month_status($month),
+        /* which KPI chips his round should draw this month */
+        'activeKpis' => kpi_marks_active($month),
         'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)),
                           'total' => count($ids), 'served' => $servedNow, 'unclaimed' => count($uc)),
         'agents' => $agents, 'unclaimed' => $uc,
@@ -874,6 +877,11 @@ try {
       $kpi = (string)bval('kpi');
       if (!in_array($kpi, array('served', 'visit', 'apk', 'active'), true)) fail('Unknown KPI');
       $month = open_month();
+      /* The month's set-up can switch a KPI off. Hiding the chip is not enough -
+       * anyone can post straight to this endpoint - so the refusal lives here. */
+      if (!in_array($kpi, kpi_marks_active($month), true)) {
+        fail('That KPI is not being measured this month', 409);
+      }
       $ag = db()->prepare('SELECT * FROM agents WHERE id = ?');
       $ag->execute(array($agentId));
       $agent = $ag->fetch();

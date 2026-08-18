@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.54.0');
+define('APP_VERSION', '1.55.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -1244,6 +1244,33 @@ function bdo_actuals_unflagged($month, $bdo) {
 }
 
 /* KPI key mapping: target/weight column prefix => actuals key */
+/*
+ * THE PER-AGENT KPIs IN PLAY THIS MONTH.
+ *
+ * The month's set-up (v1.45.0) switched a KPI off for the office dashboard and
+ * stopped there. Everything closer to the work carried on as if nothing had
+ * changed: the BDO still saw the chip on every agent in his round and could
+ * still tap it, his weighted score still counted it, and his score panel still
+ * drew a bar for it. Switching a KPI off has to mean it did not exist that
+ * month - everywhere, not only on the board the OM happens to be looking at.
+ *
+ * Returns the per-agent keys ('served','visit','apk','active'), which is what
+ * the ledger and the chips speak; the set-up is written in office terms
+ * ('serving','visits','apk','activeness'), so map between them here once.
+ */
+function kpi_marks_active($month) {
+  static $cache = array();
+  if (isset($cache[$month])) return $cache[$month];
+  $map = array('serving' => 'served', 'visits' => 'visit', 'apk' => 'apk', 'activeness' => 'active');
+  $out = array();
+  $cfg = kpi_config($month);
+  foreach ($map as $col => $mark) {
+    if (!isset($cfg['kpis'][$col]) || !empty($cfg['kpis'][$col]['on'])) $out[] = $mark;
+  }
+  $cache[$month] = $out;
+  return $out;
+}
+
 function kpi_defs() {
   return array(
     'serving' => 'served',
@@ -1261,7 +1288,12 @@ function kpi_defs() {
  */
 function bdo_score($actuals, $t) {
   $kpis = array(); $wsum = 0; $acc = 0;
+  /* the month's own set-up decides which KPIs count - a KPI switched off is
+   * not scored, so it cannot drag his weighted average down to zero for work
+   * nobody asked him to do */
+  $cfg = kpi_config(isset($t['month']) ? $t['month'] : open_month());
   foreach (kpi_defs() as $col => $ak) {
+    if (isset($cfg['kpis'][$col]) && empty($cfg['kpis'][$col]['on'])) continue;
     $target = (float)$t[$col . '_target'];
     $w = (int)$t[$col . '_w'];
     $actual = (float)$actuals[$ak];
