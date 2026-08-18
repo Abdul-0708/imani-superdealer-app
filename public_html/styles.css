@@ -150,6 +150,8 @@ button:focus-visible,.kchip.todo:focus-visible{outline:2px solid var(--fire2);ou
 .kpi-off{opacity:.45}
 .kpi-off input,.kpi-off select{opacity:.7}
 
+
+
 /* SECTION DIVIDER on a page that carries two of them.
  * The dashboard holds the file result and the file-plus-field result. They must
  * never read as one number, so each gets a heading with a rule above it - the
@@ -845,3 +847,27 @@ body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.1
 }
 .more-item:hover{border-color:var(--fire2);background:var(--grad-soft)}
 .more-item svg{width:18px;height:18px;color:var(--fire2);flex:none}
+
+/* ================= THUMBS, NOT CURSORS =================
+ * A BDO works this app one-handed, standing in front of an agent, often in
+ * sunlight. Measured on a 375px screen, twelve controls came in under the 44px
+ * WCAG/HIG touch minimum - the compact "mini" and "tiny" buttons were 24px
+ * tall, about half a fingertip.
+ *
+ * Raised only where the pointer is COARSE, so a mouse keeps the dense layout
+ * that lets an OM see a whole table at once. Same markup, same classes: the
+ * device decides. */
+@media (pointer: coarse) {
+  button, .pick-btn, .role-chip, select, input[type="file"],
+  .kchip, .kchip.todo, [data-action] { min-height: 44px; }
+  /* the compact modifiers stop being compact on a touch screen */
+  .mini { padding: 10px 14px !important; font-size: 13px !important; }
+  .tiny { padding: 9px 12px !important; font-size: 12px !important; }
+  button.ghost, button.btn, button.danger { padding: 11px 14px; }
+  /* a row of small buttons needs room to breathe or they merge into one strip */
+  .row { gap: 8px; }
+  /* checkboxes are the smallest target of all */
+  input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; }
+  /* table action buttons sit in tight cells - give them their own line height */
+  td button { min-height: 44px; }
+}

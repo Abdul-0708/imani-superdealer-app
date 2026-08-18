@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.48.0';
+  var APP_VERSION = '1.49.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -904,6 +904,7 @@
   /* ---------------- boot / shell ---------------- */
   function boot() {
     applyTheme();
+    watchFieldLabels();   /* ties every field's label to its control, for ever after */
     api('me').then(function (d) { state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.tab = defaultTab(); render(); })
       .catch(function () { state.user = null; render(); });
   }
@@ -1136,6 +1137,40 @@
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
       '<button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
   }
+  /*
+   * A LABEL THE SCREEN READER CAN ALSO SEE.
+   *
+   * Every field in the app is written as .field > label + input, which LOOKS
+   * labelled and reads correctly to a sighted user - but the label was never
+   * tied to its control, so a screen reader announced nine of them on the
+   * dashboard alone as just "edit text", with no idea what to type. Rather
+   * than hand-editing a hundred render sites (and every future one), the pairs
+   * are tied together after the fact, wherever they appear - views, modals,
+   * panels loaded later.
+   */
+  var _lblSeq = 0;
+  function linkFieldLabels(root) {
+    (root || document).querySelectorAll('.field').forEach(function (f) {
+      var lab = f.querySelector('label');
+      if (!lab || lab.getAttribute('for')) return;
+      var ctl = f.querySelector('input, select, textarea');
+      if (!ctl) return;
+      if (!ctl.id) ctl.id = 'fld_' + (++_lblSeq);
+      lab.setAttribute('for', ctl.id);
+    });
+  }
+  /* Views render asynchronously and modals appear on their own schedule, so
+   * watch instead of trying to call this from every render path. */
+  function watchFieldLabels() {
+    linkFieldLabels(document);
+    if (!window.MutationObserver) return;
+    var pending = null;
+    new MutationObserver(function () {
+      clearTimeout(pending);
+      pending = setTimeout(function () { linkFieldLabels(document); }, 60);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
   function renderTab() {
     var v = elById('view'); if (!v) return;
     /* THE VIEW IS BEING REBUILT, SO ANY OPEN DIALOG IS STALE BY DEFINITION.

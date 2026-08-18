@@ -5,6 +5,54 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.49.0 — 2026-08-18 · Phase 6: thumbs, not cursors
+
+Audited by **measuring** the running app at 375px and 1280px rather than looking at it. Three things
+were true and two were not.
+
+**Touch targets — the real finding.** A BDO works this app one-handed, standing in front of an
+agent, often in sunlight. Measured on a phone, **twelve controls came in under the 44px WCAG/HIG
+minimum** — the compact *mini* and *tiny* buttons were 24px tall, about half a fingertip. Worse, the
+**KPI marking chips** — the single most-tapped control in the whole app — were **30px**.
+
+Raised only where the pointer is **coarse**, so a mouse keeps the dense layout that lets an OM read
+a whole table at once. Same markup, same classes; the device decides.
+
+| | Before | After |
+|---|---|---|
+| Undersized controls, OM dashboard (375px) | 12 | **0** |
+| Undersized controls, all six BDO screens | 148 | **0** |
+| Button heights on desktop (1280px) | 24–32px | **24–32px, unchanged** |
+
+*A trap worth recording:* the first attempt placed the rule near the top of the stylesheet, where
+the later `.kchip.todo{min-height:30px}` beat it on equal specificity — the fix measured as working
+on the OM's screens and did nothing at all for the BDO's chips. It only counts once it is measured
+where it matters.
+
+**Labels a screen reader can also see.** Every field is written as `.field > label + input`, which
+looks labelled and reads correctly to a sighted user — but the label was never *tied* to its
+control, so a screen reader announced nine of them on the dashboard alone as bare "edit text".
+Rather than hand-editing a hundred render sites and every future one, the pairs are now tied
+together wherever they appear — views, modals, panels loaded later — by a small observer.
+**9 unlinked → 0**, and **11 linked inside a modal** that renders long after load.
+
+**Two things I expected to find and did not.**
+
+- **Contrast passes.** A first pass flagged 27 failing text nodes; every one was a measurement
+  artifact — the script was not compositing `rgba` pill backgrounds, so orange-on-orange read as a
+  ratio of 1.00. Composited properly: **27 → 3**, and those three are gradient backgrounds that
+  `backgroundColor` cannot report (dark text on orange, high contrast). No contrast fix was needed
+  and none was made.
+- **Keyboard focus is already handled.** A programmatic `.focus()` showed no ring, but that is
+  correct browser behaviour — `:focus-visible` is styled and only fires for keyboard users.
+
+**No horizontal scrolling anywhere**, at either size, on any screen: wide tables already scroll
+inside their own wrappers.
+
+- Assets `?v=66`, SW `imani-v66`. Schema unchanged.
+
+---
+
 ## v1.48.0 — 2026-08-17 · Phase 5: API & database architecture — schema v20
 
 **🟡 M-1 — a receipt now belongs to the officer who took it.** Any signed-in officer could walk
