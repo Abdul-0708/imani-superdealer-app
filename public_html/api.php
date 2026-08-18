@@ -59,7 +59,9 @@ try {
           $lock = $f >= 5 ? time() + 86400 * 3650 : 0;
           db()->prepare('UPDATE users SET failed = ?, locked_until = ? WHERE id = ?')->execute(array($f, $lock, $u['id']));
           if ($lock) fail('Account blocked after 5 failed attempts. Contact your admin for a new password.', 429);
-          fail('Invalid username or password (' . (5 - $f) . ' attempts left)', 401);
+          /* No attempt counter here: it only ever appeared for a username
+           * that EXISTS, which turned the login into a free "is this a real
+           * account?" oracle. Both branches now say the same thing. */
         }
         fail('Invalid username or password', 401);
       }
@@ -1017,9 +1019,21 @@ try {
       $agentId = (int)($_GET['agent'] ?? 0);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $pk = ($_GET['kpi'] ?? 'active') === 'served' ? 'served' : 'active';
-      $st = db()->prepare('SELECT proof FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "' . $pk . '"');
+      $st = db()->prepare('SELECT proof, bdo FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = "' . $pk . '"');
       $st->execute(array($month, $agentId));
       $r = $st->fetch();
+      /*
+       * A RECEIPT BELONGS TO THE MAN WHO TOOK IT, AND TO MANAGEMENT.
+       *
+       * Any signed-in officer could walk ?agent=1,2,3... and pull every receipt
+       * photo in the company, in any station - the one place the app handed out
+       * another officer's evidence. Management still sees everything, because
+       * judging a claim is the entire point of the flag; an officer now sees
+       * only the proof he took himself.
+       */
+      if ($r && !is_manager($u) && (string)$r['bdo'] !== (string)$u['username']) {
+        fail('That proof belongs to another officer', 403);
+      }
       /* filename came from bin2hex() - sanitize anyway so no path can sneak in */
       $file = $r ? preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']) : '';
       $path = __DIR__ . '/uploads/proofs/' . $file;
@@ -1897,7 +1911,8 @@ try {
     /* ================= WEEKLY UPLOAD (rows parsed in the browser) ================= */
 
     case 'upload_weekly': {
-      $u = require_auth(); require_perm($u, 'upload', 'e');
+      $u = require_auth();
+      rate_limit($u['username'], 'upload', 12, 300);        /* imports are heavy */ require_perm($u, 'upload', 'e');
       $rows = bval('rows', array());
       if (!is_array($rows) || !count($rows)) fail('No rows provided');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
@@ -2872,6 +2887,7 @@ try {
      */
     case 'kpi_config_test': {
       $u = require_auth(); require_perm($u, 'targets', 'v');
+      rate_limit($u['username'], 'kpi_test', 40, 300);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
       $rows = (array)bval('rows', array());
       if (!count($rows)) fail('Pick the Excel file to test against');
@@ -3097,6 +3113,7 @@ try {
      */
     case 'he_report': {
       $u = require_auth(); require_officer_view($u);
+      rate_limit($u['username'], 'he_report', 40, 300);      /* whole-team scan */
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $only = strtolower(trim((string)($_GET['bdo'] ?? '')));
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);

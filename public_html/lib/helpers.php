@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.47.0');
+define('APP_VERSION', '1.48.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -200,6 +200,40 @@ function require_officer_view($user) {
  * strand the field team mid-month - but they may do exactly one thing until
  * they fix it: set a new password.
  */
+/*
+ * A THROTTLE FOR EVERYTHING THAT IS NOT THE LOGIN.
+ *
+ * The login has had a lockout for a long time; nothing else had anything, so a
+ * signed-in account could call the heavy endpoints - imports, whole-team
+ * reports, exports - in a loop and flatten a shared-hosting database for
+ * everyone. This is a fixed window per user per action: cheap (one upsert and
+ * one read), needs no cache server, and forgets by itself.
+ *
+ * It is a brake, not a wall. Limits are set well above what a person working
+ * normally will ever reach, so the only thing that trips them is a script.
+ */
+function rate_limit($who, $action, $maxHits, $windowSecs) {
+  $bucket = substr($who . '|' . $action, 0, 160);
+  $now = time();
+  $start = $now - ($now % $windowSecs);
+  try {
+    db()->prepare('INSERT INTO rate_limit (bucket, window_start, hits) VALUES (?,?,1)
+                   ON DUPLICATE KEY UPDATE
+                     hits = IF(window_start = VALUES(window_start), hits + 1, 1),
+                     window_start = VALUES(window_start)')
+        ->execute(array($bucket, $start));
+    $q = db()->prepare('SELECT hits FROM rate_limit WHERE bucket = ?');
+    $q->execute(array($bucket));
+    $r = $q->fetch();
+    if ($r && (int)$r['hits'] > $maxHits) {
+      fail('Too many requests - wait a moment and try again', 429);
+    }
+  } catch (PDOException $e) {
+    /* the table is not there yet on a half-applied upgrade: never block real
+     * work because the brake itself is missing */
+  }
+}
+
 function password_is_default($hash) {
   return (string)$hash !== '' && password_verify('imani123', (string)$hash);
 }

@@ -5,6 +5,47 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.48.0 — 2026-08-17 · Phase 5: API & database architecture — schema v20
+
+**🟡 M-1 — a receipt now belongs to the officer who took it.** Any signed-in officer could walk
+`wake_proof?agent=1,2,3…` and pull **every receipt photo in the company, in any station** — the one
+place the app handed out another officer's evidence. Management still sees everything, because
+judging a claim is the entire point of the flag panel; an officer now sees only what he took.
+Verified: an officer read **her own** proof (`image/jpeg` served) and was refused a colleague's
+(*"That proof belongs to another officer"*); the OM read **both**.
+
+**🟡 M-2 — a throttle for everything that is not the login.** The login has had a lockout for a long
+time; nothing else had anything, so a signed-in account could call imports, whole-team reports and
+exports in a loop and flatten a shared-hosting database for everyone. `rate_limit()` is a fixed
+window per user per action — one upsert and one read, no cache server to install, forgets by itself.
+Applied to the heavy endpoints: imports 12 / 5 min, team reports and KPI dry-runs 40 / 5 min.
+Verified by scripting 18 uploads back to back: **12 allowed, blocked from the 13th**.
+It is a brake, not a wall — the limits sit far above anything a person working normally reaches.
+
+**🟡 M-3 — the login no longer says whether a username exists.** A failed sign-in returned
+*"Invalid username or password (4 attempts left)"* — but only for an account that **existed**, which
+turned the login into a free "is this a real account?" oracle. Both branches now return the same
+sentence. Verified: identical message for a real and an invented username. The **brute-force lockout
+is untouched** — five wrong attempts still block the account, and the correct password is refused
+after that.
+
+**Schema v20 — an index for the app's most common question.** *"What is in this officer's round?"*
+runs on almost every screen, but the only key on `base` was `(month, agent_id)` — which answers
+*"who holds this agent"*, the opposite question. Measured at realistic scale (50,405 rows, 12 months
+× 6 officers):
+
+| | rows examined | time per query |
+|---|---|---|
+| Before (fell back to the `month` prefix) | 4,200 | 6.20 ms |
+| After `idx_base_owner_round (month, bdo)` | **700** | **1.47 ms** |
+
+**4.2× faster, 6× fewer rows read.** (The audit called this a full table scan; it was actually a
+month-prefix scan — still every agent in the month, but not the whole table.)
+
+- Schema **v20**. Assets `?v=65`, SW `imani-v65`
+
+---
+
 ## v1.47.0 — 2026-08-17 · SECURITY: the setup password, and real station segregation
 
 **🟠 HIGH — fixed: auto-created officer accounts shared one password written into the source.**

@@ -401,6 +401,35 @@ function upgrade_schema($pdo) {
     schema_v19_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "19" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 20) {
+    schema_v20_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "20" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v20: two things the architecture was missing rather than two features.
+ *
+ * 1. AN INDEX FOR THE APP'S MOST COMMON QUESTION. "What is in this officer's
+ *    round?" runs on almost every screen, but the only key on `base` was
+ *    (month, agent_id) - which answers "who holds this agent", the opposite
+ *    question. Every lookup by officer was a full table scan. Invisible on a
+ *    handful of test rows; a real cost once a station carries thousands of
+ *    agents across a year of months.
+ *
+ * 2. SOMEWHERE TO COUNT REQUESTS. Only the login had any throttle; every other
+ *    endpoint could be called in a loop. This is the smallest thing that can
+ *    hold a counter - no cache server to install on shared hosting.
+ */
+function schema_v20_apply($pdo) {
+  try { $pdo->exec('ALTER TABLE base ADD INDEX idx_base_owner_round (month, bdo)'); } catch (Exception $e) { /* exists */ }
+  try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rate_limit (
+      bucket VARCHAR(160) NOT NULL PRIMARY KEY,
+      window_start INT NOT NULL DEFAULT 0,
+      hits INT NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+  } catch (Exception $e) { /* exists */ }
 }
 
 /*
