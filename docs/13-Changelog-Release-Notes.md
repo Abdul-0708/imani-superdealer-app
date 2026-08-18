@@ -5,6 +5,41 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.54.0 — 2026-08-18 · One word for one person
+
+The app called the same man a **BDO** 243 times and an **"officer"** 44 times. The second set was
+newer — the officer window and everything built around it — so it was the odd one out. Everything
+the user reads now says **BDO**.
+
+**The reason this was flagged rather than done in Phase 10:** those strings are translation keys.
+Renaming the English silently breaks the Swahili lookup — the UI keeps working, in English, and
+nobody notices. So the check came first: extract every `t('…')` call site, extract every dictionary
+entry, and count the keys with no Swahili.
+
+That baseline turned up something larger. **170 of 666 keys already had no Swahili entry** — about a
+quarter of the interface falls back to English for a Swahili user, mostly strings added in recent
+releases. Not caused by this change, but now measured. This rename took it to **165**: every renamed
+key kept its translation, and five that were missing gained one.
+
+Changed together, key and translation in lockstep: the *BDOs* table header and heading, *All BDOs*,
+*Every BDO's round…*, *Ordered by … the BDO at the top…*, *No BDOs with a round this month*, *across
+every BDO*, *Open the BDO first*, *Proof rules for this BDO*, the spreadsheet's **BDO** column and
+sheet name, and three server messages (*belongs to another BDO*, *Which BDO?*, *No such BDO*).
+
+Verified: **zero occurrences of "officer" across all nine screens** in English; the drill-down, the
+back button, the rules panel and the Excel export all read BDO; and in Swahili the renamed sentence
+resolves properly — *"Imepangwa kwa wanaolipa zaidi ambao hawajafikiwa - BDO wa juu ndiye wa
+kuzungumza naye leo"* — rather than falling back.
+
+**Left deliberately:** the internal identifiers — the `officers` field in the `he_report` response
+and the `officerRulesPanel` / `officerRulesSave` functions. Renaming an API field is a contract
+change with no user-visible benefit, and code identifiers are not the terminology the business
+reads.
+
+- Assets `?v=71`, SW `imani-v71`. Schema unchanged.
+
+---
+
 ## v1.53.0 — 2026-08-18 · Phase 10: final review — the dashboard promised a structure it did not have
 
 Measured every screen's density rather than judging it by eye. The dashboard carries **10 panels,

@@ -1057,7 +1057,7 @@ try {
        * only the proof he took himself.
        */
       if ($r && !is_manager($u) && (string)$r['bdo'] !== (string)$u['username']) {
-        fail('That proof belongs to another officer', 403);
+        fail('That proof belongs to another BDO', 403);
       }
       /* filename came from bin2hex() - sanitize anyway so no path can sneak in */
       $file = $r ? preg_replace('/[^a-z0-9.]/', '', (string)$r['proof']) : '';
@@ -3033,10 +3033,10 @@ try {
     case 'bdo_rules_save': {
       $u = require_auth(); require_manager($u);
       $bdo = strtolower(trim((string)bval('bdo')));
-      if ($bdo === '') fail('Which officer?');
+      if ($bdo === '') fail('Which BDO?');
       $q = db()->prepare("SELECT username FROM users WHERE username = ? AND role = 'bdo'");
       $q->execute(array($bdo));
-      if (!$q->fetch()) fail('No such officer', 404);
+      if (!$q->fetch()) fail('No such BDO', 404);
       $sr = trim((string)bval('serveReceipt'));
       $wr = trim((string)bval('wakeReceipt'));
       if (!in_array($sr, array('', 'required', 'optional'), true)) fail('Bad serving rule');
@@ -3057,7 +3057,7 @@ try {
       $u = require_auth(); require_officer_view($u);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
-      if ($bdo === '') fail('Which officer?');
+      if ($bdo === '') fail('Which BDO?');
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
       $stF = $station !== '' ? ' AND a.station = ?' : '';
       $stV = $station !== '' ? array($station) : array();
@@ -3065,7 +3065,7 @@ try {
       $uq = db()->prepare('SELECT username, name, specialty, serve_receipt, wake_receipt FROM users WHERE username = ?');
       $uq->execute(array($bdo));
       $who = $uq->fetch();
-      if (!$who) fail('No such officer', 404);
+      if (!$who) fail('No such BDO', 404);
 
       $bandMap = he_band_map();
       $q = db()->prepare("SELECT a.id, a.acc, a.name, a.phone, a.branch, a.physical_location, a.station, a.act_current,

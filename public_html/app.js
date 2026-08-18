@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.53.0';
+  var APP_VERSION = '1.54.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -234,14 +234,18 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Grow my round': 'Kuza mzunguko wangu',
+    'No BDOs with a round this month.': 'Hakuna BDO mwenye mzunguko mwezi huu.',
+    'across every BDO': 'kwa kila BDO',
+    'Open the BDO first': 'Fungua BDO kwanza',
+    'Proof rules for this BDO': 'Sheria za uthibitisho kwa BDO huyu',
     'THE OFFICE RESULT - FROM THE PERFORMANCE FILE': 'MATOKEO YA OFISI - KUTOKA FAILI LA UTENDAJI',
     'THE SAME MONTH - FILE PLUS FIELD': 'MWEZI HUOHUO - FAILI PAMOJA NA KAZI YA UWANDANI',
     'The office result exactly as the uploaded file reports it. This is the number the commission is settled on.':
       'Matokeo ya ofisi kama faili lililopakiwa linavyoripoti. Hii ndiyo namba kamisheni inayolipwa kwayo.',
     'Same month and station as the section above.': 'Mwezi na kituo sawa na sehemu iliyo juu.',
     'BDOs': 'Maafisa (BDO)',
-    'Officer': 'Afisa',
-    'Officers': 'Maafisa',
+    'BDO': 'BDO',
+    'BDOs': 'BDO',
     'Base': 'Msingi',
     'Covered': 'Imefikiwa',
     'High earners served': 'Wanaolipa zaidi waliohudumiwa',
@@ -249,11 +253,11 @@
     'High earners NOT served': 'Wanaolipa zaidi AMBAO hawajahudumiwa',
     'The money still sitting in his round. Biggest list first.':
       'Fedha bado zipo kwenye mzunguko wake. Orodha kubwa kwanza.',
-    'Ordered by high earners still untouched - the officer at the top is the one to speak to today.':
-      'Imepangwa kwa wanaolipa zaidi ambao hawajafikiwa - afisa wa juu ndiye wa kuzungumza naye leo.',
-    'Every officer\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.':
-      'Mzunguko wa kila afisa, amefikia wapi, na wanaolipa zaidi ambao hajawafikia. Gusa jina kumfungua.',
-    'All officers': 'Maafisa wote',
+    'Ordered by high earners still untouched - the BDO at the top is the one to speak to today.':
+      'Imepangwa kwa wanaolipa zaidi ambao hawajafikiwa - BDO wa juu ndiye wa kuzungumza naye leo.',
+    'Every BDO\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.':
+      'Mzunguko wa kila BDO, amefikia wapi, na wanaolipa zaidi ambao hajawafikia. Gusa jina kumfungua.',
+    'All BDOs': 'BDO wote',
     'His round': 'Mzunguko wake',
     'His whole round': 'Mzunguko wake wote',
     'Still to serve': 'Bado kuhudumia',
@@ -3692,12 +3696,12 @@
           '<td>' + (r.hasTargets ? flagPill(r.flag, r.score) : '<span class="pill dim">' + t('no targets') + '</span>') + '</td>' +
           '<td>' + (r.flags ? '<span class="pill bad">' + fmt(r.flags) + '</span>' : '<span class="note">-</span>') + '</td>' +
           '</tr>';
-      }).join('') || '<tr><td colspan="7" class="note">' + t('No officers with a round this month.') + '</td></tr>';
+      }).join('') || '<tr><td colspan="7" class="note">' + t('No BDOs with a round this month.') + '</td></tr>';
 
       v.innerHTML =
         greetingLine() +
         '<h1 class="page-title">' + t('BDOs') + '</h1>' +
-        '<p class="page-sub">' + t('Every officer\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.') + '</p>' +
+        '<p class="page-sub">' + t('Every BDO\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.') + '</p>' +
         '<div class="panel"><div class="row">' +
         '<div class="field"><label>' + t('Month') + '</label><input id="bdMonth" type="month" value="' + esc(m) + '"></div>' +
         '<button class="btn" data-action="bdLoad">' + t('Load') + '</button>' +
@@ -3709,13 +3713,13 @@
         '<div class="grid cards" style="margin-bottom:12px">' +
         card('users', t('Agents in all rounds'), fmt(T.base), fmt(T.served) + ' ' + t('served so far')) +
         card('flame', t('High earners in rounds'), fmt(T.he), fmt(T.heServed) + ' ' + t('served')) +
-        card('alert', t('High earners not reached'), fmt(T.heLeft), t('across every officer')) +
+        card('alert', t('High earners not reached'), fmt(T.heLeft), t('across every BDO')) +
         card('alert', t('Flags standing'), fmt(T.flags), t('this month')) +
         '</div>' +
-        '<div class="panel"><h2>' + svg('users') + t('Officers') + ' &mdash; ' + esc(m) +
+        '<div class="panel"><h2>' + svg('users') + t('BDOs') + ' &mdash; ' + esc(m) +
           (d.station ? ' · ' + esc(d.station) : '') + '</h2>' +
-        '<p class="note">' + t('Ordered by high earners still untouched - the officer at the top is the one to speak to today.') + '</p>' +
-        '<div class="tablewrap"><table><thead><tr><th>' + t('Officer') + '</th><th>' + t('Base') + '</th>' +
+        '<p class="note">' + t('Ordered by high earners still untouched - the BDO at the top is the one to speak to today.') + '</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('Base') + '</th>' +
         '<th>' + t('Covered') + '</th><th>' + t('High earners served') + '</th><th>' + t('Still untouched') + '</th>' +
         '<th>' + t('Score') + '</th><th>' + t('Flags') + '</th></tr></thead><tbody>' + body + '</tbody></table></div></div>' +
         /* the date-range officer report - it was stranded in the target-setting
@@ -3777,7 +3781,7 @@
 
       v.innerHTML =
         '<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
-        '<button class="ghost" data-action="bdBack">&larr; ' + t('All officers') + '</button>' +
+        '<button class="ghost" data-action="bdBack">&larr; ' + t('All BDOs') + '</button>' +
         '<div class="spacer"></div>' +
         '<button class="ghost" data-action="heXlsOne" data-bdo="' + esc(d.bdo) + '">' + svg('download') + ' ' + t('His high earners - Excel') + '</button>' +
         '<button class="ghost" data-action="heDocOne" data-bdo="' + esc(d.bdo) + '">' + svg('download') + ' ' + t('His high earners - Word') + '</button>' +
@@ -4002,7 +4006,7 @@
   }
   function bdoListXls(which) {
     var d = state._bdDetail;
-    if (!d) { toast(t('Open the officer first'), 'warn'); return; }
+    if (!d) { toast(t('Open the BDO first'), 'warn'); return; }
     var rows, title, note;
     if (which === 'served') {
       rows = (d.heServed || []).slice();
@@ -4106,7 +4110,7 @@
     var wb = XLSX.utils.book_new();
     /* summary first: who is sitting on the most untouched money */
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.officers || []).map(function (p) {
-      return { 'Officer': p.name, 'Username': p.bdo, 'High earners in round': p.total,
+      return { 'BDO': p.name, 'Username': p.bdo, 'High earners in round': p.total,
                'Served': p.servedCount, 'NOT served': p.leftCount,
                'Covered %': p.total ? Math.round(p.servedCount / p.total * 100) : '' };
     })), 'Summary');
@@ -4208,7 +4212,7 @@
         }).join('') + '</select>';
     }
     var overridden = R.serveReceipt !== '' || R.wakeReceipt !== '';
-    return '<div class="panel"><h2>' + svg('camera') + t('Proof rules for this officer') +
+    return '<div class="panel"><h2>' + svg('camera') + t('Proof rules for this BDO') +
       (overridden ? ' <span class="pill fire">' + t('own rule') + '</span>'
                   : ' <span class="pill dim">' + t('office rule') + '</span>') + '</h2>' +
       '<p class="note">' + t('Set the standard on the man, not on the whole team. Leave both on "follow the office rule" and he changes whenever the office setting changes.') + '</p>' +
@@ -4238,13 +4242,13 @@
     if (!d) { toast(t('Load a month first'), 'warn'); return; }
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
-      return { 'Officer': r.name, 'Username': r.bdo, 'Base': r.base, 'Served': r.served,
+      return { 'BDO': r.name, 'Username': r.bdo, 'Base': r.base, 'Served': r.served,
                'Still to serve': r.left, 'Covered %': r.coverage == null ? '' : r.coverage,
                'High earners': r.he, 'HE served': r.heServed, 'HE untouched': r.heLeft,
                'A left': r.bandsLeft.A, 'B left': r.bandsLeft.B, 'C left': r.bandsLeft.C,
                'D left': r.bandsLeft.D, 'E left': r.bandsLeft.E,
                'Weighted score': r.score == null ? '' : r.score, 'Flags': r.flags };
-    })), 'Officers');
+    })), 'BDOs');
     XLSX.writeFile(wb, 'bdo_window_' + (d.month || '') + (d.station ? '_' + d.station : '') + '.xlsx');
     toast(t('Downloaded'), 'ok');
   }
