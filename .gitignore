@@ -8,3 +8,10 @@ public_html/lib/config.local.php
 *.log
 .DS_Store
 Thumbs.db
+
+# Uploaded receipt photos are BUSINESS EVIDENCE, not source. They belong on the
+# server (and in its backups), never in the repository - a proof image committed
+# here would be readable by anyone with repo access, for ever, and would survive
+# any deletion made through the app.
+public_html/uploads/proofs/*
+!public_html/uploads/proofs/.gitkeep
