@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.52.0';
+  var APP_VERSION = '1.53.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -234,8 +234,8 @@
     'You can still claim him if the visit was yours, but the receipt photo is compulsory and your OM is told so he can decide.':
       'Bado unaweza kumdai kama ziara ilikuwa yako, lakini picha ya risiti ni lazima na OM wako ataarifiwa ili aamue.',
     'Grow my round': 'Kuza mzunguko wangu',
-    'SECTION 1 - FROM THE PERFORMANCE FILE': 'SEHEMU 1 - KUTOKA FAILI LA UTENDAJI',
-    'SECTION 2 - THE FILE PLUS THE FIELD': 'SEHEMU 2 - FAILI PAMOJA NA KAZI YA UWANDANI',
+    'THE OFFICE RESULT - FROM THE PERFORMANCE FILE': 'MATOKEO YA OFISI - KUTOKA FAILI LA UTENDAJI',
+    'THE SAME MONTH - FILE PLUS FIELD': 'MWEZI HUOHUO - FAILI PAMOJA NA KAZI YA UWANDANI',
     'The office result exactly as the uploaded file reports it. This is the number the commission is settled on.':
       'Matokeo ya ofisi kama faili lililopakiwa linavyoripoti. Hii ndiyo namba kamisheni inayolipwa kwayo.',
     'Same month and station as the section above.': 'Mwezi na kituo sawa na sehemu iliyo juu.',
@@ -1823,7 +1823,7 @@
         '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download window') + '</button></div>' +
         '<p class="note">' + t('Every KPI your BDOs ticked inside the chosen time window (EAT).') + '</p>' +
         '<div id="liveBox"></div></div>' +
-        '<h2 class="sec-head">' + svg('upload') + ' ' + t('SECTION 1 - FROM THE PERFORMANCE FILE') + '</h2>' +
+        '<h2 class="sec-head">' + svg('upload') + ' ' + t('THE OFFICE RESULT - FROM THE PERFORMANCE FILE') + '</h2>' +
         '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
         '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
@@ -3515,7 +3515,7 @@
         return '<option value="' + esc(b.username) + '">' + esc(b.name) + '</option>';
       }).join('');
 
-      return '<h2 class="sec-head">' + svg('percent') + ' ' + t('SECTION 2 - THE FILE PLUS THE FIELD') + '</h2>' +
+      return '<h2 class="sec-head">' + svg('percent') + ' ' + t('THE SAME MONTH - FILE PLUS FIELD') + '</h2>' +
         '<p class="page-sub">' + t('The uploaded file PLUS the work your BDOs did in the field, added together and counted once.') + '</p>' +
 
         '<div class="panel"><div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">' +

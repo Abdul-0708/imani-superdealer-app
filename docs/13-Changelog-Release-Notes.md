@@ -5,6 +5,26 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.53.0 — 2026-08-18 · Phase 10: final review — the dashboard promised a structure it did not have
+
+Measured every screen's density rather than judging it by eye. The dashboard carries **10 panels,
+15 cards, 6 tables and 423 words** — three to five times any other screen (flags: 3 panels, 67
+words; commission: 2 panels, 86 words).
+
+Reading the page top to bottom exposed the real fault, and it was mine: **"SECTION 1" appeared in
+the middle of the page.** The month filter, the awaiting-file banner and the live board all sit
+above it, so the numbering announced a structure the page did not actually have — a reader met
+greeting → filters → live work → *"Section 1"*, which reads like a merge that was never finished.
+(It was: I introduced it in v1.40.0.)
+
+Fixed by naming the two answers instead of numbering the page — **"THE OFFICE RESULT — FROM THE
+PERFORMANCE FILE"** and **"THE SAME MONTH — FILE PLUS FIELD"**. No functionality moved: the panels
+above are page controls and live activity, and they no longer sit under a broken promise.
+
+- Assets `?v=70`, SW `imani-v70`. Schema unchanged.
+
+---
+
 ## v1.52.0 — 2026-08-18 · Phase 9: security regression — and one hole the first audit missed
 
 Every original attack re-run against current code, under the **same preconditions** that made them
