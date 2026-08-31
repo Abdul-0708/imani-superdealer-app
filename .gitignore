@@ -15,3 +15,10 @@ Thumbs.db
 # any deletion made through the app.
 public_html/uploads/proofs/*
 !public_html/uploads/proofs/.gitkeep
+
+# Local dev state. data/.jwtsecret is the token SIGNING KEY: anyone holding it
+# can mint a valid session for any role, OM included. It belongs on the machine
+# that generated it and nowhere else - least of all in a public repository,
+# where a single commit would expose it for ever and rotating it would not
+# un-publish it. dev-db.json is throwaway local data with real names in it.
+data/
