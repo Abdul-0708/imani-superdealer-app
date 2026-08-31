@@ -31,10 +31,32 @@ For whoever manages the hosting at e.g. `hardwaresupermarkets.co.tz`. The app is
 Use the host's free SSL (cPanel → *SSL/TLS Status* → AutoSSL / Let's Encrypt). Then force HTTPS
 (cPanel → *Domains* → Force HTTPS Redirect, or via .htaccess).
 
-## 3. Updates
+## 3. Updates — how a change reaches the live site
 
-Re-upload the changed files (`app.js`, `styles.css`, `api.php`, `lib/*.php`) — **never overwrite
-`lib/config.local.php`**. Schema changes apply automatically on next load.
+Three steps, always in this order. Nothing deploys on its own: the site changes
+only when someone presses the button in step 3.
+
+1. **Commit and push** the change to GitHub (`main`).
+2. **cPanel → Git Version Control → Manage → Pull or Deploy → Update from Remote.**
+   This fetches what was just pushed. Nothing is live yet.
+3. **Deploy HEAD Commit.** This runs `.cpanel.yml`, which copies `public_html/`
+   into the live site root. The change is now live.
+
+Then open `https://yourdomain/api.php?action=health` and check it returns
+`{"ok":true,...}`. That one call proves PHP ran *and* the database answered.
+
+### What deploying never touches
+
+- **`lib/config.local.php`** — the DB password. It is not in the repository, so
+  no deploy can overwrite it. Never delete it by hand: the site goes down.
+- **`uploads/proofs/`** — receipt photos. Business evidence, kept out of git on
+  purpose. `.cpanel.yml` only copies files in, so nothing there is ever removed.
+
+Schema changes need no action — the app applies them itself on the next load.
+
+If Git Version Control is ever unavailable, the fallback is to upload the changed
+files (`app.js`, `styles.css`, `api.php`, `lib/*.php`) by hand in File Manager —
+but **never** `lib/config.local.php`.
 
 ## 4. Backups
 
