@@ -10,7 +10,7 @@ jobs:
     name: PHP syntax check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
@@ -35,7 +35,7 @@ jobs:
           --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
           --health-interval=10s --health-timeout=5s --health-retries=12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
@@ -64,7 +64,9 @@ jobs:
           # every action until it is replaced - assert the block is real...
           curl -s -b /tmp/cj "http://127.0.0.1:8080/api.php?action=months" | grep '"mustChange":true'
           # ...then set a real password, which is the one action allowed
-          curl -sf -b /tmp/cj -H "Content-Type: application/json" -H "X-Requested-With: imani" \n            -d '{"current":"imani123","new":"CiSmoke#2026"}' \n            "http://127.0.0.1:8080/api.php?action=change_password" | grep '"ok":true'
+          curl -sf -b /tmp/cj -H "Content-Type: application/json" -H "X-Requested-With: imani" \
+            -d '{"current":"imani123","new":"CiSmoke#2026"}' \
+            "http://127.0.0.1:8080/api.php?action=change_password" | grep '"ok":true'
           # and only now does the app answer normally
           curl -sf -b /tmp/cj "http://127.0.0.1:8080/api.php?action=months" | grep '"open"'
           echo "API smoke OK"
