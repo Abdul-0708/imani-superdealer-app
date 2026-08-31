@@ -6,6 +6,12 @@
       "runtimeExecutable": "php",
       "runtimeArgs": ["-S", "127.0.0.1:3000", "-t", "public_html"],
       "port": 3000
+    },
+    {
+      "name": "imani-static-demo",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3000", "-d", "public_html"],
+      "port": 3000
     }
   ]
 }
