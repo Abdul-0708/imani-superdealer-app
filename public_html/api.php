@@ -872,7 +872,12 @@ try {
      * blocked and told who already did it.
      */
     case 'kpi_mark': {
-      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $u = require_auth();
+      /* 'mybase' is the FIELD officer's permission and the OM does not carry
+       * it - he has no base of his own. He still has to be able to award a
+       * partner-served agent, which is now his decision alone, so management
+       * passes this gate on its own authority. */
+      if (!is_manager($u)) require_perm($u, 'mybase', 'e');
       $agentId = (int)bval('agentId');
       $kpi = (string)bval('kpi');
       if (!in_array($kpi, array('served', 'visit', 'apk', 'active'), true)) fail('Unknown KPI');
@@ -887,6 +892,23 @@ try {
       $agent = $ag->fetch();
       if (!$agent) fail('Agent not found', 404);
       $bdo = $u['username'];
+      /*
+       * THE OM MAY MARK ON BEHALF OF AN OFFICER.
+       * Only for him: without it, making the partner-served claim OM-only
+       * would be a dead end - the OM could take the agent off the partner but
+       * only ever into his own name, which is not a BDO's month and not what
+       * anyone is paid on. `awardTo` names the officer who did the work.
+       */
+      $awardedBy = '';
+      $awardTo = strtolower(trim((string)bval('awardTo')));
+      if ($awardTo !== '' && $awardTo !== $u['username']) {
+        require_manager($u);
+        $awq = db()->prepare("SELECT username FROM users WHERE username = ? AND role = 'bdo'");
+        $awq->execute(array($awardTo));
+        if (!$awq->fetch()) fail('No such BDO: ' . $awardTo, 404);
+        $bdo = $awardTo;
+        $awardedBy = $u['username'];
+      }
 
       /* Serving ALWAYS goes through the serve dialog: the BDO confirms the
        * agent's physical location AND gets the chance to attach the serving
@@ -907,12 +929,34 @@ try {
         $psq->execute(array($agentId, $month));
         $partnerServed = (bool)$psq->fetch();
       }
+      /*
+       * AN AGENT THE FILE GAVE TO THE PARTNER IS THE OM'S TO AWARD, NOBODY
+       * ELSE'S. The BDO used to take him on the strength of a receipt photo
+       * and the OM learned of it afterwards, from a flag, with the credit
+       * already counting towards a commission. Judging it after the fact is
+       * the wrong way round: the office record says the partner served this
+       * agent, and overturning the office record is a management decision.
+       * The BDO's route is to tell his OM, who awards it with awardTo.
+       */
+      if ($partnerServed && !is_manager($u)) {
+        fail('The performance file credits the PARTNER with serving this agent - ask your OM to award him to you', 403,
+             array('partnerServed' => true, 'omOnly' => true));
+      }
+      /* Stamp it whether or not he named someone else: the point of awarded_by
+       * is that a manager ruled on this claim, so the next upload does not
+       * re-open it. An OM who takes the agent into his own name has ruled
+       * just as much as one who hands him to a BDO. */
+      if ($partnerServed) $awardedBy = $u['username'];
 
       if ($kpi === 'served') {
         $loc = trim((string)bval('location'));
         $confirmed = (string)bval('confirmed') !== '';
-        /* his own rule if the OM set him one, otherwise the office rule */
-        $rule = $partnerServed ? 'required' : receipt_rule_for($bdo, 'serve');
+        /* The receipt rule is the FIELD officer's rule. A manager marking is
+         * the authority that rule produces evidence for, and $bdo may now be
+         * somebody else entirely - holding the OM to another man's compulsory
+         * photo would block the award and tell him it was 'compulsory for
+         * you', which it is not. */
+        $rule = is_manager($u) ? 'optional' : receipt_rule_for($bdo, 'serve');
         if (!$confirmed) {
           fail('Confirm the location and attach the serving receipt', 400,
                array('needLocation' => true, 'receiptRule' => $rule,
@@ -927,12 +971,7 @@ try {
         }
         $img = (string)bval('proof');
         if ($img !== '') $proofFile = save_proof_image($img);
-        elseif ($partnerServed) {
-          fail('The file credits the PARTNER with serving this agent - attach the receipt photo to claim him', 400,
-               array('needLocation' => true, 'receiptRule' => 'required', 'partnerServed' => true,
-                     'agentLoc' => (string)$agent['physical_location']));
-        }
-        elseif (receipt_rule_for($bdo, 'serve') === 'required') {
+        elseif (receipt_rule_for($bdo, 'serve') === 'required' && !is_manager($u)) {
           fail('Attach the serving receipt photo - the OM has made it compulsory for you', 400,
                array('needLocation' => true, 'receiptRule' => 'required', 'agentLoc' => (string)$agent['physical_location']));
         }
@@ -987,8 +1026,8 @@ try {
       if ($done = $chk->fetch()) {
         fail('Already done by ' . $done['bdo'] . ' on ' . substr($done['at'], 0, 16) . ' - no need to repeat', 409);
       }
-      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof, proof_note) VALUES (?,?,?,?, "bdo", ?, ?)')
-          ->execute(array($month, $agentId, $kpi, $bdo, $proofFile, $proofNote));
+      db()->prepare('INSERT INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by) VALUES (?,?,?,?, "bdo", ?, ?, ?)')
+          ->execute(array($month, $agentId, $kpi, $bdo, $proofFile, $proofNote, $awardedBy));
       if ($kpi === 'served') {
         db()->prepare('INSERT INTO service_history (agent_id, bdo, month, date, time, served_status, source)
                        VALUES (?,?,?,?,?, "SERVED", "bdo")')
@@ -1030,14 +1069,15 @@ try {
         }
       }
       /* NB: no base write for visit / apk / active. Deliberate - see above. */
-      /* Claiming an agent the file credits to the PARTNER raises the flag right
-       * now, not at the next upload: the OM should see the dispute while the
-       * visit is fresh, and the BDO keeps the credit meanwhile. */
+      /* A partner-served agent now reaches this line only because the OM
+       * awarded him, so there is nothing left to accuse anyone of: the flag
+       * existed to put the claim in front of the OM, and the OM is the one who
+       * made it. Raising one here would have him clearing his own decision
+       * every month. The audit trail keeps the record instead.
+       */
       if ($partnerServed) {
-        db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?, "served", ?)')
-            ->execute(array($month, $agentId, $bdo,
-              'Marked SERVED by ' . $bdo . ' but the performance file credits the PARTNER with serving this agent (' . $agent['acc'] . ')'));
-        audit($u['id'], 'partner_claim', $bdo . ' claimed partner-served agent=' . $agentId . ' ' . $month);
+        audit($u['id'], 'partner_award',
+              $u['username'] . ' awarded partner-served agent=' . $agentId . ' to ' . $bdo . ' ' . $month);
       }
       specialist_touch_report($u);
       audit($u['id'], 'kpi_mark', $bdo . ' ' . $kpi . ' agent=' . $agentId . ' ' . $month);
@@ -1906,7 +1946,13 @@ try {
        * it) - he can now claim it, and the month-wide reconciliation still checks
        * his claim against the file, so he cannot take credit the file denies. */
       $mineOwn = ($row['source'] === 'bdo' && $row['bdo'] === $u['username']);
-      $orphan = ($row['bdo'] === 'unassigned' || $row['bdo'] === 'partners');
+      /* 'unassigned' is nobody. 'partners' is somebody - the office record says
+       * the partner did this work, and taking SERVING off the partner is the
+       * OM's call, the same call kpi_mark now reserves to him. Visits, APK and
+       * activeness stay claimable: none of them moves an agent between rounds
+       * or feeds the serving figure the commission is settled on. */
+      $orphan = ($row['bdo'] === 'unassigned'
+                 || ($row['bdo'] === 'partners' && $kpi !== 'served'));
       if (!$isOM) {
         if (!$orphan && $row['bdo'] !== $u['username']) {
           fail('That belongs to ' . $row['bdo'] . ' - only the OM can overturn it', 403);
@@ -2222,6 +2268,7 @@ try {
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
                                               AND s.source <> 'bdo' AND s.served_status = 'SERVED'
                                               AND s.bdo = 'partners') AS f_partner_served,
+                                     k.awarded_by AS awarded_by,
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
                                               AND s.source <> 'bdo' AND s.odk = 'YES') AS f_visit,
@@ -2251,6 +2298,9 @@ try {
         };
         foreach ($rq2->fetchAll() as $c) {
           $aid = (int)$c['agent_id']; $kk = $c['kpi']; $who = $c['bdo'];
+          /* The OM awarded this one himself. Re-accusing the officer at every
+           * upload would make the OM clear the same flag all month. */
+          if ((string)$c['awarded_by'] !== '') continue;
           if (!(int)$c['in_file']) {
             $insFlag->execute(array($month, $aid, $who, $kk,
               'Marked ' . strtoupper($kk) . ' by ' . $who .
@@ -2460,6 +2510,66 @@ try {
         return strcmp($a['name'], $b['name']);
       });
       respond(array('month' => $month, 'rows' => $out));
+    }
+
+    /*
+     * ONE OFFICER'S WEIGHTED SCORE, MONTH BY MONTH.
+     *
+     * bdo_performance answers "how is everyone doing THIS month". It could not
+     * answer "is this man getting better or worse", which is the question that
+     * actually decides who is coached and who is promoted - and the one every
+     * appraisal was being argued from memory. Same maths as the live score
+     * (bdo_score, so a KPI switched off in a given month is not scored in that
+     * month either), read back over every month the office has run.
+     *
+     * A month with no targets set has no score. It is returned as null rather
+     * than 0: nobody scored zero, the OM simply never set a target, and a zero
+     * would drag the average down for a month that was never measured.
+     */
+    case 'bdo_score_history': {
+      $u = require_auth();
+      $bdo = strtolower(trim((string)(isset($_GET['bdo']) ? $_GET['bdo'] : '')));
+      /* his own history is his to see; anyone else's needs the targets view */
+      if ($bdo === '' || $bdo === $u['username']) $bdo = $u['username'];
+      else require_perm($u, 'targets', 'v');
+
+      $uq = db()->prepare('SELECT username, name, specialty FROM users WHERE username = ?');
+      $uq->execute(array($bdo));
+      $who = $uq->fetch();
+      if (!$who) fail('No such officer', 404);
+
+      $months = db()->query('SELECT month, status FROM months ORDER BY month DESC LIMIT 24')->fetchAll();
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      $rows = array(); $acc = 0; $scored = 0; $best = null; $worst = null;
+      foreach ($months as $m) {
+        $mo = $m['month'];
+        $tq->execute(array($mo, $bdo));
+        $tg = $tq->fetch();
+        if (!$tg) {
+          $rows[] = array('month' => $mo, 'status' => $m['status'], 'score' => null,
+                          'flag' => 'none', 'hasTargets' => false);
+          continue;
+        }
+        $sc = $who['specialty'] === 'activeness'
+            ? bdo_score_specialist(bdo_actuals($mo, $bdo), $tg)
+            : bdo_score(bdo_actuals($mo, $bdo), $tg);
+        $rows[] = array('month' => $mo, 'status' => $m['status'], 'score' => $sc['score'],
+                        'flag' => $sc['flag'], 'hasTargets' => true);
+        if ($sc['score'] !== null) {
+          $acc += (int)$sc['score']; $scored++;
+          if ($best === null || (int)$sc['score'] > $best) $best = (int)$sc['score'];
+          if ($worst === null || (int)$sc['score'] < $worst) $worst = (int)$sc['score'];
+        }
+      }
+      /* oldest first: the point of the list is the direction of travel */
+      $rows = array_reverse($rows);
+      respond(array(
+        'bdo' => $who['username'], 'name' => $who['name'],
+        'specialty' => (string)$who['specialty'],
+        'rows' => $rows,
+        'average' => $scored > 0 ? (int)round($acc / $scored) : null,
+        'monthsScored' => $scored, 'best' => $best, 'worst' => $worst,
+      ));
     }
 
     /* ================= DAILY BDO REPORTS ================= */
@@ -2691,7 +2801,8 @@ try {
     /* Lightweight member list so the OM can pick a message recipient. */
     case 'members_list': {
       $u = require_auth(); require_perm($u, 'reports', 'e');
-      $rows = db()->query('SELECT username, name FROM users WHERE active = 1 ORDER BY username')->fetchAll();
+      /* role travels too: the partner-award picker must offer BDOs only */
+      $rows = db()->query('SELECT username, name, role FROM users WHERE active = 1 ORDER BY username')->fetchAll();
       respond($rows);
     }
 

@@ -218,6 +218,7 @@ function schema_v2_ddl() {
     kpi VARCHAR(12) NOT NULL,
     bdo VARCHAR(64) NOT NULL,
     proof VARCHAR(80) NOT NULL DEFAULT '',
+    awarded_by VARCHAR(64) NOT NULL DEFAULT '',
     at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_amk (month, agent_id, kpi),
     INDEX idx_amk_bdo (month, bdo, kpi)
@@ -405,6 +406,27 @@ function upgrade_schema($pdo) {
     schema_v20_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "20" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 21) {
+    schema_v21_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "21" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v21: an agent the file gave to the PARTNER is not a BDO's to take.
+ *
+ * Claiming one used to be an ordinary tap with a compulsory receipt, and the
+ * OM found out afterwards from a flag. The decision belongs to the OM before
+ * the credit moves, not after, so kpi_mark now refuses a BDO outright and the
+ * OM awards the agent to the officer he judges did the work.
+ *
+ * awarded_by records WHO authorised such a claim. Without it the next
+ * performance upload would raise the partner flag all over again against a
+ * credit the OM had already ruled on, and the OM would spend every month
+ * clearing the same accusation he himself created.
+ */
+function schema_v21_apply($pdo) {
+  try { $pdo->exec('ALTER TABLE agent_month_kpi ADD COLUMN awarded_by VARCHAR(64) NOT NULL DEFAULT ""'); } catch (Exception $e) { /* exists */ }
 }
 
 /*

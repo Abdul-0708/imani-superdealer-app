@@ -1496,11 +1496,15 @@
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         scorePanel +
+        '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
+        '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
+        '<div id="myScoreHist"></div></div>' +
         standPanel +
         heScorePanel +
         livePanel +
         teamBoard;
       liveTodayLoad();
+      scoreHistoryLoad('myScoreHist', '');
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -1863,7 +1867,18 @@
   }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
-    var name = esc(a.name) + (partnerServed ? ' <span class="pill fire" title="Served by partners - build the relationship and capture the location">PARTNER</span>' : '');
+    /* The old tooltip invited the BDO to take the agent. He cannot any more -
+     * the office record says the partner served him, and moving that credit is
+     * the OM's decision - so the pill says who to ask, and the OM gets the
+     * button that actually does it. */
+    var award = (partnerServed && isManager())
+      ? ' <button class="ghost mini" data-action="awardPartner" data-id="' + a.id +
+        '" data-name="' + esc(a.name) + '" data-loc="' + esc(a.physical_location || '') + '">' +
+        t('Award to a BDO') + '</button>'
+      : '';
+    var name = esc(a.name) + (partnerServed
+      ? ' <span class="pill fire" title="' + esc(t('The file credits the PARTNER with serving this agent - only the OM can award him to a BDO')) + '">PARTNER</span>' + award
+      : '');
     return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td>' +
       '<td class="c-name">' + name + ' ' + bandPill(a.band) + actInfoHtml(a) + '</td>' +
       '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
@@ -2053,6 +2068,55 @@
     { key: 'apk', label: 'APK' },
     { key: 'active', label: 'Active' }
   ];
+  /* ---------------- one officer's weighted score, MONTH BY MONTH ----------------
+   * The live score answers "how is he doing". This answers "which way is he
+   * going", which is the question an appraisal actually turns on and the one
+   * that was being argued from memory because the app only ever showed the
+   * month it was standing in.
+   *
+   * A month with no targets shows no score rather than 0 - nobody scored zero,
+   * the OM simply never set a target, and it is left out of the average.
+   */
+  function scoreHistoryLoad(boxId, bdo) {
+    var box = elById(boxId); if (!box) return;
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    api('bdo_score_history', { qs: bdo ? '&bdo=' + encodeURIComponent(bdo) : '' })
+      .then(function (d) { box.innerHTML = scoreHistoryHtml(d); })
+      .catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function scoreHistoryHtml(d) {
+    var rows = d.rows || [];
+    if (!d.monthsScored) {
+      return '<p class="note">' + t('No month has targets set yet, so there is nothing to average.') + '</p>';
+    }
+    var prev = null;
+    var body = rows.map(function (r) {
+      var trend = '';
+      if (r.score != null) {
+        if (prev != null) {
+          var diff = r.score - prev;
+          trend = diff > 0 ? '<span class="pill ok">+' + diff + '</span>'
+                : diff < 0 ? '<span class="pill bad">' + diff + '</span>'
+                : '<span class="pill dim">=</span>';
+        }
+        prev = r.score;
+      }
+      return '<tr><td>' + esc(r.month) +
+        (r.status && r.status !== 'CLOSED' ? ' <span class="pill dim">' + esc(r.status) + '</span>' : '') + '</td>' +
+        '<td>' + (r.score == null
+          ? '<span class="pill dim">' + t('no targets set') + '</span>'
+          : flagPill(r.flag, r.score)) + '</td>' +
+        '<td>' + trend + '</td></tr>';
+    }).join('');
+    return '<div class="grid cards" style="margin-bottom:10px">' +
+      card('percent', t('Average achieved'), d.average + '%',
+           fmt(d.monthsScored) + ' ' + t('months measured')) +
+      card('check', t('Best month'), d.best + '%', '') +
+      card('alert', t('Lowest month'), d.worst + '%', '') +
+      '</div>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('Month') + '</th><th>' + t('Weighted score') +
+      '</th><th>' + t('Change') + '</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
   function flagPill(flag, score) {
     if (score == null) return '<span class="pill dim">no targets yet</span>';
     if (flag === 'red') return '<span class="pill bad">' + score + '% &mdash; BELOW 50</span>';
@@ -2672,6 +2736,15 @@
         swapChip(node, kpi, state.user.username);
       })
       .catch(function (e) {
+        /* Not a dead end: tell him what to do about it. */
+        if (e.data && e.data.omOnly) {
+          openModal('<h2>' + svg('alert') + ' ' + t('Only the OM can give you this one') + '</h2>' +
+            '<p>' + t('The performance file credits the PARTNER with serving this agent, so the credit is not yours to take.') + '</p>' +
+            '<p class="note">' + t('If the visit was really yours, tell your OM - he can award the agent to you, and it counts in your month exactly the same.') + '</p>' +
+            '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+            '<button class="btn" data-action="closeModal">' + t('I understand') + '</button></div>');
+          return;
+        }
         if (e.data && e.data.needLocation) { locationModal(id, kpi, name, node, e.data.receiptRule || 'optional', e.data.agentLoc || '', e.data.partnerServed); return; }
         if (e.data && e.data.needProof) { proofModal(id, name, node, e.data.agentLoc || ''); return; }
         toast(e.message, 'err');
@@ -2679,6 +2752,59 @@
         var m = String(e.message).match(/Already done by (\S+)/);
         if (m) swapChip(node, kpi, m[1]);
       });
+  }
+  /* ---------------- OM: award a partner-served agent to an officer ----------
+   * Two calls, because that is honestly what happens: the partner's mark is
+   * reversed, then the officer's is written in its place. Doing it behind one
+   * button keeps the OM from having to know that.
+   */
+  function partnerAwardModal(id, name, loc) {
+    api('members_list').then(function (rows) {
+      var bdos = (rows || []).filter(function (r) { return r.role === 'bdo'; });
+      if (!bdos.length) { toast(t('There are no BDO accounts to award him to'), 'err'); return; }
+      openModal('<h2>' + svg('users') + ' ' + t('Award') + ' ' + esc(name) + '</h2>' +
+        '<div class="panel" style="border-color:var(--bad);margin-bottom:10px;padding:12px">' +
+        '<b>' + svg('alert') + ' ' + t('The file credits the PARTNER with serving this agent') + '</b>' +
+        '<p class="note" style="margin:6px 0 0">' +
+        t('Awarding him takes the serving credit off the partner and gives it to the officer you choose. It counts towards his month, and the audit trail records that you did it.') +
+        '</p></div>' +
+        '<div class="field"><label>' + t('Give the serving credit to') + '</label><select id="awardTo">' +
+        bdos.map(function (b) {
+          return '<option value="' + esc(b.username) + '">' + esc(b.name || b.username) + '</option>';
+        }).join('') + '</select></div>' +
+        '<div class="field" style="margin-top:8px"><label>' + t('Physical location') + '</label>' +
+        '<input id="awardLoc" value="' + esc(loc || '') + '" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
+        '<p class="note">' + t('He cannot be marked served without a known location - it is how the follow-up team finds him.') + '</p>' +
+        '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+        '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+        '<button class="btn" data-action="awardGo" data-id="' + id + '">' + t('Award') + '</button></div>');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+  function partnerAwardGo(id) {
+    var sel = elById('awardTo'); if (!sel) return;
+    var to = sel.value;
+    var loc = (elById('awardLoc') || {}).value || '';
+    /* Check BEFORE the reversal. The award is two calls, and the first one
+     * destroys the partner mark: if the second then fails for a missing
+     * location the agent is left served by nobody at all, which is worse than
+     * where we started. */
+    if (!loc.replace(/^\s+|\s+$/g, '')) {
+      toast(t('Type his physical location first - the award cannot finish without it'), 'err');
+      return;
+    }
+    api('kpi_unmark', { body: { agentId: Number(id), kpi: 'served' } })
+      .then(function () {
+        return api('kpi_mark', { body: {
+          agentId: Number(id), kpi: 'served', awardTo: to,
+          location: loc, proof: '', proofNote: '', confirmed: '1'
+        } });
+      })
+      .then(function () {
+        closeModal();
+        toast(t('Awarded to') + ' ' + to, 'ok');
+        if (state.tab === 'agents') agentsBodyLoad(); else renderTab();
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
   }
   /* Forced physical-location entry before an agent can be marked served. */
   /* Serving modal: physical location (required for the base count) + serving
@@ -3827,6 +3953,9 @@
           ' <span class="pill ok">' + fmt((d.heServed || []).length) + '</span>' +
           listBtn('served') + '</h2>' +
         heTable(d.heServed || [], true) + '</div>' +
+        '<div class="panel"><h2>' + svg('percent') + t('Month by month') + '</h2>' +
+        '<p class="note">' + t('His weighted score in every month the office has run, and the average he has actually achieved. The direction matters more than any single month.') + '</p>' +
+        '<div id="bdScoreHist"></div></div>' +
         (isManager() && d.rules ? officerRulesPanel(d) : '') +
         (flagTotal
           ? '<div class="panel"><h2>' + svg('alert') + t('Flags against him') +
@@ -3840,6 +3969,7 @@
         '<div class="tablewrap tall"><table><thead><tr><th>' + t('List') + '</th><th>' + t('Agent') + '</th>' +
         '<th>' + t('Branch') + '</th><th>' + t('Location') + '</th><th>' + t('Served') + '</th></tr></thead><tbody>' +
         baseRows + '</tbody></table></div></div>';
+      scoreHistoryLoad('bdScoreHist', d.bdo);
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   /* ---------------- the month's KPI set-up ----------------
@@ -4827,6 +4957,8 @@
     }
     if (a === 'pwd') { pwdModal(); return; }
     if (a === 'pwdSave') { pwdSave(); return; }
+    if (a === 'awardPartner') { partnerAwardModal(node.getAttribute('data-id'), node.getAttribute('data-name'), node.getAttribute('data-loc')); return; }
+    if (a === 'awardGo') { partnerAwardGo(node.getAttribute('data-id')); return; }
     if (a === 'closeModal') { closeModal(); return; }
     if (a === 'dashLoad') { state.month = elById('dashMonth').value; renderTab(); return; }
     if (a === 'liveLoad') { liveTodayLoad(); return; }

@@ -5,6 +5,64 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.56.0 — 2026-09-01 · A partner-served agent is the OM's to give, and a score you can see a year of
+
+**Reported:** a BDO could overturn an agent the performance file had put down to the partner.
+
+He could, and the app was built to let him: he tapped SERVE, was made to attach a receipt photo,
+kept the credit, and a flag went up so the OM could rule on it **afterwards** — while the credit was
+already counting towards his month and the commission settled on it.
+
+That is the wrong way round. The office record says the partner served that agent, and overturning
+the office record is a management decision, not a field one. Judging it after the money has started
+moving means the OM is always arguing backwards.
+
+**Now:** `kpi_mark` refuses a partner-served agent to anyone who is not management, and `kpi_unmark`
+no longer lets a BDO reverse a `partners` **serving** mark to free the agent up first — that
+two-step was the actual route, and closing only the front door would have left it open. Visits, APK
+and activeness are untouched: none of them moves an agent between rounds or feeds the serving
+figure the commission is settled on.
+
+The BDO is not left at a wall. He is told the credit is not his to take and that his OM can award
+it to him, and it counts in his month exactly the same.
+
+**The OM's side.** A PARTNER agent now carries an **Award to a BDO** button on the agents list. It
+takes the credit off the partner and gives it to the officer the OM names, in one click — behind
+which it is still the honest two steps, reverse then re-write.
+
+Three things had to move for that to work at all:
+
+- `kpi_mark` required the `mybase` permission, which the OM **does not have** — he has no base of
+  his own. Management now passes that gate on its own authority.
+- the compulsory-receipt rule is the **field officer's** rule. Holding the OM to another man's
+  compulsory photo would have blocked every award and told him it was "compulsory for you", which
+  it is not. Management is exempt; his ruling is the evidence, and the audit trail records it.
+- `agent_month_kpi.awarded_by` (**schema v21**) records who authorised the claim. Without it the
+  next performance upload would raise the partner flag all over again against a credit the OM had
+  just granted, and he would spend the month clearing his own decision.
+
+**Also: a BDO's weighted score, month by month.** The app only ever showed the month it was standing
+in, so "is this man getting better or worse" — the question an appraisal actually turns on — was
+being argued from memory. `bdo_score_history` reads the same maths (`bdo_score`, so a KPI switched
+off in a given month is still not scored in that month) back over every month the office has run.
+
+It appears twice: on the BDO's own dashboard under his score, and on the OM's per-officer page. Both
+show the average he has actually achieved, his best and lowest months, and the change from one month
+to the next — the direction matters more than any single month.
+
+A month with **no targets set** shows no score rather than 0, and is left out of the average. Nobody
+scored zero; the OM simply never set a target, and a zero would punish a man for a month that was
+never measured.
+
+**On flags outnumbering serving.** Asked and answered rather than changed, because it is arithmetic,
+not a bug. A flag is raised per **KPI**, and there are four; serving is one agent, once. An agent in
+no performance file at all flags every KPI claimed on him in one go — and those are exactly the
+agents contributing nothing to serving. The two numbers count different things over different
+populations, so flags exceeding serving is expected. One real reduction did come out of this
+release: an OM-awarded partner claim is no longer re-flagged at every upload.
+
+---
+
 ## v1.55.0 — 2026-08-18 · Switching a KPI off now means everywhere
 
 **Reported:** a KPI removed from this month's targets still appeared on the BDO's agent list.
