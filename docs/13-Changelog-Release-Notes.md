@@ -5,6 +5,69 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.57.0 — 2026-09-02 · The week, growing the round, and one clock
+
+**Reported:** three things — weekly targets that decide fuel, a base-growth target counted from
+where a man ended, and "the time used is not Dar es Salaam".
+
+### The clock, first, because the other two are counted with it
+
+PHP was already on `Africa/Dar_es_Salaam`. **MySQL was never told anything.** It ran in the hosting
+server's zone — UTC on most cPanel boxes — and 17 columns `DEFAULT CURRENT_TIMESTAMP` while every
+`NOW()` reads the same clock. So one action wrote two different times: `service_history` took the
+EAT date from PHP, `agent_month_kpi.at` took the UTC stamp from MySQL, three hours behind.
+
+Work done after 21:00 was filed on the previous day. The 6-hour correction window in `kpi_unmark`
+measured against the wrong *now*. The session is now pinned to `+03:00` — an **offset**, not a named
+zone, because shared hosting rarely has MySQL's timezone tables loaded, and EAT has no daylight
+saving so the offset *is* the zone, permanently. `health` reports both clocks and whether they
+agree, so drift can be seen rather than deduced from odd timestamps weeks later.
+
+This had to land before the weekly system: a week is a span of dates, and dates that were three
+hours out put Friday evening's work into the wrong week.
+
+### The week (schema v22)
+
+Fuel is issued weekly, so it has to be earned weekly — and every target in the app was month-shaped.
+Nothing could say what a man had to do by Friday.
+
+A week is **whatever span of dates the OM gives it**, not a calendar week, because the office does
+not always run Monday to Sunday and a rule that pretends otherwise gets worked around rather than
+followed. Three KPIs:
+
+- **visits** — a count;
+- **serving** — a **percentage of his own round**, not a count. A man holding 40 agents and a man
+  holding 300 cannot be asked for the same number, but *a quarter of your round* is the same work
+  for both, which is also why one figure can fairly be given to everybody at once;
+- **activeness** — a count.
+
+Weights total 100 and the weighted average **is** the fuel percentage for the week that follows —
+82% earns 82% of the fuel. The OM sets a week per officer or gives one week to everybody in a click;
+each officer sees his own line, and his fuel, on his own dashboard while there is still time in the
+week to change it.
+
+### Growing the round
+
+Every other KPI starts each month at nothing. The round does not — he begins with the agents he
+ended on. Scoring "reach 350" as `actual / target` would pay a man for 279 agents he already had,
+and hand whoever holds the biggest round 80% for doing nothing at all.
+
+So the floor moves to where he ended. **279 → 350 is a target of 71**, the 280th agent is the first
+that counts, and the man who ended on 40 and the man who ended on 300 are both scored on what they
+actually added. The floor is filled in automatically from where he finished last month; the OM can
+overrule it for a man who transferred in mid-month holding somebody else's round.
+
+Setting targets for everyone at once shares the **ceiling** but never the floor — they did not all
+end the month in the same place, and a shared floor would score them on rounds they never had.
+
+Base growth is a **person's** KPI, never an office one: the office does not gain agents, officers
+do. It joins `TARGET_DEFS` and is deliberately kept out of `OFFICE_DEFS`, because the office screen
+validates its weights against the server's own office KPI list and a sixth row there would push that
+total past 100 and refuse every save. Its default weight is 0 — a weight that appeared by itself
+would silently take a slice off every other KPI the first time the screen was opened.
+
+---
+
 ## v1.56.0 — 2026-09-01 · A partner-served agent is the OM's to give, and a score you can see a year of
 
 **Reported:** a BDO could overturn an agent the performance file had put down to the partner.

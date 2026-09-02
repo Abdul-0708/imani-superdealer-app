@@ -881,15 +881,24 @@
     { key: 'data', label: 'Settings & Data', icon: 'lock' },
     { key: 'admin', label: 'Admin', icon: 'lock' }
   ];
-  var TARGET_DEFS = [
+  /* The five KPIs both the office and each officer are measured on. */
+  var CORE_DEFS = [
     { key: 'serving', label: 'Serving', icon: 'users', hint: 'unique agents served' },
     { key: 'float', label: 'Float', icon: 'dollar', hint: 'float from SERVED agents only' },
     { key: 'visits', label: 'Agent Visits', icon: 'target', hint: 'visits (YES)' },
     { key: 'apk', label: 'Agent APK', icon: 'rotate', hint: 'on required APK version' },
     { key: 'activeness', label: 'Agent Activeness', icon: 'zap', hint: 'waked (inactive -> active)' }
   ];
-  /* Office KPIs = the five above + withdraw volume (office-wide, no BDO attached). */
-  var OFFICE_DEFS = TARGET_DEFS.concat([
+  /* Growing the round is a PERSON's target, never an office one - the office
+   * does not gain agents, officers do. It must therefore sit in TARGET_DEFS
+   * and NOT in OFFICE_DEFS: the office screen validates its weights against
+   * the server's own office KPI list, so a sixth row here would push that
+   * total past 100 and refuse every save. */
+  var TARGET_DEFS = CORE_DEFS.concat([
+    { key: 'base', label: 'Base growth', icon: 'users', hint: 'agents added beyond where he ended' }
+  ]);
+  /* Office KPIs = the five + withdraw volume (office-wide, no BDO attached). */
+  var OFFICE_DEFS = CORE_DEFS.concat([
     { key: 'withdraw', label: 'Withdraw Volume', icon: 'chart', hint: 'cumulative from the uploaded file' }
   ]);
 
@@ -1496,6 +1505,9 @@
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         scorePanel +
+        '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
+        '<p class="note">' + t('Visits, serving as a share of your round, and activeness. The weighted average is the percentage of fuel you get for next week.') + '</p>' +
+        '<div id="myFuelBox"></div></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
         '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
         '<div id="myScoreHist"></div></div>' +
@@ -1505,6 +1517,7 @@
         teamBoard;
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
+      myFuelLoad('myFuelBox');
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -2077,6 +2090,65 @@
    * A month with no targets shows no score rather than 0 - nobody scored zero,
    * the OM simply never set a target, and it is left out of the average.
    */
+  /* ---------------- his own week, and the fuel it earns ----------------
+   * The OM sees everybody's week on the Targets screen. The officer needs the
+   * one line that concerns him, on the screen he actually opens, while there
+   * is still time in the week to change the number.
+   */
+  function myFuelLoad(boxId) {
+    var box = elById(boxId); if (!box) return;
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    api('weeks_get').then(function (d) {
+      var weeks = d.weeks || [];
+      if (!weeks.length) {
+        box.innerHTML = '<p class="note">' + t('Your OM has not set up any week yet.') + '</p>';
+        return null;
+      }
+      /* the week today falls inside; otherwise the most recent one */
+      var cur = null;
+      for (var i = 0; i < weeks.length; i++) {
+        if (weeks[i].date_from <= d.today && d.today <= weeks[i].date_to) { cur = weeks[i]; break; }
+      }
+      if (!cur) cur = weeks[0];
+      var live = (cur.date_from <= d.today && d.today <= cur.date_to);
+      return api('weekly_performance', { qs: '&weekId=' + cur.id }).then(function (pr) {
+        box.innerHTML = myFuelHtml(cur, (pr.rows || [])[0], live);
+      });
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function myFuelHtml(week, r, live) {
+    var head = '<p class="note">' + esc(week.label) + ' &middot; ' + esc(week.date_from) + ' - ' + esc(week.date_to) +
+      (live ? ' <span class="pill fire">' + t('running now') + '</span>'
+            : ' <span class="pill dim">' + t('finished') + '</span>') + '</p>';
+    if (!r || !r.hasTargets) {
+      return head + '<p class="note">' + t('No weekly target has been set for you on this week yet.') + '</p>';
+    }
+    var k = r.kpis || {};
+    function bar(label, x, isPct) {
+      if (!x) return '';
+      var raw = x.pct == null ? null : x.pct;
+      var pct = raw == null ? 0 : Math.max(0, Math.min(100, raw));
+      var cls = raw == null ? '' : (raw < 50 ? ' red' : (raw >= 80 ? ' green' : ''));
+      var unit = isPct ? '%' : '';
+      return '<div class="tg-row"><span class="tg-name">' + t(label) + '</span>' +
+        '<div class="bar" style="flex:1"><i class="' + cls + '" style="width:' + pct + '%"></i></div>' +
+        '<span class="note" style="min-width:140px">' + (x.actual == null ? '-' : x.actual + unit) +
+        ' / ' + x.target + unit + (raw == null ? '' : ' &middot; ' + raw + '%') + '</span></div>';
+    }
+    var fuelCls = r.fuelPct == null ? 'dim' : (r.fuelPct < 50 ? 'bad' : (r.fuelPct >= 80 ? 'ok' : 'gold'));
+    return head +
+      '<div class="grid cards" style="margin-bottom:10px">' +
+      card('percent', t('Weighted this week'), (r.score == null ? '-' : r.score + '%'), t('visits, serving, activeness')) +
+      card('flame', t('Fuel earned for next week'), (r.fuelPct == null ? '-' : r.fuelPct + '%'),
+           live ? t('still moving - the week is not over') : t('final for this week')) +
+      '</div>' +
+      '<div class="pill ' + fuelCls + '" style="margin-bottom:8px;display:inline-block">' +
+      (r.fuelPct == null ? t('no score yet') : r.fuelPct + '% ' + t('of fuel')) + '</div>' +
+      bar('Agent Visits', k.visits, false) +
+      bar('Serving (of your round of ' + (r.baseCount || 0) + ')', k.serving, true) +
+      bar('Activeness', k.activeness, false);
+  }
+
   function scoreHistoryLoad(boxId, bdo) {
     var box = elById(boxId); if (!box) return;
     box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
@@ -3130,7 +3202,10 @@
   }
 
   /* ---------------- targets (typed) + per-BDO targets & weights ---------------- */
-  var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15 };
+  /* base defaults to 0: growing the round is an intention the OM opts into,
+   * and a weight that appeared by itself would silently take 10% off every
+   * other KPI the first time this screen was opened. */
+  var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15, base: 0 };
   /* CAREFUL: `t` is the global translator. Never name a local that, here or in
    * any callback below - shadowing it turns every t('...') in this function
    * into "t is not a function" and blanks the whole page. */
@@ -3144,14 +3219,30 @@
     var opts = bt.bdos.map(function (b) {
       return '<option value="' + esc(b.username) + '"' + (b.username === sel ? ' selected' : '') + '>' + esc(b.name) + (byBdo[b.username] ? ' ✓' : '') + '</option>';
     }).join('');
+    /* Where the selected officer ENDED last month. Growth is counted up from
+     * here, so the OM has to see it while he is typing the ceiling - a target
+     * of 350 means nothing until you know whether he is standing on 279 or on
+     * 40. Blank keeps it automatic. */
+    var floor = (bt.baseFloor && bt.baseFloor[sel] != null) ? bt.baseFloor[sel] : 0;
+    var startVal = cur.base_start != null && Number(cur.base_start) > 0 ? cur.base_start : '';
     var rows = TARGET_DEFS.map(function (td) {
       var col = td.key;
       var tv = cur[col + '_target'], wv = cur[col + '_w'];
+      var extra = '', hint = td.hint;
+      if (col === 'base') {
+        var effective = startVal === '' ? floor : Number(startVal);
+        var need = (tv != null && Number(tv) > effective) ? (Number(tv) - effective) : 0;
+        extra = '<div class="field"><label>Counts from</label>' +
+          '<input id="bt_base_start" type="number" min="0" style="width:120px" value="' + esc(startVal) + '" placeholder="' + floor + '"></div>';
+        hint = 'he ended on ' + floor + ' - only agents beyond that count' +
+          (need > 0 ? ' (needs ' + need + ' more)' : '');
+      }
       return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
         '<span class="tg-name">' + esc(td.label) + '</span>' +
         '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
+        extra +
         '<div class="field"><label>Weight %</label><input id="btw_' + col + '" type="number" min="0" max="100" style="width:90px" class="bt-w" value="' + (wv != null ? esc(wv) : DEFAULT_W[col]) + '"></div>' +
-        '<span class="note" style="flex:1">' + esc(td.hint) + '</span></div>';
+        '<span class="note" style="flex:1">' + esc(hint) + '</span></div>';
     }).join('');
     return '<div class="panel"><h2>' + svg('users') + 'BDO Targets &amp; KPI Weights &mdash; ' + esc(m) + '</h2>' +
       '<p class="note">Set each BDO\'s monthly target per KPI and how much each KPI weighs in his score. Weights must total <b>100%</b>. Score flags: <span class="pill bad">below 50%</span> <span class="pill gold">50-79%</span> <span class="pill ok">80%+ excellent</span></p>' +
@@ -3246,6 +3337,9 @@
   function btSave() {
     var body = { month: elById('tgMonth') ? elById('tgMonth').value : (state.month || state.openMonth), bdo: elById('btBdo').value };
     TARGET_DEFS.forEach(function (td) { body[td.key] = elById('bt_' + td.key).value; body[td.key + '_w'] = elById('btw_' + td.key).value; });
+    /* blank = 'where he ended', which the server works out for itself */
+    var bs = elById('bt_base_start');
+    if (bs) body.base_start = bs.value;
     api('bdo_targets_save', { body: body })
       .then(function () { toast('Targets & weights saved for ' + body.bdo, 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
@@ -3278,6 +3372,196 @@
    * all-stations roll-up; picking ARUSHA edits Arusha's own numbers, which is
    * what Target Attainment reads when the dashboard is scoped to Arusha.
    * CAREFUL: never name a local variable `t` in here - `t` is the translator. */
+  /* ================= THE WEEK: targets, and the fuel they earn =================
+   *
+   * Fuel is issued weekly, so it has to be earned weekly. Everything else in
+   * this app is month-shaped, which could never answer the only question that
+   * matters on a Friday: did he do enough this week to fuel next week.
+   *
+   * The dates are typed, not derived. The office does not always run Monday to
+   * Sunday, and a rule that pretends otherwise gets worked around.
+   */
+  var WEEK_DEFS = [
+    { key: 'visits', label: 'Agent Visits', icon: 'target', unit: '', hint: 'visits marked in the week' },
+    { key: 'serving', label: 'Serving', icon: 'users', unit: '%', hint: 'percent OF HIS OWN ROUND served in the week' },
+    { key: 'activeness', label: 'Activeness', icon: 'zap', unit: '', hint: 'agents waked in the week' }
+  ];
+  var WEEK_DEFAULT_W = { visits: 30, serving: 45, activeness: 25 };
+
+  function weeklyPanel() {
+    return '<div class="panel"><h2>' + svg('cal') + t('Weekly targets and fuel') + '</h2>' +
+      '<p class="note">' +
+      t('Fuel is issued weekly, so it is earned weekly. Give the week the dates it actually ran - it does not have to be Monday to Sunday. The weighted average of the three is the percentage of fuel for the week that follows.') +
+      '</p><div id="weeklyBox"><div class="note">' + t('Loading') + '...</div></div></div>';
+  }
+
+  function weeklyLoad() {
+    var box = elById('weeklyBox'); if (!box) return;
+    api('weeks_get').then(function (d) {
+      state._weeks = d.weeks || [];
+      state._today = d.today;
+      if (!state._weekId && state._weeks.length) state._weekId = state._weeks[0].id;
+      if (state._weekId && !state._weeks.some(function (w) { return String(w.id) === String(state._weekId); })) {
+        state._weekId = state._weeks.length ? state._weeks[0].id : 0;
+      }
+      box.innerHTML = weekChooserHtml() + '<div id="weekBody"></div>';
+      weekBodyLoad();
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+
+  function weekChooserHtml() {
+    var canE = can('targets', 'e');
+    var opts = state._weeks.map(function (w) {
+      return '<option value="' + w.id + '"' + (String(w.id) === String(state._weekId) ? ' selected' : '') + '>' +
+        esc(w.label) + ' (' + esc(w.date_from) + ' - ' + esc(w.date_to) + ')</option>';
+    }).join('');
+    return '<div class="row" style="margin:10px 0;align-items:flex-end;flex-wrap:wrap;gap:8px">' +
+      (state._weeks.length
+        ? '<div class="field"><label>' + t('Week') + '</label><select id="wkPick" data-change="wkPick">' + opts + '</select></div>'
+        : '<span class="note">' + t('No week has been set up yet - give the first one its dates below.') + '</span>') +
+      (canE && state._weeks.length ? '<button class="ghost mini" data-action="wkDelete">' + t('Delete this week') + '</button>' : '') +
+      '</div>' +
+      (canE
+        ? '<div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:8px;border-top:1px solid var(--line);padding-top:10px">' +
+          '<div class="field"><label>' + t('From') + '</label><input id="wkFrom" type="date"></div>' +
+          '<div class="field"><label>' + t('To') + '</label><input id="wkTo" type="date"></div>' +
+          '<div class="field"><label>' + t('Name (optional)') + '</label><input id="wkLabel" placeholder="' + t('e.g. Week 1 September') + '"></div>' +
+          '<button class="btn" data-action="wkNew">' + t('Add this week') + '</button></div>'
+        : '');
+  }
+
+  function weekBodyLoad() {
+    var box = elById('weekBody'); if (!box) return;
+    if (!state._weekId) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    var qs = '&weekId=' + state._weekId;
+    Promise.all([api('weekly_targets_get', { qs: qs }), api('weekly_performance', { qs: qs })])
+      .then(function (rr) { box.innerHTML = weekTargetsHtml(rr[0]) + weekPerfHtml(rr[1]); wkUpdateSum(); })
+      .catch(function (e) { box.innerHTML = errBox(e); });
+  }
+
+  function weekTargetsHtml(d) {
+    if (!can('targets', 'v')) return '';
+    var canE = can('targets', 'e');
+    var byBdo = {};
+    (d.targets || []).forEach(function (r) { byBdo[r.bdo] = r; });
+    var bdos = d.bdos || [];
+    var sel = state._wkBdo && bdos.some(function (b) { return b.username === state._wkBdo; })
+      ? state._wkBdo : (bdos[0] ? bdos[0].username : '');
+    state._wkBdo = sel;
+    var cur = byBdo[sel] || {};
+    var round = (d.rounds && d.rounds[sel] != null) ? d.rounds[sel] : 0;
+    var opts = bdos.map(function (b) {
+      return '<option value="' + esc(b.username) + '"' + (b.username === sel ? ' selected' : '') + '>' +
+        esc(b.name) + (byBdo[b.username] ? ' \u2713' : '') + '</option>';
+    }).join('');
+    var rows = WEEK_DEFS.map(function (wd) {
+      var k = wd.key;
+      var tv = cur[k + '_target'], wv = cur[k + '_w'];
+      var hint = wd.hint;
+      if (k === 'serving') {
+        /* the percentage means nothing without the round it is a percentage OF */
+        var n = tv != null ? Math.round(Number(tv) / 100 * round) : 0;
+        hint = 'percent of his round of ' + round + (tv ? ' - about ' + n + ' agents' : '');
+      }
+      return '<div class="tg-row"><span class="tg-ic">' + svg(wd.icon) + '</span>' +
+        '<span class="tg-name">' + esc(wd.label) + '</span>' +
+        '<div class="field"><label>Target' + (wd.unit ? ' ' + wd.unit : '') + '</label>' +
+        '<input id="wk_' + k + '" type="number" min="0"' + (k === 'serving' ? ' max="100"' : '') +
+        ' style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
+        '<div class="field"><label>Weight %</label><input id="wkw_' + k + '" type="number" min="0" max="100" style="width:90px" class="wk-w" value="' +
+        (wv != null ? esc(wv) : WEEK_DEFAULT_W[k]) + '"></div>' +
+        '<span class="note" style="flex:1">' + esc(hint) + '</span></div>';
+    }).join('');
+    return '<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">' +
+      '<div class="row" style="margin-bottom:6px;align-items:flex-end;flex-wrap:wrap;gap:8px">' +
+      '<div class="field"><label>' + t('BDO') + '</label><select id="wkBdo" data-change="wkBdoPick">' + opts + '</select></div>' +
+      '<div class="spacer"></div><span class="note">' + t('Weights total') + ': <b id="wkSum">?</b>%</span>' +
+      (canE ? '<button class="btn" data-action="wkSave">' + t('Save his week') + '</button>' : '') + '</div>' +
+      rows +
+      (canE
+        ? '<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px">' +
+          '<button class="ghost" data-action="wkSaveAll">' + t('Give this week to every BDO') + '</button>' +
+          '<button class="ghost" data-action="wkSaveMissing">' + t('Only those with none set') + '</button>' +
+          '<span class="note" style="flex:1">' + t('Serving is a percentage of each man own round, so one figure is fair for all of them.') + '</span></div>'
+        : '') + '</div>';
+  }
+
+  function weekPerfHtml(d) {
+    var rows = (d.rows || []).map(function (r) {
+      if (!r.hasTargets) {
+        return '<tr><td class="c-name">' + esc(r.name) + '</td><td colspan="4" class="note">' +
+          t('no weekly target set') + '</td><td><span class="pill dim">-</span></td></tr>';
+      }
+      var k = r.kpis || {};
+      function cell(x) {
+        if (!x || x.pct == null) return '<span class="pill dim">-</span>';
+        var cls = x.pct < 50 ? 'bad' : (x.pct >= 80 ? 'ok' : 'gold');
+        return '<span class="pill ' + cls + '">' + x.pct + '%</span>' +
+          '<div class="note">' + x.actual + (x.kind === 'pct' ? '%' : '') + ' / ' + x.target + (x.kind === 'pct' ? '%' : '') + '</div>';
+      }
+      var fuelCls = r.fuelPct == null ? 'dim' : (r.fuelPct < 50 ? 'bad' : (r.fuelPct >= 80 ? 'ok' : 'gold'));
+      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + t('round') + ': ' + fmt(r.baseCount || 0) + '</div></td>' +
+        '<td>' + cell(k.visits) + '</td><td>' + cell(k.serving) + '</td><td>' + cell(k.activeness) + '</td>' +
+        '<td><b>' + (r.score == null ? '-' : r.score + '%') + '</b></td>' +
+        '<td><span class="pill ' + fuelCls + '">' + (r.fuelPct == null ? '-' : r.fuelPct + '% ' + t('fuel')) + '</span></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">' + t('Nobody has a target for this week yet.') + '</td></tr>';
+    return '<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">' +
+      '<h3 style="margin:0 0 4px">' + t('What the week earned') + '</h3>' +
+      '<p class="note">' + t('The weighted average is the fuel percentage for next week.') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('Visits') + '</th>' +
+      '<th>' + t('Serving') + '</th><th>' + t('Activeness') + '</th><th>' + t('Weighted') + '</th><th>' + t('Fuel') + '</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
+
+  function wkUpdateSum() {
+    var n = 0;
+    WEEK_DEFS.forEach(function (wd) { var el = elById('wkw_' + wd.key); if (el) n += Number(el.value) || 0; });
+    var el2 = elById('wkSum');
+    if (el2) { el2.textContent = n; el2.style.color = n === 100 ? 'var(--ok)' : 'var(--bad)'; }
+  }
+  function wkBody() {
+    var b = { weekId: state._weekId };
+    WEEK_DEFS.forEach(function (wd) {
+      b[wd.key] = elById('wk_' + wd.key).value;
+      b[wd.key + '_w'] = elById('wkw_' + wd.key).value;
+    });
+    return b;
+  }
+  function wkNew() {
+    var from = elById('wkFrom').value, to = elById('wkTo').value;
+    if (!from || !to) { toast(t('Give the week both dates'), 'warn'); return; }
+    api('week_save', { body: { from: from, to: to, label: elById('wkLabel').value } })
+      .then(function (d) { state._weekId = d.id; toast(t('Week added'), 'ok'); weeklyLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function wkDelete() {
+    if (!window.confirm(t('Delete this week and every target set on it?'))) return;
+    api('week_delete', { body: { id: state._weekId } })
+      .then(function () { state._weekId = 0; toast(t('Week deleted'), 'ok'); weeklyLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function wkSave() {
+    var b = wkBody(); b.bdo = elById('wkBdo').value;
+    api('weekly_targets_save', { body: b })
+      .then(function () { toast(t('Week saved for') + ' ' + b.bdo, 'ok'); weekBodyLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function wkSaveAll(onlyMissing) {
+    var b = wkBody();
+    if (onlyMissing) b.onlyMissing = '1';
+    var ask = onlyMissing
+      ? t('Give this week to every BDO who has none set?')
+      : t('Overwrite this week for EVERY BDO? Individual changes will be replaced.');
+    if (!window.confirm(ask)) return;
+    api('weekly_targets_save_all', { body: b })
+      .then(function (d) {
+        toast(d.set + ' ' + t('BDOs set') + (d.kept ? ' - ' + d.kept + ' ' + t('left untouched') : ''), 'ok');
+        weekBodyLoad();
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
   function viewTargets(v) {
     var m0 = state.month || state.openMonth || curMonth();
     /* no bdo_performance call any more - that table moved to the BDOs window */
@@ -3331,9 +3615,11 @@
         fields + '</div>' +
         kpiSetupPanel(kcfg) +
         bdoTargetsPanel(bt) +
+        weeklyPanel() +
         '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
+      weeklyLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function tgSave() {
@@ -4957,6 +5243,11 @@
     }
     if (a === 'pwd') { pwdModal(); return; }
     if (a === 'pwdSave') { pwdSave(); return; }
+    if (a === 'wkNew') { wkNew(); return; }
+    if (a === 'wkDelete') { wkDelete(); return; }
+    if (a === 'wkSave') { wkSave(); return; }
+    if (a === 'wkSaveAll') { wkSaveAll(false); return; }
+    if (a === 'wkSaveMissing') { wkSaveAll(true); return; }
     if (a === 'awardPartner') { partnerAwardModal(node.getAttribute('data-id'), node.getAttribute('data-name'), node.getAttribute('data-loc')); return; }
     if (a === 'awardGo') { partnerAwardGo(node.getAttribute('data-id')); return; }
     if (a === 'closeModal') { closeModal(); return; }
@@ -5423,6 +5714,8 @@
       if (n.parentNode && n.parentNode.classList) n.parentNode.classList.toggle('active', n.checked);
       return;
     }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'wkPick') { state._weekId = n.value; weekBodyLoad(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'wkBdoPick') { state._wkBdo = n.value; weekBodyLoad(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uSpec') { uPatch(n.getAttribute('data-id'), { specialty: n.value }); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'dashStation') {
@@ -5454,6 +5747,7 @@
   function onInput(e) {
     if (e.target && e.target.classList && e.target.classList.contains('bt-w')) { btUpdateSum(); return; }
     if (e.target && e.target.classList && e.target.classList.contains('tg-w')) { tgUpdateSum(); return; }
+    if (e.target && e.target.classList && e.target.classList.contains('wk-w')) { wkUpdateSum(); return; }
     if (e.target && ['flSearch','flBdo','flKpi','flStatus'].indexOf(e.target.id) >= 0) { flApply(); return; }
     if (e.target && e.target.id === 'agentSearch') {
       /* live search from the first letter, tight debounce for speed */
