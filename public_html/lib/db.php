@@ -24,6 +24,23 @@ function db() {
       PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
       PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ));
+    /*
+     * THE DATABASE KEEPS ITS OWN CLOCK, AND IT IS NOT OURS.
+     *
+     * PHP is on Africa/Dar_es_Salaam (helpers.php). MySQL is on whatever the
+     * hosting server runs in - UTC on most cPanel boxes - and 17 columns
+     * DEFAULT to CURRENT_TIMESTAMP while every NOW() reads the same clock. So
+     * one action wrote two different times: service_history got the EAT date
+     * from PHP, agent_month_kpi.at got the UTC stamp from MySQL, three hours
+     * behind. Work done at 01:00 was filed on yesterday, and the 6-hour
+     * correction window in kpi_unmark measured against the wrong now.
+     *
+     * A numeric offset, not 'Africa/Dar_es_Salaam': named zones need MySQL's
+     * timezone tables loaded, which shared hosting usually does not have.
+     * East Africa Time is UTC+3 with no daylight saving, so +03:00 IS the
+     * zone, permanently.
+     */
+    $pdo->exec("SET time_zone = '+03:00'");
     ensure_schema($pdo);
   }
   return $pdo;
@@ -237,6 +254,9 @@ function schema_v2_ddl() {
     visits_w INT NOT NULL DEFAULT 0,
     apk_w INT NOT NULL DEFAULT 0,
     activeness_w INT NOT NULL DEFAULT 0,
+    base_start INT NOT NULL DEFAULT 0,
+    base_target INT NOT NULL DEFAULT 0,
+    base_w INT NOT NULL DEFAULT 0,
     PRIMARY KEY (month, bdo)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ";
@@ -410,6 +430,63 @@ function upgrade_schema($pdo) {
     schema_v21_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "21" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 22) {
+    schema_v22_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "22" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v22: THE WEEK, and GROWING THE BASE.
+ *
+ * Two things the month could not express.
+ *
+ * 1. A WEEK. Fuel is issued weekly, so it has to be earned weekly, and a
+ *    month-shaped target could not say what a man had to do by Friday. A
+ *    week here is whatever dates the OM says it is - not a calendar week -
+ *    because the office does not always run Monday to Sunday and a rule that
+ *    pretends otherwise gets worked around rather than followed.
+ *
+ * 2. GROWING THE BASE. Every other KPI measures work done from nothing:
+ *    served this month, visited this month. Base is not like that - a man
+ *    does not start each month with no agents, he starts with the round he
+ *    ended on. Asking him to 'reach 350' scores him on 279 agents he
+ *    already had. base_start is where he ended, and only what he adds
+ *    beyond it counts, so 279 -> 350 is a target of 71 new agents and the
+ *    280th is the first one that pays.
+ */
+function schema_v22_apply($pdo) {
+  $pdo->exec("
+  CREATE TABLE IF NOT EXISTS weeks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    label VARCHAR(40) NOT NULL DEFAULT '',
+    month CHAR(7) NOT NULL DEFAULT '',
+    date_from DATE NOT NULL,
+    date_to DATE NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_week_span (date_from, date_to),
+    INDEX idx_week_month (month)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS weekly_targets (
+    week_id INT NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    visits_target INT NOT NULL DEFAULT 0,
+    serving_target INT NOT NULL DEFAULT 0,
+    activeness_target INT NOT NULL DEFAULT 0,
+    visits_w INT NOT NULL DEFAULT 0,
+    serving_w INT NOT NULL DEFAULT 0,
+    activeness_w INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (week_id, bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
+  /* base growth joins the monthly weighted average like any other KPI */
+  $alters = array(
+    'ALTER TABLE bdo_targets ADD COLUMN base_start INT NOT NULL DEFAULT 0',
+    'ALTER TABLE bdo_targets ADD COLUMN base_target INT NOT NULL DEFAULT 0',
+    'ALTER TABLE bdo_targets ADD COLUMN base_w INT NOT NULL DEFAULT 0',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
 }
 
 /*

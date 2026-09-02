@@ -286,6 +286,11 @@ function next_month($ym) {
   $m++; if ($m > 12) { $m = 1; $y++; }
   return sprintf('%04d-%02d', $y, $m);
 }
+function prev_month($ym) {
+  $y = (int)substr($ym, 0, 4); $m = (int)substr($ym, 5, 2);
+  $m--; if ($m < 1) { $m = 12; $y--; }
+  return sprintf('%04d-%02d', $y, $m);
+}
 function open_month() {
   maybe_roll_month();
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
@@ -1188,6 +1193,20 @@ function office_attainment($month, $station = '') {
 }
 
 /* One BDO's actuals for a month: ledger credits + float (uploads + his typed daily reports). */
+/* Agents in his round at this moment. This is a STANDING figure, not work
+ * done in the month, which is exactly why base growth cannot be scored the
+ * way the other KPIs are - see bdo_score(). */
+function bdo_base_count($month, $bdo) {
+  $q = db()->prepare('SELECT COUNT(*) c FROM base WHERE month = ? AND bdo = ?');
+  $q->execute(array($month, $bdo));
+  $r = $q->fetch();
+  return $r ? (int)$r['c'] : 0;
+}
+/* Where he ended last month: the floor this month's growth is measured from.
+ * The OM can overrule it, but he should rarely have to. */
+function base_start_default($month, $bdo) {
+  return bdo_base_count(prev_month($month), $bdo);
+}
 function bdo_actuals($month, $bdo) {
   $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? AND bdo = ? GROUP BY kpi');
   $st->execute(array($month, $bdo));
@@ -1207,6 +1226,7 @@ function bdo_actuals($month, $bdo) {
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
   $f->execute(array($month, $bdo));
   $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
+  $k['base'] = bdo_base_count($month, $bdo);
   return $k;
 }
 
@@ -1240,6 +1260,7 @@ function bdo_actuals_unflagged($month, $bdo) {
   $f = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? AND bdo = ?');
   $f->execute(array($month, $bdo));
   $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
+  $k['base'] = bdo_base_count($month, $bdo);
   return $k;
 }
 
@@ -1278,6 +1299,9 @@ function kpi_defs() {
     'visits' => 'visit',
     'apk' => 'apk',
     'activeness' => 'active',
+    /* GROWING THE ROUND. Scored from where he ended, not from zero -
+     * see bdo_score() and schema v22. */
+    'base' => 'base',
   );
 }
 
@@ -1297,13 +1321,90 @@ function bdo_score($actuals, $t) {
     $target = (float)$t[$col . '_target'];
     $w = (int)$t[$col . '_w'];
     $actual = (float)$actuals[$ak];
-    $pct = $target > 0 ? min(100, round($actual / $target * 100)) : null;
-    $kpis[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct);
+    if ($col === 'base') {
+      /*
+       * GROWTH, NOT SIZE.
+       *
+       * Every other KPI starts each month at nothing. The round does not: he
+       * begins with the agents he ended on. Scoring 'reach 350' as
+       * actual/target would pay him for 279 agents he already had and hand a
+       * man with a big round 80% for doing nothing at all.
+       *
+       * So the floor moves to where he ended. 279 -> 350 is a target of 71
+       * new agents, the 280th is the first that counts, and the man who
+       * ended on 40 and the man who ended on 300 are both scored on what
+       * they actually added.
+       */
+      $start = (float)(isset($t['base_start']) ? $t['base_start'] : 0);
+      $room = $target - $start;
+      $pct = $room > 0 ? min(100, max(0, round(($actual - $start) / $room * 100))) : null;
+      $kpis[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct,
+                          'start' => $start, 'gained' => max(0, $actual - $start), 'needed' => max(0, $room));
+    } else {
+      $pct = $target > 0 ? min(100, round($actual / $target * 100)) : null;
+      $kpis[$col] = array('actual' => $actual, 'target' => $target, 'weight' => $w, 'pct' => $pct);
+    }
     if ($w > 0 && $target > 0) { $acc += $pct * $w; $wsum += $w; }
   }
   $score = $wsum > 0 ? round($acc / $wsum) : null;
   $flag = $score === null ? 'none' : ($score < 50 ? 'red' : ($score >= 80 ? 'excellent' : 'mid'));
   return array('kpis' => $kpis, 'score' => $score, 'flag' => $flag);
+}
+
+/* ---------- the WEEK: fuel is issued weekly, so it is earned weekly ----------
+ *
+ * A week is whatever span of dates the OM defined (schema v22), not a
+ * calendar week - the office does not always run Monday to Sunday.
+ *
+ * Counted off agent_month_kpi.at, which is a real timestamp, so a range can
+ * be any length. Note this only reads true because the MySQL session is
+ * pinned to EAT (db.php): before that, work done after 21:00 was stamped
+ * with the previous day and fell into the wrong week.
+ */
+function week_actuals($from, $to, $bdo) {
+  $q = db()->prepare("SELECT kpi, COUNT(*) n FROM agent_month_kpi
+                      WHERE bdo = ? AND DATE(at) BETWEEN ? AND ?
+                      GROUP BY kpi");
+  $q->execute(array($bdo, $from, $to));
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  foreach ($q->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+  return $k;
+}
+
+/*
+ * The week's weighted score, which IS the fuel percentage for the week that
+ * follows. Three KPIs:
+ *
+ *   visits      - a count.
+ *   serving     - a PERCENTAGE OF HIS OWN ROUND, not a count. A man holding
+ *                 40 agents and a man holding 300 cannot be asked for the
+ *                 same number of visits-worth of serving; asking both for
+ *                 'a quarter of your round' is the same amount of work.
+ *   activeness  - a count.
+ *
+ * Weights are renormalised over whatever actually has a target and a weight,
+ * exactly as the monthly score does, so a week with only two of the three set
+ * up still scores out of 100 rather than quietly capping at the weight given.
+ */
+function week_score($actuals, $t, $baseCount) {
+  $kpis = array(); $wsum = 0; $acc = 0;
+  $servedPct = $baseCount > 0 ? ($actuals['served'] / $baseCount * 100) : null;
+  $spec = array(
+    'visits'     => array((float)$actuals['visit'],  (float)$t['visits_target'],     (int)$t['visits_w'],     'count'),
+    'serving'    => array($servedPct,                (float)$t['serving_target'],    (int)$t['serving_w'],    'pct'),
+    'activeness' => array((float)$actuals['active'], (float)$t['activeness_target'], (int)$t['activeness_w'], 'count'),
+  );
+  foreach ($spec as $key => $d) {
+    list($actual, $target, $w, $kind) = $d;
+    $pct = ($target > 0 && $actual !== null) ? min(100, max(0, round($actual / $target * 100))) : null;
+    $kpis[$key] = array('actual' => $actual === null ? null : round($actual, 1),
+                        'target' => $target, 'weight' => $w, 'pct' => $pct, 'kind' => $kind);
+    if ($w > 0 && $target > 0 && $pct !== null) { $acc += $pct * $w; $wsum += $w; }
+  }
+  $score = $wsum > 0 ? (int)round($acc / $wsum) : null;
+  /* The OM chose the direct rule: the score IS the fuel percentage. */
+  return array('kpis' => $kpis, 'score' => $score, 'fuelPct' => $score,
+               'baseCount' => (int)$baseCount, 'servedPct' => $servedPct === null ? null : round($servedPct, 1));
 }
 
 /* ---------- commission math (30% fixed / 70% variable; release table) ---------- */
