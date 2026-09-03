@@ -2255,19 +2255,27 @@ try {
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
                                               AND s.source <> 'bdo') AS in_file,
-                                     /* SERVED, and the file did NOT put it down to
-                                        the partner. Serving is only 'backed' when
-                                        the file credits a named officer - a row the
-                                        file attributes to the partner does not
-                                        vindicate a BDO who claims the same agent. */
+                                     /*
+                                      * SERVED IS SERVED, whoever the file put it down to.
+                                      *
+                                      * This used to require the file to credit a NAMED
+                                      * OFFICER, so a row the file attributed to the partner
+                                      * left the claim unbacked and raised a flag. But a flag
+                                      * is an accusation that the work was not done, and the
+                                      * file is agreeing here that it WAS: the agent was
+                                      * served. Who gets the credit for serving him is a
+                                      * separate question, and it is already settled
+                                      * elsewhere - the BDO cannot take a partner-served
+                                      * agent at all without his OM awarding him (v1.56.0).
+                                      * Having been refused the credit, he was then accused
+                                      * of lying about a visit that really happened.
+                                      *
+                                      * The same reading applies to visits and to waking an
+                                      * agent: if the file says it happened, it happened.
+                                      */
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
-                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED'
-                                              AND s.bdo <> 'partners') AS f_served,
-                                     EXISTS(SELECT 1 FROM service_history s
-                                            WHERE s.agent_id = k.agent_id AND s.month = k.month
-                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED'
-                                              AND s.bdo = 'partners') AS f_partner_served,
+                                              AND s.source <> 'bdo' AND s.served_status = 'SERVED') AS f_served,
                                      k.awarded_by AS awarded_by,
                                      EXISTS(SELECT 1 FROM service_history s
                                             WHERE s.agent_id = k.agent_id AND s.month = k.month
@@ -2358,14 +2366,11 @@ try {
           if (empty($carried[$kk])) continue;
           /* switched off this month = it did not exist this month */
           if ($liveMarks && count($liveMarks) && !in_array($kk, $liveMarks, true)) continue;
-          /* PARTNER-SERVED AGENT CLAIMED BY A BDO. He keeps the credit - his
-           * month is not cut on the strength of a spreadsheet column - but the
-           * OM is told, and decides. This makes the outcome the same whichever
-           * came first, the tap or the upload; before, tapping first won the
-           * credit silently and tapping second was refused outright. */
-          $detail = ($kk === 'served' && (int)$c['f_partner_served'])
-            ? 'Marked SERVED by ' . $who . ' but the performance file credits the PARTNER with serving this agent (' . $c['acc'] . ')'
-            : 'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')';
+          /* No partner-specific accusation any more: a partner-served agent now
+           * BACKS the claim above and never reaches this line. What is left here
+           * is the only thing a flag was ever meant to say - the file does not
+           * show this happening at all. */
+          $detail = 'Marked ' . strtoupper($kk) . ' by ' . $who . ' but ' . $saidWhat[$kk] . ' (' . $c['acc'] . ')';
           $insFlag->execute(array($month, $aid, $who, $kk, $detail));
           $keepAnswer($aid, $who, $kk);
           $flagged++;

@@ -5,6 +5,39 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.59.0 — 2026-09-03 · Served is served, whoever the file credits
+
+Following v1.58.0, the second half of the same complaint: a BDO marking an agent the file put down
+to the **partner** was flagged for it.
+
+A flag says *the work was not done*. But the file is agreeing that it **was** — the agent was
+served. Who earns the credit for serving him is a different question, and it is already settled
+somewhere else: since v1.56.0 a BDO cannot take a partner-served agent at all without his OM
+awarding him. He was refused the credit and then accused of lying about a visit that really
+happened.
+
+So `f_served` no longer requires the file to name an officer:
+
+```sql
+-- before: ... AND s.served_status = 'SERVED' AND s.bdo <> 'partners'
+-- now:    ... AND s.served_status = 'SERVED'
+```
+
+The partner-specific accusation — *"the performance file credits the PARTNER with serving this
+agent"* — is now unreachable and has been removed rather than left to rot.
+
+Visits, APK and activeness never carried this restriction; only serving did. All four now read the
+same way: **if the file says it happened, it happened.**
+
+This also settles a contradiction on the Flags screen itself. Its `matched` query counted
+partner-served rows as matched while the flag rule counted them as flagged, so one claim could
+appear as *both* — the two halves of that screen disagreed with each other. They now agree.
+
+What still flags, and should: a claim the file shows nothing for at all, and an agent who is in no
+performance file that month.
+
+---
+
 ## v1.58.0 — 2026-09-03 · A file that says nothing is not a file that says no
 
 **Reported:** the Flags screen showed 1,735 flags for one month — *"it is not true all these are
