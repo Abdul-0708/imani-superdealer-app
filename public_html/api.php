@@ -2279,6 +2279,46 @@ try {
                               WHERE k.month = ? AND k.source = 'bdo'
                                 AND k.bdo NOT IN ('partners','unassigned')");
         $rq2->execute(array($month));
+
+        /*
+         * DOES THE FILE EVEN CARRY THIS KPI?
+         *
+         * yesno() has two outcomes, not three: a column that is missing and a
+         * cell left blank both come back 'NO', exactly like a real refusal.
+         * The reconciliation then read that manufactured 'NO' as the file
+         * CONTRADICTING the officer, and raised a flag against him for it.
+         *
+         * So a file with no agent-visit column at all accused every BDO of
+         * inventing every visit he had marked - hundreds of flags a month,
+         * none of them evidence of anything except a column nobody filled in.
+         * The APK and activeness columns were present, so those flagged
+         * normally; visits, which were not, flagged almost every claim. That
+         * lopsided shape is the fingerprint of this bug, not of dishonesty.
+         *
+         * SILENCE IS NOT DENIAL. A KPI the month's file never affirms even
+         * once is a KPI the file is not tracking, and a file that does not
+         * track something cannot be used to call a man a liar about it. The
+         * moment a file carries one real YES, judgement resumes by itself.
+         *
+         * The agent-missing-entirely flag below is NOT gated on this: that
+         * one is about the agent being absent from the file altogether, which
+         * is a fact about the file's rows and not about any column in it.
+         */
+        $cq = db()->prepare("SELECT
+               MAX(s.served_status = 'SERVED')                AS served,
+               MAX(s.odk = 'YES')                             AS visit,
+               MAX(s.apk = 'YES')                             AS apk,
+               MAX(LOWER(s.activeness) LIKE 'activ%')         AS active
+             FROM service_history s WHERE s.month = ? AND s.source <> 'bdo'");
+        $cq->execute(array($month));
+        $carried = $cq->fetch();
+        if (!$carried) $carried = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+
+        /* A KPI the OM switched OFF this month did not exist that month, so it
+         * cannot be flagged either - the same rule the chips and the score
+         * already follow. */
+        $liveMarks = kpi_marks_active($month);
+
         $saidWhat = array(
           'served' => 'no file this month shows him SERVED',
           'visit'  => 'no file this month shows an agent visit',
@@ -2313,6 +2353,11 @@ try {
                   : ($kk === 'visit' ? (int)$c['f_visit']
                   : ($kk === 'apk'   ? (int)$c['f_apk'] : (int)$c['f_active']));
           if ($backed) continue;
+          /* the file never affirms this KPI anywhere this month - it is not
+           * tracking it, so it cannot contradict him about it */
+          if (empty($carried[$kk])) continue;
+          /* switched off this month = it did not exist this month */
+          if ($liveMarks && count($liveMarks) && !in_array($kk, $liveMarks, true)) continue;
           /* PARTNER-SERVED AGENT CLAIMED BY A BDO. He keeps the credit - his
            * month is not cut on the strength of a spreadsheet column - but the
            * OM is told, and decides. This makes the outcome the same whichever

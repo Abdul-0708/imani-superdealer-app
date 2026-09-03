@@ -5,6 +5,47 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.58.0 — 2026-09-03 · A file that says nothing is not a file that says no
+
+**Reported:** the Flags screen showed 1,735 flags for one month — *"it is not true all these are
+flags"*. It was not true. Most of them were manufactured by the app.
+
+`yesno()` has two outcomes and needs three. A column the file does not have, and a cell somebody
+left blank, both come back `'NO'` — identical to a real, deliberate refusal:
+
+```php
+return in_array($s, array('yes','y','true','1','served'), true) ? 'YES' : 'NO';
+```
+
+The month-wide reconciliation then read that manufactured `'NO'` as the office file **contradicting**
+the officer, and raised a flag against him for every claim it "disagreed" with. So a performance
+file with no *Agent visit* column accused every BDO of inventing every visit he had marked all
+month.
+
+The evidence was sitting in the grid the whole time. Per BDO, APK flagged 16, 20, 15, 16 — the
+column is there and filled in. Visits flagged 245, 317, 135, 114 — the column is not. A KPI that
+flags almost every claim while its neighbours flag almost none is not a dishonest officer; it is an
+empty column. One man showed 89 visits matched against 245 flagged, and nothing about him was wrong.
+
+**Silence is not denial.** A KPI the month's file never affirms even once is a KPI that file is not
+tracking, and a file that does not track something cannot be used to call a man a liar about it. The
+check is per month and self-correcting: the moment a file carries one real `YES`, judgement on that
+KPI resumes by itself, with no setting to remember.
+
+Two narrower corrections alongside it:
+
+- a KPI the OM **switched off** for the month no longer flags either — it did not exist that month,
+  which is already the rule the chips and the weighted score follow;
+- the *agent is in NO performance file this month* flag is deliberately **not** gated on any of
+  this. That one is about the agent being absent from the file altogether, which is a fact about
+  the file's rows and not about any column in it.
+
+Flags are recomputed from scratch on every performance upload, so the corrected count appears at the
+next upload of the affected month. Answers officers have already given are preserved across that
+recompute, as they always were.
+
+---
+
 ## v1.57.0 — 2026-09-02 · The week, growing the round, and one clock
 
 **Reported:** three things — weekly targets that decide fuel, a base-growth target counted from
