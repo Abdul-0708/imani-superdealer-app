@@ -9,13 +9,32 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a0e05'/%3E%3Ctext x='16' y='23' font-size='17' font-family='Arial' font-weight='bold' fill='%23ff8c1a' text-anchor='middle'%3EI%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=76">
+  <link rel="stylesheet" href="styles.css?v=77">
 </head>
 <body>
   <div id="app"></div>
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="app.js?v=76"></script>
+  <!--
+    THE APP MUST START WITHOUT THE INTERNET LIBRARIES.
+
+    These two used to sit here as ordinary blocking scripts, ahead of app.js.
+    A blocking script has to be fetched and run before the parser moves on, so
+    on a network that could not reach cdnjs the browser sat waiting on a
+    connection that never completed, app.js never ran, nothing rendered - and
+    the officer watched the splash screen until he gave up. Field officers on
+    one mobile network could not open the app at all while everyone else was
+    fine, because their carrier could not reach cdnjs and the app made that
+    cdnjs's decision to make.
+
+    app.js now loads FIRST and alone, and the two libraries follow with async:
+    fetched in the background, never blocking the parser, and never able to
+    keep the login screen off a man's phone. Neither is touched at start-up -
+    XLSX is for spreadsheets and QRCode for the 2FA square, both management
+    jobs - so the app is completely usable before either arrives, and still
+    usable if neither ever does.
+  -->
+  <script src="app.js?v=77"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" async></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" async></script>
 </body>
 </html>

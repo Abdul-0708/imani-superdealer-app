@@ -1689,20 +1689,24 @@
                'Agent': m.agent, 'Acc': m.acc, 'Branch': m.branch, 'SA Station': m.station,
                'Location': m.physical_location, 'Proof': m.hasProof ? 'YES' : '' };
     });
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Live work');
     if ((d.perBdo || []).length) {
+      if (!xlsxReady()) return;
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.perBdo.map(function (b) {
         return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active, 'Total': b.total };
       })), 'Per BDO');
     }
     if ((d.recruits || []).length) {
+      if (!xlsxReady()) return;
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.recruits.map(function (r) {
         return { 'Time': r.time, 'BDO': r.bdoName, 'Agent': r.name, 'Branch': r.branch, 'Bank champion': r.champion, 'Stage': r.stage };
       })), 'New agent forms');
     }
     var winTag = (d.from || '0000').replace(':', '') + '-' + (d.to || '2359').replace(':', '');
     var span = (d.dateFrom && d.dateTo && d.dateFrom !== d.dateTo) ? d.dateFrom + '_to_' + d.dateTo : d.date;
+    if (!xlsxReady()) return;
     XLSX.writeFile(wb, 'live_work_' + span + '_' + winTag + '.xlsx');
     toast(rows.length + ' ' + t('ticks exported'), 'ok');
   }
@@ -1994,6 +1998,7 @@
   function agentsExportAll() {
     api('agents_export_all').then(function (d) {
       if (!d.rows.length) { toast(t('No agents to export'), 'warn'); return; }
+      if (!xlsxReady()) return;
       var wb = XLSX.utils.book_new();
       function sheetRows(list) {
         return list.map(function (r) {
@@ -2002,6 +2007,7 @@
                    'High-earner list': r.band, 'BDO': r.bdoName };
         });
       }
+      if (!xlsxReady()) return;
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows(d.rows)), 'All agents');
       var per = {};
       d.rows.forEach(function (r) { (per[r.bdoName || r.bdo] = per[r.bdoName || r.bdo] || []).push(r); });
@@ -2011,8 +2017,10 @@
         var base = name, i = 2;
         while (used[name.toLowerCase()]) name = base.slice(0, 25) + ' ' + (i++);
         used[name.toLowerCase()] = true;
+        if (!xlsxReady()) return;
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows(per[b])), name);
       });
+      if (!xlsxReady()) return;
       XLSX.writeFile(wb, 'all_agents_' + d.month + '.xlsx');
       toast(d.rows.length + ' ' + t('agents exported - one sheet per BDO'), 'ok');
     }).catch(function (e) { toast(e.message, 'err'); });
@@ -2066,6 +2074,7 @@
                  'Station': a.station, 'Physical Location': a.physical_location,
                  'Last Served By': a.last_served_by || '', 'Last Served At': a.last_served_at || '' };
       });
+      if (!xlsxReady()) return;
       var ws = XLSX.utils.json_to_sheet(rows);
       var wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Agents with location');
@@ -3120,6 +3129,7 @@
     var rd = new FileReader();
     rd.onload = function (e) {
       try {
+        if (!xlsxReady()) return;
         var wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
         var rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
         cb(rows);
@@ -3290,6 +3300,7 @@
                  'Approved': (r.approved_at || '').slice(0, 16), 'Paid + POS': (r.paid_at || '').slice(0, 16),
                  'Agent created': (r.done_at || '').slice(0, 16), 'Acc': r.acc, 'Location': r.location };
       });
+      if (!xlsxReady()) return;
       var ws = XLSX.utils.json_to_sheet(rows);
       var wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Recruitment pipeline');
@@ -3306,12 +3317,24 @@
                  'Location': r.physical_location, 'Status now': r.act_current, 'Last month': r.act_prev,
                  'Confirmed by (BDO)': r.bdo, 'Note': r.note, 'Marked on': (r.at || '').slice(0, 16) };
       });
+      if (!xlsxReady()) return;
       var ws = XLSX.utils.json_to_sheet(rows);
       var wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Wont return');
       XLSX.writeFile(wb, 'wont_return_list_' + new Date().toISOString().slice(0, 10) + '.xlsx');
       toast(d.rows.length + ' agents exported', 'ok');
     }).catch(function (e) { toast(e.message, 'err'); });
+  }
+  /*
+   * The spreadsheet library now arrives in its own time (index.html), and on a
+   * network that cannot reach cdnjs it never arrives at all. That is survivable
+   * - the app does not need it - but a button that throws into an empty console
+   * is not. Say what happened, in the words of the person pressing it.
+   */
+  function xlsxReady() {
+    if (window.XLSX) return true;
+    toast(t('The spreadsheet tool has not loaded yet. Wait a moment and try again - if it keeps happening, this connection cannot reach it.'), 'warn');
+    return false;
   }
   function rrDownload() {
     var kpis = Array.prototype.slice.call(document.querySelectorAll('.rrKpi:checked')).map(function (c) { return c.value; });
@@ -3327,6 +3350,7 @@
         Object.keys(r).forEach(function (k) { o[head[k] || k] = r[k]; });
         return o;
       });
+      if (!xlsxReady()) return;
       var ws = XLSX.utils.json_to_sheet(rows);
       var wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'BDO ' + d.from + ' to ' + d.to);
@@ -4038,6 +4062,7 @@
     if (!d) { toast(t('Load a month first'), 'warn'); return; }
     var LBL = {};
     OFFICE_DEFS.forEach(function (def) { LBL[def.key] = def.label; });
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
       return { 'KPI': LBL[r.key] || r.key, 'Weight %': r.weight, 'From file': r.file, 'From field': r.live,
@@ -4052,18 +4077,22 @@
         'Slept (subtracted)': '', 'Combined': '', 'Target': '',
         'Attainment %': d.officeAchievement == null ? '' : d.officeAchievement, 'File alone %': '' }
     ])), 'Combined');
+    if (!xlsxReady()) return;
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.byBdo || []).map(function (b) {
       return { 'BDO': b.name, 'Served': b.served, 'Visit': b.visit, 'APK': b.apk, 'Activeness': b.active,
                'From file': b.file, 'From field': b.live, 'Combined': b.total };
     })), 'Per BDO');
+    if (!xlsxReady()) return;
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.coverage || []).map(function (c) {
       return { 'BDO': c.name, 'His round': c.base, 'Served': c.served,
                'Still to serve': c.left, 'Covered %': c.pct == null ? '' : c.pct };
     })), 'Base coverage');
+    if (!xlsxReady()) return;
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.recruits || []).map(function (r) {
       return { 'BDO': r.name, 'Forms in app': r.pipeline, 'Became agents': r.became,
                'Submitted to bank': r.bank, 'Total': r.total, 'Note': r.note };
     })), 'Recruitment');
+    if (!xlsxReady()) return;
     XLSX.writeFile(wb, 'real_performance_' + (d.month || '') + (d.station ? '_' + d.station : '') + '.xlsx');
     toast(t('Downloaded'), 'ok');
   }
@@ -4488,6 +4517,7 @@
       aoa.push(line);
     });
 
+    if (!xlsxReady()) return;
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{ wch: 5 }, { wch: 7 }, { wch: 30 }, { wch: 18 }, { wch: 15 },
                    { wch: 20 }, { wch: 32 }, { wch: 14 }, { wch: 18 }];
@@ -4495,6 +4525,7 @@
     ws['!merges'] = [0, 1, 2, 3, 5].map(function (r) {
       return { s: { r: r, c: 0 }, e: { r: r, c: head.length - 1 } };
     });
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 28));
     XLSX.writeFile(wb, d.bdo + '_' + which.replace('notserved', 'not_served') + '_' + d.month + '.xlsx');
@@ -4539,8 +4570,10 @@
     });
   }
   function heReportExcel(d) {
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     /* summary first: who is sitting on the most untouched money */
+    if (!xlsxReady()) return;
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.officers || []).map(function (p) {
       return { 'BDO': p.name, 'Username': p.bdo, 'High earners in round': p.total,
                'Served': p.servedCount, 'NOT served': p.leftCount,
@@ -4558,8 +4591,10 @@
       var i = 2; var base = nm;
       while (used[nm.toLowerCase()]) nm = base.slice(0, 26) + ' ' + (i++);
       used[nm.toLowerCase()] = true;
+      if (!xlsxReady()) return;
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), nm);
     });
+    if (!xlsxReady()) return;
     XLSX.writeFile(wb, 'high_earners_' + (d.bdo ? d.bdo + '_' : 'team_') + d.month +
                        (d.station ? '_' + d.station : '') + '.xlsx');
     toast(t('Downloaded'), 'ok');
@@ -4672,6 +4707,7 @@
   function bdosDownload() {
     var d = state._bdos;
     if (!d) { toast(t('Load a month first'), 'warn'); return; }
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.rows || []).map(function (r) {
       return { 'BDO': r.name, 'Username': r.bdo, 'Base': r.base, 'Served': r.served,
@@ -4681,6 +4717,7 @@
                'D left': r.bandsLeft.D, 'E left': r.bandsLeft.E,
                'Weighted score': r.score == null ? '' : r.score, 'Flags': r.flags };
     })), 'BDOs');
+    if (!xlsxReady()) return;
     XLSX.writeFile(wb, 'bdo_window_' + (d.month || '') + (d.station ? '_' + d.station : '') + '.xlsx');
     toast(t('Downloaded'), 'ok');
   }
@@ -4796,6 +4833,7 @@
     var d = state._flags;
     if (!d) { toast(t('Load a month first'), 'warn'); return; }
     var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
+    if (!xlsxReady()) return;
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet((d.grid || []).map(function (g) {
       return { 'BDO': g.bdo,
@@ -4826,8 +4864,10 @@
       var base = name, i = 2;
       while (used[name.toLowerCase()]) name = base.slice(0, 25) + ' ' + (i++);
       used[name.toLowerCase()] = true;
+      if (!xlsxReady()) return;
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name);
     });
+    if (!xlsxReady()) return;
     XLSX.writeFile(wb, 'flags_' + (d.month || '') + '.xlsx');
     toast(t('Flags workbook downloaded - one sheet per BDO'), 'ok');
   }

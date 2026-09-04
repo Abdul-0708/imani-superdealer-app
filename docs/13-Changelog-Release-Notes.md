@@ -5,6 +5,51 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.60.0 — 2026-09-04 · The app must start without the internet libraries
+
+**Reported:** BDOs on one mobile network could not open the app. Others, on a different SIM, were
+fine. What they saw was the splash screen, forever.
+
+That screenshot was the diagnosis. It is the installed PWA's own splash, not a browser error — so
+the app was launching and then never finishing. Nothing in the app can do this on purpose: it never
+reads the client IP, never rate-limits a login, and locks out by account, not by network.
+
+The cause was two lines of `index.html`:
+
+```html
+<script src="https://cdnjs.cloudflare.com/.../xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/.../qrcode.min.js"></script>
+<script src="app.js"></script>
+```
+
+Ordinary blocking scripts, ahead of `app.js`. A blocking script must be fetched and run before the
+parser moves on, so on a carrier that could not reach `cdnjs.cloudflare.com` the browser sat waiting
+on a connection that never completed. `app.js` never ran. Nothing rendered. **The app made cdnjs's
+reachability a condition of showing a man his login screen** — and neither library is touched at
+start-up. XLSX is for spreadsheets, QRCode for the 2FA square; both are management jobs.
+
+`app.js` now loads first and alone, and the two libraries follow with `async`.
+
+### The service worker made it permanent
+
+`fetch()` has no timeout. On a dead connection it rejects quickly; on the connection that actually
+hurts — packets out, nothing back — it neither resolves nor rejects. The `catch()` that falls back
+to the cache therefore never ran, and the app hung with a perfectly good copy of itself sitting on
+the phone.
+
+The network now gets **4 seconds** to beat the cache. If it does not, the cache answers and the
+officer gets on with his round; the fetch is left running and still refreshes the cache if it lands.
+When there is no cached copy the behaviour is unchanged — the network is the only hope, so it is
+given as long as it wants.
+
+### And a button that fails out loud
+
+With the library arriving in its own time, a spreadsheet button pressed too early would have thrown
+into an empty console. `xlsxReady()` now says so in the words of the person pressing it, and the 29
+places that build a workbook check it first.
+
+---
+
 ## v1.59.0 — 2026-09-03 · Served is served, whoever the file credits
 
 Following v1.58.0, the second half of the same complaint: a BDO marking an agent the file put down
