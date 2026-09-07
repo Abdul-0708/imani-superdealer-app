@@ -5,6 +5,41 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.62.0 — 2026-09-04 · The office is set an acceleration target, not a volume one (schema v24)
+
+**Asked for:** remove the Withdraw Volume target and put Transaction Acceleration in its place.
+
+Volume answered *how much was withdrawn*, which is not what the campaign asks. A shilling total
+cannot tell you whether anybody finished — one large agent could carry a month in which not a single
+agent completed his target. The office is now set the same all-or-nothing count the officers are
+set: **how many agents reached 100% of their own withdraw target.**
+
+Swapped everywhere it was a target: the office KPI set, the targets screen and its weight total, the
+saved-targets history column, and the dashboard card. The acceleration card's sub-line says *agents*
+on purpose — a card reading `4` beside one reading `12,400,000` has to say which it is.
+
+### Two things that would have made this look broken
+
+**The saved dashboard setting.** `dashboard_kpis` is stored, and it still said `withdraw`. A card the
+office never ticked is a card the office never sees, so the new target would have been invisible
+until somebody went and found the toggle. v24 moves the tick across, and the default now reads
+`accel` for anyone who never saved one.
+
+**The office count is computed live**, from the file rows, rather than read from the upload
+snapshot. Snapshots written before this release have no acceleration in them, and reading from one
+would have shown a confident zero. `DISTINCT` by agent, because a weekly file lands several times a
+month and the same agent is in each one.
+
+### What was deliberately not done
+
+`withdraw_target` and `withdraw_w` are **left in the table**, not dropped. Months that were genuinely
+scored on volume were scored on volume, and a report run over last quarter should still say so —
+dropping the columns would rewrite that history into zeros. They are simply no longer part of the
+KPI set. Withdraw volume is also still parsed from the file; it just is not something anyone is
+measured against.
+
+---
+
 ## v1.61.0 — 2026-09-04 · Transaction acceleration: all or nothing (schema v23)
 
 **Asked for:** a campaign KPI. Each agent is given a withdraw target; *an agent is counted only if he

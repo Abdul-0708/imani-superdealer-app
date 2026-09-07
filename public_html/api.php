@@ -400,7 +400,7 @@ try {
       $u = require_auth(); require_perm($u, 'dashboard', 'v');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
 
-      $visible = setting_get('dashboard_kpis', 'serving,float,visits,apk,activeness,withdraw');
+      $visible = setting_get('dashboard_kpis', 'serving,float,visits,apk,activeness,accel');
 
       /* SA-station breakdown rides inside the month snapshot (from the file).
        * The OM picks a station; the KPI cards AND the target attainment then
@@ -2089,7 +2089,7 @@ try {
       /* PASS 1: parse everything (needed for office snapshot totals). */
       $apkRequired = setting_get('apk_required_version', '2.0');
       $parsed = array();
-      $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0,
+      $zero = array('serving' => 0, 'float' => 0, 'visits' => 0, 'apk' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0, 'accel' => 0,
                     /* the month's own KPIs, whatever the OM set up */
                     'custom' => array());
       $stats = $zero;
@@ -2126,6 +2126,11 @@ try {
         if ($r['lost']) { $stats['lost']++; $byStation[$stKey]['lost']++; }
         $stats['withdraw'] += $r['withdraw'];
         $byStation[$stKey]['withdraw'] += $r['withdraw'];
+        /* one agent, one point, and only once he is all the way there */
+        if ($r['wd_target'] > 0 && $r['wd_txn'] >= $r['wd_target']) {
+          $stats['accel']++;
+          $byStation[$stKey]['accel']++;
+        }
         /* whatever else this month is measuring - summed for a number KPI,
          * counted for a flag/word/version one, exactly as the OM set it up */
         if (!empty($r['custom'])) {
@@ -2428,16 +2433,19 @@ try {
       $wsum = 0; $w = array();
       foreach (array_keys(office_kpi_defs()) as $col) { $w[$col] = (int)num(bval($col . '_w')); $wsum += $w[$col]; }
       if ($wsum !== 0 && $wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%) - or leave all at 0 for a plain average');
-      db()->prepare('INSERT INTO targets (month, station, serving_target, float_target, visits_target, apk_target, activeness_target, withdraw_target,
-                       serving_w, float_w, visits_w, apk_w, activeness_w, withdraw_w)
+      /* withdraw_target / withdraw_w are no longer written: the office is set an
+       * acceleration target now. The columns stay so that months genuinely
+       * scored on volume still read back as they were scored. */
+      db()->prepare('INSERT INTO targets (month, station, serving_target, float_target, visits_target, apk_target, activeness_target, accel_target,
+                       serving_w, float_w, visits_w, apk_w, activeness_w, accel_w)
                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
                        visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
-                       withdraw_target=VALUES(withdraw_target), serving_w=VALUES(serving_w), float_w=VALUES(float_w),
-                       visits_w=VALUES(visits_w), apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w), withdraw_w=VALUES(withdraw_w)')
+                       accel_target=VALUES(accel_target), serving_w=VALUES(serving_w), float_w=VALUES(float_w),
+                       visits_w=VALUES(visits_w), apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w), accel_w=VALUES(accel_w)')
           ->execute(array($month, $station, (int)num(bval('serving')), (int)num(bval('float')), (int)num(bval('visits')),
-                          (int)num(bval('apk')), (int)num(bval('activeness')), (int)num(bval('withdraw')),
-                          $w['serving'], $w['float'], $w['visits'], $w['apk'], $w['activeness'], $w['withdraw']));
+                          (int)num(bval('apk')), (int)num(bval('activeness')), (int)num(bval('accel')),
+                          $w['serving'], $w['float'], $w['visits'], $w['apk'], $w['activeness'], $w['accel']));
       audit($u['id'], 'targets_save', $month . ' ' . ($station !== '' ? $station : 'ALL') . ($wsum ? ' weighted' : ''));
       respond(array('ok' => true, 'month' => $month, 'station' => $station));
     }

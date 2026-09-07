@@ -925,12 +925,21 @@ function month_actuals($month, $station = '') {
                        WHERE k.month = ?' . $stFilter . ' GROUP BY k.kpi');
   $st->execute(array_merge(array($month), $stVals));
   $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0, 'waked' => 0, 'lost' => 0, 'withdraw' => 0,
-             'custom' => array(), 'fromUpload' => false);
+             'accel' => 0, 'custom' => array(), 'fromUpload' => false);
   foreach ($st->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
   $f = db()->prepare('SELECT COALESCE(SUM(s.float_served),0) f FROM service_history s JOIN agents a ON a.id = s.agent_id
                       WHERE s.month = ?' . $stFilter);
   $f->execute(array_merge(array($month), $stVals));
   $k['float'] = (float)$f->fetch()['f'];
+  /* Agents who finished the acceleration campaign. Counted live off the file
+   * rows rather than read from the upload snapshot, so it is right even for a
+   * month whose snapshot predates the campaign, and DISTINCT because a weekly
+   * file lands several times and the same agent is in each one. */
+  $ac = db()->prepare("SELECT COUNT(DISTINCT s.agent_id) c FROM service_history s JOIN agents a ON a.id = s.agent_id
+                       WHERE s.month = ? AND s.source <> 'bdo'
+                         AND s.wd_target > 0 AND s.wd_txn >= s.wd_target" . $stFilter);
+  $ac->execute(array_merge(array($month), $stVals));
+  $k['accel'] = (int)$ac->fetch()['c'];
   if ($station === '') {
     $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
     $d->execute(array($month));
@@ -1142,7 +1151,12 @@ function office_kpi_defs() {
     'visits' => 'visit',
     'apk' => 'apk',
     'activeness' => 'active',
-    'withdraw' => 'withdraw',
+    /* Withdraw VOLUME is no longer an office target. It answered 'how much
+     * was withdrawn', which is not what the campaign asks - one large agent
+     * could carry a month in which nobody completed anything. What the office
+     * is set now is the same all-or-nothing count the officers are set: how
+     * many agents reached their own withdraw target. */
+    'accel' => 'accel',
   );
 }
 

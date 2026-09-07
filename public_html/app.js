@@ -900,9 +900,11 @@
      * withdraw target, so this is a count of agents who finished */
     { key: 'accel', label: 'Transaction Acceleration', icon: 'zap', hint: 'agents who reached 100% of their withdraw target' }
   ]);
-  /* Office KPIs = the five + withdraw volume (office-wide, no BDO attached). */
+  /* Office KPIs = the five + transaction acceleration. Withdraw VOLUME used to
+   * sit here; it answered how much was withdrawn, which the campaign does not
+   * ask, and one large agent could carry a month in which nobody finished. */
   var OFFICE_DEFS = CORE_DEFS.concat([
-    { key: 'withdraw', label: 'Withdraw Volume', icon: 'chart', hint: 'cumulative from the uploaded file' }
+    { key: 'accel', label: 'Transaction Acceleration', icon: 'zap', hint: 'agents who reached 100% of their withdraw target' }
   ]);
 
   function skeletonHtml() {
@@ -1779,7 +1781,11 @@
       if (shown('apk')) cards += card('rotate', 'APK upgraded to ' + esc(d.apkRequired) + '+' + stTag, fmt(cardVal('apk')), 'was below ' + esc(d.apkRequired) + ' last month');
       if (shown('activeness')) cards += card('zap', 'Activeness (net)' + stTag, fmt(ss ? (ss.net_active || 0) : att.activeness.actual),
         'waked ' + fmt(ss ? ss.waked : d.waked) + ' - lost ' + fmt(ss ? ss.lost : d.lost));
-      if (shown('withdraw')) cards += card('chart', 'Withdraw Volume' + stTag, fmt(cardVal('withdraw')), ss ? esc(d.station) + ' only' : 'office-wide');
+      /* Acceleration replaces withdraw volume here. The sub-line says AGENTS
+       * because the number is a headcount, not money - a card reading 4 next
+       * to a card reading 12,400,000 has to say which it is. */
+      if (shown('accel')) cards += card('zap', 'Transaction Acceleration' + stTag, fmt(cardVal('accel')),
+        'agents at 100% of their withdraw target' + (ss ? ' - ' + esc(d.station) + ' only' : ''));
       Object.keys(att).forEach(function (k) {
         if (att[k] && att[k].custom) cards += card('chart', att[k].label + stTag, fmt(att[k].actual),
           att[k].target > 0 ? 'target ' + fmt(att[k].target) : 'no target set');
@@ -3625,7 +3631,7 @@
       var hist = list.map(function (r) {
         return '<tr><td>' + esc(r.month) + '</td><td>' + (r.station ? '<span class="pill fire">' + esc(r.station) + '</span>' : '<span class="pill dim">' + t('All stations') + '</span>') + '</td>' +
           '<td>' + fmt(r.serving_target) + '</td><td>' + fmt(r.float_target) + '</td><td>' + fmt(r.visits_target) + '</td>' +
-          '<td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td><td>' + fmt(r.withdraw_target || 0) + '</td></tr>';
+          '<td>' + fmt(r.apk_target) + '</td><td>' + fmt(r.activeness_target) + '</td><td>' + fmt(r.accel_target || 0) + '</td></tr>';
       }).join('') || '<tr><td colspan="8">' + emptyState('target', 'No targets yet', 'Type this month\'s targets above and save.') + '</td></tr>';
 
       v.innerHTML =
@@ -3643,7 +3649,7 @@
         kpiSetupPanel(kcfg) +
         bdoTargetsPanel(bt) +
         weeklyPanel() +
-        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Withdraw</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
+        '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Acceleration</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
       weeklyLoad();

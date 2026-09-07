@@ -143,6 +143,8 @@ function ensure_schema($pdo) {
     visits_target BIGINT NOT NULL DEFAULT 0,
     apk_target BIGINT NOT NULL DEFAULT 0,
     activeness_target BIGINT NOT NULL DEFAULT 0,
+    accel_target BIGINT NOT NULL DEFAULT 0,
+    accel_w INT NOT NULL DEFAULT 0,
     PRIMARY KEY (month, station)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -444,6 +446,41 @@ function upgrade_schema($pdo) {
     schema_v23_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "23" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 24) {
+    schema_v24_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "24" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v24: the office is set a TRANSACTION ACCELERATION target instead of a
+ * withdraw-volume one.
+ *
+ * Volume answered 'how much was withdrawn', which the campaign does not ask.
+ * The campaign asks how many agents finished, and a shilling total cannot say
+ * - one big agent could carry a month in which nobody completed anything.
+ *
+ * withdraw_target and withdraw_w are LEFT IN PLACE, not dropped. Months that
+ * were scored on volume were really scored on volume, and a report run over
+ * last quarter should still say so; dropping the columns would rewrite that
+ * history into zeros. They are simply no longer part of the KPI set.
+ */
+function schema_v24_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE targets ADD COLUMN accel_target BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE targets ADD COLUMN accel_w INT NOT NULL DEFAULT 0',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
+  /*
+   * The saved dashboard KPI list still names withdraw, and a card the office
+   * never ticked is a card the office never sees. Move the tick across rather
+   * than leave the new target with nowhere to show itself - the swap was asked
+   * for, so the dashboard should come back already showing it.
+   */
+  try {
+    $pdo->exec("UPDATE app_settings SET value = REPLACE(value, 'withdraw', 'accel')
+                WHERE name = 'dashboard_kpis' AND value LIKE '%withdraw%'");
+  } catch (Exception $e) { /* not saved yet: the default already says accel */ }
 }
 
 /*
