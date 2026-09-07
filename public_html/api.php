@@ -2048,6 +2048,8 @@ try {
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
       $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
+      /* only the base file writes this - see PASS 2 */
+      $setBase = db()->prepare('UPDATE agents SET act_base = ?, act_base_month = ? WHERE id = ?');
       $updApk = db()->prepare('UPDATE agents SET apk_version = ?, apk_month = ? WHERE id = ?');
       $flagged = 0; $newAgents = 0;
       /* Flags are recomputed once, after every row is written, by comparing the
@@ -2100,6 +2102,28 @@ try {
        * can get the file fixed at source. */
       $homeStation = strtoupper(setting_get('home_station', 'ARUSHA'));
       $blankStation = 0;
+
+      /*
+       * THE MONTH'S BASELINE, from the base file.
+       *
+       * Waking used to be decided by the performance file's own 'previous
+       * activeness' column, which meant the file being judged also supplied
+       * the standard it was judged against - and every weekly file re-stated
+       * it. A man woken in week 1 could stop counting as having woken anybody
+       * because week 3's file happened to carry that agent as previously
+       * active. The base file is the month's standing photograph, taken
+       * before the work started, and it is the only fair thing to measure the
+       * month against.
+       *
+       * Keyed by account number because agent ids are not resolved until
+       * PASS 2, and waking has to be decided here in PASS 1 where the office
+       * totals are counted.
+       */
+      $actBase = array();
+      $abq = db()->prepare('SELECT acc, act_base FROM agents WHERE act_base_month = ? AND act_base <> ""');
+      $abq->execute(array($month));
+      foreach ($abq->fetchAll() as $ab) $actBase[(string)$ab['acc']] = $ab['act_base'];
+      $baselineFrom = count($actBase);
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
@@ -2110,9 +2134,21 @@ try {
         /* APK credit = truly UPGRADED: below the required version (or unknown)
          * last month, at/above it now - mirrors how waked works for activeness */
         $r['apk_up'] = $r['apk_yes'] && !apk_is_yes($r['apk_prev_raw'], $apkRequired);
-        /* activeness credit = truly WAKED: inactive last month, active now */
-        $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_prev'] === 'INACTIVE');
-        $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_prev'] === 'ACTIVE');
+        /*
+         * WAKED, LOST, OR UNCHANGED - against the BASE FILE.
+         *
+         *   base INACTIVE -> now ACTIVE    = woken, +1
+         *   base ACTIVE   -> now INACTIVE  = lost,  -1 (net_active carries it)
+         *   anything else                 = unchanged, and worth nothing
+         *
+         * The file's own 'previous activeness' column is the fallback, and only
+         * the fallback: a month whose base file has not been uploaded yet must
+         * keep working the way it always did rather than quietly score every
+         * officer at zero for a file the OM has not sent in.
+         */
+        $r['act_base'] = isset($actBase[(string)$r['acc']]) ? $actBase[(string)$r['acc']] : $r['act_prev'];
+        $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_base'] === 'INACTIVE');
+        $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_base'] === 'ACTIVE');
         $parsed[] = $r;
         $stKey = $r['station'];
         if (!isset($byStation[$stKey])) $byStation[$stKey] = $zero;
@@ -2205,6 +2241,22 @@ try {
         $actCur = $r['act_cur'];
         if ($actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
         if ($actCur !== '' || $r['act_prev'] !== '') $updAct->execute(array($actCur, $r['act_prev'], $month, $id));
+        /*
+         * THE BASE FILE SETS THE BASELINE, and only the base file.
+         *
+         * It is the photograph the month is measured against, so it is written
+         * from the FILE'S OWN reading and never from $actCur - $actCur carries
+         * the BDO's wake forward so the agent does not reappear on the wake-up
+         * list, and letting that leak into the baseline would quietly erase the
+         * very wake it is meant to record.
+         *
+         * A performance file never touches it. If it did, the standard would
+         * move every time the work was measured, which is the fault this
+         * replaces.
+         */
+        if ($mode === 'fixed' && $r['act_cur'] !== '') {
+          $setBase->execute(array($r['act_cur'], $month, $id));
+        }
         /* The baseline file also carries each agent's APK version. Store it so
          * the list can say "on 1.8" instead of only pass/fail against the
          * required version. */
@@ -2390,12 +2442,19 @@ try {
       if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
       $restored = isset($restored) ? $restored : 0;
+      /* Which standard the wakes were judged against. An OM who uploads
+       * performance before the base file should be told his activeness was
+       * scored off the file's own column, not left to wonder later. */
+      $baselineUsed = $baselineFrom > 0 ? 'base-file' : 'file-column';
       audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ' answersKept=' . $restored . ($blankStation ? ' blankStation=' . $blankStation : ''));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
                     'mode' => $mode, 'scoring' => $scoring,
                     'priorityMode' => $priorityMode, 'flagsCleared' => $cleared, 'stats' => $stats,
                     'answersKept' => $restored, 'newAgents' => $newAgents,
+                    /* which standard the wakes were judged against, so an OM who
+                     * uploads performance before the base file is told at once */
+                    'baselineUsed' => $baselineUsed, 'baselineAgents' => $baselineFrom,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation));
     }
 

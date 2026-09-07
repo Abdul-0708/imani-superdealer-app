@@ -450,6 +450,33 @@ function upgrade_schema($pdo) {
     schema_v24_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "24" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 25) {
+    schema_v25_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "25" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v25: WAKING IS MEASURED FROM THE BASE FILE.
+ *
+ * A wake was decided by two columns sitting side by side in the PERFORMANCE
+ * file - its own idea of 'activeness' and 'previous activeness'. So the file
+ * being judged also supplied the standard it was judged against, and every
+ * weekly file re-stated that standard. An agent could be woken in week 1 and
+ * then, because week 3's file happened to carry him as active-and-previously-
+ * active, silently stop counting as woken at all.
+ *
+ * The base file is the month's standing photograph - every agent as he was
+ * when the month opened - and that is the only honest thing to measure a
+ * month's work against. act_base holds it, act_base_month says which month it
+ * belongs to, so a stale baseline cannot be mistaken for this month's.
+ */
+function schema_v25_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE agents ADD COLUMN act_base VARCHAR(12) NOT NULL DEFAULT \'\'',
+    'ALTER TABLE agents ADD COLUMN act_base_month CHAR(7) NOT NULL DEFAULT \'\'',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
 }
 
 /*

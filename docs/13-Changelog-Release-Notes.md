@@ -5,6 +5,49 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.63.0 — 2026-09-04 · Waking is measured from the base file (schema v25)
+
+**Asked for:** count activeness from the base month file. Inactive in the base and active in the new
+performance file is a **wake**; active in the base and inactive now **takes one away**; anything else
+stays constant.
+
+That is now the rule, and the old one deserved replacing on its own merits. A wake was decided by
+two columns sitting side by side in the **performance** file — its own *activeness* and its own
+*previous activeness*. The file being judged was also supplying the standard it was judged against,
+and every weekly file re-stated that standard. An agent woken in week 1 could stop counting as woken
+at all because week 3's file happened to carry him as active-and-previously-active. Nothing was
+wrong with the officer's work; the ruler moved.
+
+The base file is the month's standing photograph, taken before the work started, and it is the only
+fair thing to measure a month against.
+
+| Base file | Performance file | Result |
+|---|---|---|
+| INACTIVE | ACTIVE | **woken** — counts |
+| ACTIVE | INACTIVE | **lost** — taken back off |
+| same either way | | constant, worth nothing |
+
+Lost agents were already carried by `net_active = waked − lost`; what changed is that both sides are
+now judged against the baseline rather than against whatever the newest file happened to say.
+
+### Details that matter
+
+**Only the base file writes the baseline** (`act_base`, stamped with `act_base_month` so a stale one
+cannot be mistaken for this month's). A performance file never touches it — if it did, the standard
+would move every time the work was measured, which is the fault being fixed.
+
+**The baseline is written from the file's own reading, never from the adjusted one.** The app already
+carries a BDO's wake forward so a file cut before the wake cannot push the agent back onto the
+wake-up list. Letting that adjustment leak into the baseline would quietly erase the very wake it
+exists to protect.
+
+**A month with no base file still works.** It falls back to the performance file's previous-activeness
+column — the old behaviour — rather than scoring every officer at zero for a file the OM has not sent
+in. The upload screen now says which standard was used, so an OM who uploads performance first is
+told at the moment it happens instead of wondering later.
+
+---
+
 ## v1.62.0 — 2026-09-04 · The office is set an acceleration target, not a volume one (schema v24)
 
 **Asked for:** remove the Withdraw Volume target and put Transaction Acceleration in its place.

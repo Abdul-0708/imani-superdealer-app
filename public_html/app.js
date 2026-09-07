@@ -3217,6 +3217,21 @@
       s += '<div class="note" style="margin-top:6px"><span class="pill gold">' + fmt(d.blankStation) + ' ' + t('rows had no SA STATION') + '</span> ' +
         t('counted as') + ' <b>' + esc(d.homeStation || '') + '</b> ' + t('so nothing drops out of that station\'s attainment - fix the column in the file when you can.') + '</div>';
     }
+    /* WHICH STANDARD THE WAKES WERE JUDGED AGAINST.
+     * Activeness is scored from the base file - the month's standing
+     * photograph. If it has not been uploaded yet the app falls back to the
+     * previous-activeness column inside the performance file, which still
+     * works but lets the file being judged supply its own standard. Say so
+     * at the moment it happens, while the OM can still fix it.
+     */
+    if (d.scoring && d.baselineUsed === 'file-column') {
+      s += '<div class="note" style="margin-top:6px"><span class="pill gold">' +
+        t('No base file for this month yet') + '</span> ' +
+        t('so waking was judged from the previous-activeness column inside this file. Upload the monthly database baseline, then re-upload this file, to score wakes against the real starting point of the month.') + '</div>';
+    } else if (d.scoring && d.baselineAgents) {
+      s += '<div class="note" style="margin-top:6px">' + t('Waking measured against the base file') +
+        ' (' + fmt(d.baselineAgents) + ' ' + t('agents in the baseline') + ').</div>';
+    }
     return s;
   }
 
