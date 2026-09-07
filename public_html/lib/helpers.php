@@ -414,6 +414,28 @@ function repair_misfiled_marks($cur) {
  *
  * $which is 'serve' or 'wake'.
  */
+/*
+ * May this officer take an agent the file credits to the PARTNER?
+ *
+ * No, unless the OM has said so for him by name. There is deliberately no
+ * office-wide switch: turning it on for everybody would be the free-for-all
+ * that v1.56.0 removed, only harder to notice.
+ */
+function partner_claim_allowed($username) {
+  $username = trim((string)$username);
+  if ($username === '') return false;
+  static $cache = array();
+  if (isset($cache[$username])) return $cache[$username];
+  $ok = false;
+  try {
+    $q = db()->prepare('SELECT partner_claim v FROM users WHERE username = ?');
+    $q->execute(array($username));
+    if ($r = $q->fetch()) $ok = (trim((string)$r['v']) === 'allow');
+  } catch (Exception $e) { /* column not migrated yet - the OM keeps it */ }
+  $cache[$username] = $ok;
+  return $ok;
+}
+
 function receipt_rule_for($username, $which) {
   $office = $which === 'wake' ? setting_get('wake_receipt', 'photo')
                               : setting_get('serve_receipt', 'optional');

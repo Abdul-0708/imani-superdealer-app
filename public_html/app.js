@@ -1893,17 +1893,18 @@
   }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
-    /* The old tooltip invited the BDO to take the agent. He cannot any more -
-     * the office record says the partner served him, and moving that credit is
-     * the OM's decision - so the pill says who to ask, and the OM gets the
-     * button that actually does it. */
+    /* The pill states the FACT and stops there. Who may act on it is no longer
+     * one answer: it is the OM's to award, unless he has trusted this officer
+     * with partner work (v1.64.0), and the card cannot tell which officer is
+     * reading it. A man who may not take the agent is told so plainly the
+     * moment he taps; a man who may just takes him. */
     var award = (partnerServed && isManager())
       ? ' <button class="ghost mini" data-action="awardPartner" data-id="' + a.id +
         '" data-name="' + esc(a.name) + '" data-loc="' + esc(a.physical_location || '') + '">' +
         t('Award to a BDO') + '</button>'
       : '';
     var name = esc(a.name) + (partnerServed
-      ? ' <span class="pill fire" title="' + esc(t('The file credits the PARTNER with serving this agent - only the OM can award him to a BDO')) + '">PARTNER</span>' + award
+      ? ' <span class="pill fire" title="' + esc(t('The file credits the PARTNER with serving this agent')) + '">PARTNER</span>' + award
       : '');
     return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td>' +
       '<td class="c-name">' + name + ' ' + bandPill(a.band) + actInfoHtml(a) + '</td>' +
@@ -4702,7 +4703,8 @@
           return '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + t(opts[k]) + '</option>';
         }).join('') + '</select>';
     }
-    var overridden = R.serveReceipt !== '' || R.wakeReceipt !== '';
+    var mayPartner = R.partnerClaim === 'allow';
+    var overridden = R.serveReceipt !== '' || R.wakeReceipt !== '' || mayPartner;
     return '<div class="panel"><h2>' + svg('camera') + t('Proof rules for this BDO') +
       (overridden ? ' <span class="pill fire">' + t('own rule') + '</span>'
                   : ' <span class="pill dim">' + t('office rule') + '</span>') + '</h2>' +
@@ -4714,12 +4716,34 @@
       '<div class="field"><label>' + t('Waking proof') + '</label>' +
       pick('orWake', R.wakeReceipt, R.officeWake,
            { photo: 'Photo only - a typed note is not accepted', photo_or_note: 'Photo OR a typed commitment' }) + '</div>' +
+      /*
+       * PARTNER WORK, FOR THIS MAN ONLY.
+       *
+       * The default stays what it has been since v1.56.0: an agent the file
+       * credits to the partner is the OM's to award. This lifts it for one
+       * named officer - the man who works a partner area every week and would
+       * otherwise ask permission for each agent, until asking becomes a phone
+       * call and then becomes nothing at all.
+       *
+       * Deliberately per-man and not an office switch: an office switch is the
+       * old free-for-all with extra steps.
+       */
+      '<div class="field"><label>' + t('Partner-served agents') + '</label>' +
+      '<select id="orPartner">' +
+      '<option value=""' + (mayPartner ? '' : ' selected') + '>' + t('Ask the OM - he awards them') + '</option>' +
+      '<option value="allow"' + (mayPartner ? ' selected' : '') + '>' + t('He may take them himself') + '</option>' +
+      '</select></div>' +
       '<button class="btn" data-action="orSave" data-bdo="' + esc(d.bdo) + '">' + t('Save his rules') + '</button>' +
+      (mayPartner
+        ? '<p class="note" style="flex-basis:100%"><span class="pill fire">' + t('trusted with partner work') + '</span> ' +
+          t('Every agent he takes this way is written to the audit trail, so the trust can be checked and withdrawn.') + '</p>'
+        : '') +
       '</div></div>';
   }
   function officerRulesSave(bdo) {
     api('bdo_rules_save', { body: { bdo: bdo,
-        serveReceipt: elById('orServe').value, wakeReceipt: elById('orWake').value } })
+        serveReceipt: elById('orServe').value, wakeReceipt: elById('orWake').value,
+        partnerClaim: elById('orPartner') ? elById('orPartner').value : '' } })
       .then(function (r) {
         toast(t('Saved') + ' - ' + t('serving') + ': ' + r.effectiveServe + ', ' + t('waking') + ': ' + r.effectiveWake, 'ok');
         renderTab();

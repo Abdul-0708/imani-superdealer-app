@@ -5,6 +5,36 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.64.0 — 2026-09-04 · The OM can trust one officer with partner work (schema v26)
+
+**Asked for:** let the OM give an individual BDO the right to overturn partner work and serve the
+agent himself.
+
+Since v1.56.0 an agent the file credits to the partner has been the OM's to award and nobody else's.
+That is right for an officer the OM does not yet know. It is heavy-handed for the man who works a
+partner area every week and has to ask permission agent by agent — and an approval nobody has time
+to give becomes a phone call, and then becomes nothing at all.
+
+So the default is unchanged and the OM can now lift it **for one named officer**, in *Proof rules for
+this BDO*, beside the receipt rules that already live there:
+
+| Setting | Meaning |
+|---|---|
+| *Ask the OM — he awards them* | the default, unchanged |
+| *He may take them himself* | this officer alone may claim partner-served agents |
+
+**Per man, never office-wide.** A blanket switch would be the old free-for-all with extra steps, and
+harder to notice. It is a grant, it is revocable, and it is written to the audit trail twice over:
+once when the OM gives it, and again every time the officer uses it — so the trust can be checked
+rather than assumed.
+
+The PARTNER pill now states the fact and stops there. It used to read *"only the OM can award him to
+a BDO"*, which is no longer true for a trusted officer, and the card cannot tell which officer is
+reading it. A man who may not take the agent is still told so plainly the moment he taps; a man who
+may just takes him.
+
+---
+
 ## v1.63.0 — 2026-09-04 · Waking is measured from the base file (schema v25)
 
 **Asked for:** count activeness from the base month file. Inactive in the base and active in the new

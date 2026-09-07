@@ -441,6 +441,8 @@ try {
         'serveReceipt' => receipt_rule_for($u['username'], 'serve'),
         'wakeReceipt' => receipt_rule_for($u['username'], 'wake'),
         'officeServeReceipt' => setting_get('serve_receipt', 'optional'),
+        /* so his own app knows before he taps, rather than after a 403 */
+        'mayTakePartner' => is_manager($u) || partner_claim_allowed($u['username']),
         'officeWakeReceipt' => setting_get('wake_receipt', 'photo'),
       ));
     }
@@ -938,9 +940,16 @@ try {
        * agent, and overturning the office record is a management decision.
        * The BDO's route is to tell his OM, who awards it with awardTo.
        */
-      if ($partnerServed && !is_manager($u)) {
+      $mayTakePartner = is_manager($u) || partner_claim_allowed($u['username']);
+      if ($partnerServed && !$mayTakePartner) {
         fail('The performance file credits the PARTNER with serving this agent - ask your OM to award him to you', 403,
              array('partnerServed' => true, 'omOnly' => true));
+      }
+      /* An officer the OM has trusted with partner work leaves a trail every
+       * time he uses it. The grant is the OM's decision; the record of what
+       * was done with it is how he keeps deciding. */
+      if ($partnerServed && !is_manager($u)) {
+        audit($u['id'], 'partner_claim_used', $u['username'] . ' took partner-served agent=' . $agentId . ' month=' . $month);
       }
       /* Stamp it whether or not he named someone else: the point of awarded_by
        * is that a manager ruled on this claim, so the next upload does not
@@ -3491,13 +3500,16 @@ try {
       if (!$q->fetch()) fail('No such BDO', 404);
       $sr = trim((string)bval('serveReceipt'));
       $wr = trim((string)bval('wakeReceipt'));
+      $pc = trim((string)bval('partnerClaim'));
       if (!in_array($sr, array('', 'required', 'optional'), true)) fail('Bad serving rule');
       if (!in_array($wr, array('', 'photo', 'photo_or_note'), true)) fail('Bad waking rule');
-      db()->prepare('UPDATE users SET serve_receipt = ?, wake_receipt = ? WHERE username = ?')
-          ->execute(array($sr, $wr, $bdo));
-      audit($u['id'], 'bdo_rules', $bdo . ' serve=' . ($sr ?: 'office') . ' wake=' . ($wr ?: 'office'));
+      if (!in_array($pc, array('', 'allow'), true)) fail('Bad partner rule');
+      db()->prepare('UPDATE users SET serve_receipt = ?, wake_receipt = ?, partner_claim = ? WHERE username = ?')
+          ->execute(array($sr, $wr, $pc, $bdo));
+      audit($u['id'], 'bdo_rules', $bdo . ' serve=' . ($sr ?: 'office') . ' wake=' . ($wr ?: 'office') .
+                                  ' partner=' . ($pc === 'allow' ? 'MAY TAKE PARTNER WORK' : 'om-only'));
       respond(array('ok' => true, 'bdo' => $bdo,
-                    'serveReceipt' => $sr, 'wakeReceipt' => $wr,
+                    'serveReceipt' => $sr, 'wakeReceipt' => $wr, 'partnerClaim' => $pc,
                     'effectiveServe' => $sr !== '' ? $sr : setting_get('serve_receipt', 'optional'),
                     'effectiveWake' => $wr !== '' ? $wr : setting_get('wake_receipt', 'photo')));
     }
@@ -3514,7 +3526,7 @@ try {
       $stF = $station !== '' ? ' AND a.station = ?' : '';
       $stV = $station !== '' ? array($station) : array();
 
-      $uq = db()->prepare('SELECT username, name, specialty, serve_receipt, wake_receipt FROM users WHERE username = ?');
+      $uq = db()->prepare('SELECT username, name, specialty, serve_receipt, wake_receipt, partner_claim FROM users WHERE username = ?');
       $uq->execute(array($bdo));
       $who = $uq->fetch();
       if (!$who) fail('No such BDO', 404);
@@ -3572,6 +3584,7 @@ try {
                     'specialty' => $who['specialty'],
                     'rules' => array(
                       'serveReceipt' => (string)$who['serve_receipt'],
+                      'partnerClaim' => (string)$who['partner_claim'],
                       'wakeReceipt' => (string)$who['wake_receipt'],
                       'officeServe' => setting_get('serve_receipt', 'optional'),
                       'officeWake' => setting_get('wake_receipt', 'photo')),

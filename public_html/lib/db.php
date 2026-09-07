@@ -454,6 +454,30 @@ function upgrade_schema($pdo) {
     schema_v25_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "25" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 26) {
+    schema_v26_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "26" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v26: THE OM CAN TRUST ONE OFFICER WITH PARTNER WORK.
+ *
+ * Since v1.56.0 an agent the file credits to the partner is the OM's to award
+ * and nobody else's, which is right for a man the OM does not yet know. It is
+ * heavy-handed for the officer who works a partner area every week and has to
+ * ask permission for each one, and an approval nobody has time to give is an
+ * approval that turns into a phone call and then into nothing at all.
+ *
+ * So the rule stays OM-only by default and the OM can lift it for ONE named
+ * officer. It is a grant, per man, revocable, and recorded in the audit trail
+ * both when given and whenever used - a blanket office-wide setting would be
+ * the old free-for-all with extra steps.
+ */
+function schema_v26_apply($pdo) {
+  try {
+    $pdo->exec('ALTER TABLE users ADD COLUMN partner_claim VARCHAR(12) NOT NULL DEFAULT \'\'');
+  } catch (Exception $e) { /* exists */ }
 }
 
 /*
