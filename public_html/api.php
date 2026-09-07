@@ -2012,8 +2012,9 @@ try {
           name = IF(? = "", name, ?), phone = IF(? = "", phone, ?), branch = IF(? = "", branch, ?),
           physical_location = IF(? = "", physical_location, ?), partner = ?, station = IF(? = "", station, ?) WHERE id = ?');
       $insSvc = db()->prepare('INSERT INTO service_history
-          (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status, source, upload_id)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
+          (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status,
+           wd_target, wd_txn, campaign, source, upload_id)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
       /*
        * WHAT KIND OF FILE IS THIS?
        *
@@ -2225,7 +2226,8 @@ try {
 
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
-                               $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'], $uploadId));
+                               $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'],
+                               $r['wd_target'], $r['wd_txn'], $r['campaign'], $uploadId));
         /* SERVED, and nothing else, puts him in this officer's round. A row
          * that merely names him beside an agent - a visit, an APK, a blank -
          * is not a claim on that agent. */
@@ -2482,17 +2484,20 @@ try {
       $bs = trim((string)bval('base_start'));
       $baseStart = $bs === '' ? base_start_default($month, $bdo) : (int)num($bs);
       db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
-                       serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w,
+                       accel_target, accel_w)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
                        visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
                        serving_w=VALUES(serving_w), float_w=VALUES(float_w), visits_w=VALUES(visits_w),
                        apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w),
-                       base_start=VALUES(base_start), base_target=VALUES(base_target), base_w=VALUES(base_w)')
+                       base_start=VALUES(base_start), base_target=VALUES(base_target), base_w=VALUES(base_w),
+                       accel_target=VALUES(accel_target), accel_w=VALUES(accel_w)')
           ->execute(array($month, $bdo, $vals['serving_target'], $vals['float_target'], $vals['visits_target'],
                           $vals['apk_target'], $vals['activeness_target'], $vals['serving_w'], $vals['float_w'],
                           $vals['visits_w'], $vals['apk_w'], $vals['activeness_w'],
-                          $baseStart, $vals['base_target'], $vals['base_w']));
+                          $baseStart, $vals['base_target'], $vals['base_w'],
+                          $vals['accel_target'], $vals['accel_w']));
       audit($u['id'], 'bdo_targets_save', $month . ' ' . $bdo);
       respond(array('ok' => true));
     }
@@ -2525,13 +2530,15 @@ try {
       foreach ($hq->fetchAll() as $r) $have[$r['bdo']] = true;
 
       $ins = db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
-                              serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                              serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w,
+                              accel_target, accel_w)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), float_target=VALUES(float_target),
                               visits_target=VALUES(visits_target), apk_target=VALUES(apk_target), activeness_target=VALUES(activeness_target),
                               serving_w=VALUES(serving_w), float_w=VALUES(float_w), visits_w=VALUES(visits_w),
                               apk_w=VALUES(apk_w), activeness_w=VALUES(activeness_w),
-                              base_start=VALUES(base_start), base_target=VALUES(base_target), base_w=VALUES(base_w)');
+                              base_start=VALUES(base_start), base_target=VALUES(base_target), base_w=VALUES(base_w),
+                              accel_target=VALUES(accel_target), accel_w=VALUES(accel_w)');
       $set = 0; $skipped = 0;
       foreach ($bdos as $b) {
         if ($onlyMissing && isset($have[$b['username']])) { $skipped++; continue; }
@@ -2541,7 +2548,8 @@ try {
         $ins->execute(array($month, $b['username'], $vals['serving_target'], $vals['float_target'], $vals['visits_target'],
                             $vals['apk_target'], $vals['activeness_target'], $vals['serving_w'], $vals['float_w'],
                             $vals['visits_w'], $vals['apk_w'], $vals['activeness_w'],
-                            base_start_default($month, $b['username']), $vals['base_target'], $vals['base_w']));
+                            base_start_default($month, $b['username']), $vals['base_target'], $vals['base_w'],
+                            $vals['accel_target'], $vals['accel_w']));
         $set++;
       }
       audit($u['id'], 'bdo_targets_save_all', $month . ' set=' . $set . ' kept=' . $skipped . ($onlyMissing ? ' [only missing]' : ''));

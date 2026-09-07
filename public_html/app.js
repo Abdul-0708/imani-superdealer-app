@@ -895,7 +895,10 @@
    * the server's own office KPI list, so a sixth row here would push that
    * total past 100 and refuse every save. */
   var TARGET_DEFS = CORE_DEFS.concat([
-    { key: 'base', label: 'Base growth', icon: 'users', hint: 'agents added beyond where he ended' }
+    { key: 'base', label: 'Base growth', icon: 'users', hint: 'agents added beyond where he ended' },
+    /* all or nothing: an agent counts only once he reaches his own
+     * withdraw target, so this is a count of agents who finished */
+    { key: 'accel', label: 'Transaction Acceleration', icon: 'zap', hint: 'agents who reached 100% of their withdraw target' }
   ]);
   /* Office KPIs = the five + withdraw volume (office-wide, no BDO attached). */
   var OFFICE_DEFS = CORE_DEFS.concat([
@@ -3215,7 +3218,7 @@
   /* base defaults to 0: growing the round is an intention the OM opts into,
    * and a weight that appeared by itself would silently take 10% off every
    * other KPI the first time this screen was opened. */
-  var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15, base: 0 };
+  var DEFAULT_W = { serving: 30, float: 20, visits: 20, apk: 15, activeness: 15, base: 0, accel: 0 };
   /* CAREFUL: `t` is the global translator. Never name a local that, here or in
    * any callback below - shadowing it turns every t('...') in this function
    * into "t is not a function" and blanks the whole page. */

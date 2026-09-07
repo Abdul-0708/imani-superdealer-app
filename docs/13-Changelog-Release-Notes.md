@@ -5,6 +5,40 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.61.0 — 2026-09-04 · Transaction acceleration: all or nothing (schema v23)
+
+**Asked for:** a campaign KPI. Each agent is given a withdraw target; *an agent is counted only if he
+achieves 100%.* Anything short counts for nothing.
+
+Read straight from the performance file — the agent's own **Withdraw Target** and his **Withdraw
+transactions** — and the BDO's score is the number of agents who got there. It joins the monthly
+weighted average like any other KPI, with its own target and weight.
+
+The numbers are compared, not the file's *Withdraw Status* label. That column reads `1 - 20%` or
+`0%`, which is a band: it cannot tell 34 of 35 from 1 of 35, and under an all-or-nothing rule those
+two are only the same because neither finished — not because the band says so. A future 100% band
+would work, but the arithmetic is the thing that is actually true.
+
+**All or nothing is the point, and it is deliberate.** An agent on 3 of 35 and an agent on 0 of 30
+have both failed the campaign. Scoring them 8% and 0% would pay a little for work the campaign does
+not recognise, and would let a round full of near-misses out-score a round where agents genuinely
+finished. From your own sheet — 1/67, 6/87, 0/30, 0/30, 0/30, 3/35 — **nobody counts yet.** That is
+the correct reading, not a bug.
+
+Stored per agent (`wd_target`, `wd_txn`, `campaign` on `service_history`) rather than as a running
+total, so it is **recomputed and never remembered**: a corrected file corrects the score. Counted
+`DISTINCT` by agent, because a weekly file lands several times a month and an agent appears in each
+one — he is one agent who finished, not four.
+
+Column names go through `kpi_cols_for()` like every other KPI, so a renamed header is a typing job
+in the month's set-up and not a release. Default weight is **0**: a weight that appeared by itself
+would silently take a slice off every other KPI.
+
+Per-BDO only, like base growth — deliberately kept out of `OFFICE_DEFS`, whose weights the server
+validates against its own office KPI list.
+
+---
+
 ## v1.60.0 — 2026-09-04 · The app must start without the internet libraries
 
 **Reported:** BDOs on one mobile network could not open the app. Others, on a different SIM, were

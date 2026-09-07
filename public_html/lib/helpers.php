@@ -748,6 +748,16 @@ function parse_weekly_row($row, $month = '') {
     'sa' => num(pick($idx, array('SA Commission','sacommission','commission'))),
     'served' => $served,
     'withdraw' => num(pick($idx, kpi_cols_for($month, 'withdraw', array('Withdraw Volume','withdrawvolume')))),
+    /* TRANSACTION ACCELERATION. His own target and what he actually did.
+     * Both are read as plain numbers, because the achievement is a
+     * comparison and not a label: the file's own 'Withdraw Status' column
+     * says '1 - 20%' or '0%', which is a band and cannot tell 34 of 35
+     * from 1 of 35. The numbers can. */
+    'wd_target' => num(pick($idx, kpi_cols_for($month, 'accel',
+                      array('Withdraw Target','withdrawtarget','Withdraw target')))),
+    'wd_txn' => num(pick($idx, kpi_cols_for($month, 'accel_txn',
+                   array('Withdraw transactions','Withdraw Transactions','withdrawtransactions','Withdraw transaction')))),
+    'campaign' => mb_substr(trim((string)pick($idx, array('Campaign status','Campaign Status','campaignstatus','campaign'))), 0, 32),
     'location' => trim((string)pick($idx, array('Physical Location','location','shop','sehemu'))),
     'partner' => yesno(pick($idx, array('Partner','partnerserved','ispartner'))) === 'YES' ? 1 : 0,
     'bdo' => trim((string)pick($idx, array('BDO','Officer','Assigned BDO','bdoname','fieldofficer','bdoassigned'))),
@@ -1196,6 +1206,25 @@ function office_attainment($month, $station = '') {
 /* Agents in his round at this moment. This is a STANDING figure, not work
  * done in the month, which is exactly why base growth cannot be scored the
  * way the other KPIs are - see bdo_score(). */
+/*
+ * AGENTS WHO FINISHED THE ACCELERATION CAMPAIGN.
+ *
+ * All or nothing, deliberately. An agent with 3 of 35 and an agent with 0 of
+ * 30 have both failed the campaign; scoring them 8% and 0% would pay a little
+ * for work the campaign itself does not recognise, and would let a round full
+ * of near-misses out-score a round where agents actually got there.
+ *
+ * DISTINCT because a weekly file lands several times a month and an agent
+ * appears in each one - he is one agent who finished, not four.
+ */
+function accel_count($month, $bdo) {
+  $q = db()->prepare("SELECT COUNT(DISTINCT s.agent_id) c FROM service_history s
+                      WHERE s.month = ? AND s.bdo = ? AND s.source <> 'bdo'
+                        AND s.wd_target > 0 AND s.wd_txn >= s.wd_target");
+  $q->execute(array($month, $bdo));
+  $r = $q->fetch();
+  return $r ? (int)$r['c'] : 0;
+}
 function bdo_base_count($month, $bdo) {
   $q = db()->prepare('SELECT COUNT(*) c FROM base WHERE month = ? AND bdo = ?');
   $q->execute(array($month, $bdo));
@@ -1227,6 +1256,7 @@ function bdo_actuals($month, $bdo) {
   $f->execute(array($month, $bdo));
   $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
   $k['base'] = bdo_base_count($month, $bdo);
+  $k['accel'] = accel_count($month, $bdo);
   return $k;
 }
 
@@ -1261,6 +1291,7 @@ function bdo_actuals_unflagged($month, $bdo) {
   $f->execute(array($month, $bdo));
   $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
   $k['base'] = bdo_base_count($month, $bdo);
+  $k['accel'] = accel_count($month, $bdo);
   return $k;
 }
 
@@ -1302,6 +1333,8 @@ function kpi_defs() {
     /* GROWING THE ROUND. Scored from where he ended, not from zero -
      * see bdo_score() and schema v22. */
     'base' => 'base',
+    /* transaction acceleration: agents who reached their campaign target */
+    'accel' => 'accel',
   );
 }
 

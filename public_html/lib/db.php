@@ -113,6 +113,10 @@ function ensure_schema($pdo) {
     activeness VARCHAR(32) NOT NULL DEFAULT '',
     sa_commission BIGINT NOT NULL DEFAULT 0,
     served_status VARCHAR(12) NOT NULL DEFAULT 'NOT_SERVED',
+    /* transaction-acceleration campaign: his own target, and what he did */
+    wd_target BIGINT NOT NULL DEFAULT 0,
+    wd_txn BIGINT NOT NULL DEFAULT 0,
+    campaign VARCHAR(32) NOT NULL DEFAULT '',
     source VARCHAR(16) NOT NULL DEFAULT 'weekly',
     INDEX idx_svc_month_bdo (month, bdo),
     INDEX idx_svc_agent (agent_id)
@@ -257,6 +261,8 @@ function schema_v2_ddl() {
     base_start INT NOT NULL DEFAULT 0,
     base_target INT NOT NULL DEFAULT 0,
     base_w INT NOT NULL DEFAULT 0,
+    accel_target INT NOT NULL DEFAULT 0,
+    accel_w INT NOT NULL DEFAULT 0,
     PRIMARY KEY (month, bdo)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ";
@@ -434,6 +440,35 @@ function upgrade_schema($pdo) {
     schema_v22_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "22" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 23) {
+    schema_v23_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "23" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v23: TRANSACTION ACCELERATION - all or nothing, per agent.
+ *
+ * The campaign asks an agent for a number of withdraw transactions. He
+ * either got there or he did not: an agent on 3 of 35 and an agent on 0 of
+ * 30 have both failed the campaign, and counting them as 8% and 0% would
+ * quietly pay for work the campaign does not recognise. So the agent is
+ * worth 1 when he reaches his target and 0 until he does, and the BDO's
+ * score is the count of agents who got there.
+ *
+ * The target is PER AGENT and comes from the file (67, 87, 30, 35 in the
+ * same sheet), so it is stored per agent alongside the transactions, and
+ * recomputed rather than remembered - a corrected file corrects the score.
+ */
+function schema_v23_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE service_history ADD COLUMN wd_target BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE service_history ADD COLUMN wd_txn BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE service_history ADD COLUMN campaign VARCHAR(32) NOT NULL DEFAULT \'\'',
+    'ALTER TABLE bdo_targets ADD COLUMN accel_target INT NOT NULL DEFAULT 0',
+    'ALTER TABLE bdo_targets ADD COLUMN accel_w INT NOT NULL DEFAULT 0',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
 }
 
 /*
