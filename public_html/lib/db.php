@@ -458,6 +458,69 @@ function upgrade_schema($pdo) {
     schema_v26_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "26" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 27) {
+    schema_v27_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "27" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v27: THE SLEEPING-AGENT SWEEP.
+ *
+ * The inactive list has always been a list. Everyone could see it, nobody
+ * owned any part of it, and so it was worked at the edges - the easy agents,
+ * the near ones - while the rest slept on for months. A list nobody owns is a
+ * list nobody finishes.
+ *
+ * A sweep cuts the list into equal shares, gives each share to one officer
+ * with his name on it, and asks for an ANSWER on every agent in it - not a
+ * number at the end of the week, an answer per agent. Three answers exist and
+ * only three:
+ *
+ *   waked   - he is back. A receipt photo is compulsory, because this is the
+ *             one outcome that flatters the officer and it is the one the
+ *             office would otherwise have to take on trust.
+ *   never   - he is not coming back, in the agent's own words. That sentence
+ *             is the whole value of the answer: 'delete me, I have moved to
+ *             Dodoma' is a decision the office can act on, and it can only
+ *             ever come from the man who stood in front of him.
+ *   blocked - he would come back, but something is in the way. What is in the
+ *             way, and what would fix it - that is a job for the OM, and it
+ *             is worth more than the visit that found it.
+ *
+ * A sweep runs a week and is repeated until the list is empty; each new sweep
+ * skips the agents an earlier one already settled, so it converges instead of
+ * asking the same questions about the same people for ever.
+ */
+function schema_v27_apply($pdo) {
+  $pdo->exec("
+  CREATE TABLE IF NOT EXISTS sweeps (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    label VARCHAR(60) NOT NULL DEFAULT '',
+    month CHAR(7) NOT NULL DEFAULT '',
+    date_from DATE NOT NULL,
+    date_to DATE NOT NULL,
+    status VARCHAR(8) NOT NULL DEFAULT 'OPEN',
+    created_by VARCHAR(64) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sweep_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+  CREATE TABLE IF NOT EXISTS sweep_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sweep_id INT NOT NULL,
+    agent_id INT NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    /* '' until he answers; then waked | never | blocked */
+    outcome VARCHAR(10) NOT NULL DEFAULT '',
+    note VARCHAR(500) NOT NULL DEFAULT '',
+    proof VARCHAR(80) NOT NULL DEFAULT '',
+    done_at DATETIME NULL,
+    UNIQUE KEY uq_sweep_agent (sweep_id, agent_id),
+    INDEX idx_sweep_bdo (sweep_id, bdo),
+    INDEX idx_sweep_done (sweep_id, done_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
 }
 
 /*

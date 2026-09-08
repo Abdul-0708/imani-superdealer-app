@@ -1513,6 +1513,7 @@
         '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
         '<p class="note">' + t('Visits, serving as a share of your round, and activeness. The weighted average is the percentage of fuel you get for next week.') + '</p>' +
         '<div id="myFuelBox"></div></div>' +
+        sweepPanelHtml() +
         '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
         '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
         '<div id="myScoreHist"></div></div>' +
@@ -1523,6 +1524,7 @@
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
       myFuelLoad('myFuelBox');
+      sweepLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -2035,6 +2037,256 @@
       toast(d.rows.length + ' ' + t('agents exported - one sheet per BDO'), 'ok');
     }).catch(function (e) { toast(e.message, 'err'); });
   }
+  /* ================= THE SLEEPING-AGENT SWEEP =================
+   *
+   * The inactive list was a list. Everyone could see it, nobody owned any part
+   * of it, so it was worked at the edges while the rest slept on. A sweep cuts
+   * it into equal shares with one officer's name on each, and asks for an
+   * ANSWER on every agent - three answers, no fourth.
+   */
+  var SWEEP_OUTCOMES = {
+    waked:   { label: 'He is awake',            pill: 'ok',   needs: 'photo' },
+    never:   { label: 'Not coming back',        pill: 'bad',  needs: 'words' },
+    blocked: { label: 'Will come back, but...', pill: 'gold', needs: 'words' }
+  };
+
+  /* ---------------- the officer's own share ---------------- */
+  function sweepPanelHtml() {
+    return '<div class="panel" id="sweepPanel"><h2>' + svg('zap') + t('Sleeping agents given to me') + '</h2>' +
+      '<div id="sweepBox"><div class="note">' + t('Loading') + '...</div></div></div>';
+  }
+  function sweepLoad() {
+    var box = elById('sweepBox'); if (!box) return;
+    state._swRedo = state._swRedo || {};
+    api('sweep_mine').then(function (d) {
+      state._sweep = d;
+      state._swOpen = null;
+      state._swRedo = {};
+      var panel = elById('sweepPanel');
+      /* No sweep running, or none of it is his: show nothing at all rather
+       * than an empty panel that reads like a job he has failed to do. */
+      if (!d.sweep || !d.total) { if (panel) panel.style.display = 'none'; return; }
+      if (panel) panel.style.display = '';
+      box.innerHTML = sweepHtml(d);
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function sweepHtml(d) {
+    var pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+    var left = d.total - d.done;
+    var head = '<p class="note">' + esc(d.sweep.label) + ' &middot; ' + esc(d.sweep.date_from) + ' - ' + esc(d.sweep.date_to) + '</p>' +
+      '<div class="tg-row"><span class="tg-name">' + t('Answered') + '</span>' +
+      '<div class="bar" style="flex:1"><i class="' + (pct >= 80 ? 'green' : (pct < 50 ? 'red' : '')) + '" style="width:' + pct + '%"></i></div>' +
+      '<span class="note" style="min-width:120px">' + d.done + ' / ' + d.total + ' &middot; ' + pct + '%</span></div>' +
+      (left ? '<p class="note">' + left + ' ' + t('still to answer for. Every one needs an answer - a visit with no answer is a visit the office cannot see.') + '</p>'
+            : '<p class="note"><span class="pill ok">' + t('All answered - nothing left in your share') + '</span></p>');
+    var open = state._swOpen || {};
+    var rows = (d.items || []).map(function (it) {
+      var o = it.outcome ? SWEEP_OUTCOMES[it.outcome] : null;
+      var editing = String(open.id) === String(it.id);
+      var done = !!it.outcome && !editing && !state._swRedo[it.id];
+      var head = '<span class="tg-name" style="width:auto;min-width:150px">' + esc(it.name) +
+        '<div class="note">' + esc(it.acc) + (it.station ? ' &middot; ' + esc(it.station) : '') +
+        (it.phone ? ' &middot; ' + esc(it.phone) : '') + '</div></span>';
+      /* ANSWERED: the answer, the words behind it, and a way back if he got it
+       * wrong - a report he cannot correct is a report he will hesitate to
+       * make honestly the first time. */
+      if (done) {
+        return '<div class="tg-row" style="align-items:flex-start;flex-wrap:wrap">' + head +
+          '<span class="pill ' + o.pill + '">' + t(o.label) + '</span>' +
+          (it.note ? '<span class="note" style="flex:1">' + esc(it.note) + '</span>' : '<span style="flex:1"></span>') +
+          (it.proof ? '<span class="pill dim">' + t('photo') + '</span>' : '') +
+          '<button class="ghost mini" data-action="swRedo" data-id="' + it.id + '">' + t('Change') + '</button></div>';
+      }
+      /* WRITING: the box opens in the row itself. No browser prompt - it is
+       * cramped on a phone, it loses what he typed if he taps away, and it
+       * cannot show him which agent he is answering for. */
+      if (editing) {
+        var ask = open.outcome === 'never'
+          ? t('What did he say? His own words - for example: I have closed the shop and moved, delete me.')
+          : t('What is blocking him, and what would clear it?');
+        return '<div class="tg-row" style="align-items:flex-start;flex-wrap:wrap;gap:8px">' + head +
+          '<div style="flex:1;min-width:220px">' +
+          '<div class="note" style="margin-bottom:4px">' + esc(ask) + '</div>' +
+          '<textarea id="swNote" rows="2" style="width:100%" maxlength="500">' + esc(it.note || '') + '</textarea>' +
+          '<div class="row" style="gap:6px;margin-top:6px">' +
+          '<button class="btn mini" data-action="swSave" data-id="' + it.id + '">' + t('Save answer') + '</button>' +
+          '<button class="ghost mini" data-action="swCancel">' + t('Cancel') + '</button></div></div></div>';
+      }
+      return '<div class="tg-row" style="align-items:flex-start;flex-wrap:wrap">' + head +
+        '<div class="row" style="flex:1;gap:6px;flex-wrap:wrap">' +
+        '<button class="btn mini" data-action="swAnswer" data-id="' + it.id + '" data-o="waked" data-name="' + esc(it.name) + '">' + t('He is awake') + '</button>' +
+        '<button class="ghost mini" data-action="swAnswer" data-id="' + it.id + '" data-o="never">' + t('Not coming back') + '</button>' +
+        '<button class="ghost mini" data-action="swAnswer" data-id="' + it.id + '" data-o="blocked">' + t('Blocked') + '</button>' +
+        '</div></div>';
+    }).join('');
+    return head + rows;
+  }
+
+  /*
+   * ONE AGENT, ONE ANSWER.
+   *
+   * 'He is awake' opens the camera, because that is the answer that flatters
+   * the officer and the one the office would otherwise take on trust. The
+   * other two open a box for words, because the words ARE the answer - what
+   * the agent actually said, or what is in the way and what would clear it.
+   */
+  function sweepAnswer(id, outcome, name) {
+    var spec = SWEEP_OUTCOMES[outcome]; if (!spec) return;
+    if (spec.needs === 'photo') { sweepPhoto(id, name); return; }
+    state._swOpen = { id: id, outcome: outcome };
+    elById('sweepBox').innerHTML = sweepHtml(state._sweep);
+    var ta = elById('swNote'); if (ta) { ta.focus(); ta.selectionStart = ta.value.length; }
+  }
+  function sweepSave(id) {
+    var ta = elById('swNote');
+    var note = ta ? String(ta.value).trim() : '';
+    if (!note) { toast(t('Write what he told you - that sentence is the whole answer'), 'warn'); if (ta) ta.focus(); return; }
+    sweepSend({ itemId: id, outcome: (state._swOpen || {}).outcome, note: note });
+  }
+  function sweepCancel() {
+    state._swOpen = null;
+    elById('sweepBox').innerHTML = sweepHtml(state._sweep);
+  }
+  function sweepPhoto(id, name) {
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0]; if (!f) return;
+      var fr = new FileReader();
+      /* The photo IS the answer here; anything he wants to add he can add by
+       * pressing Change afterwards. Stopping him for an optional sentence
+       * between taking the photo and it being saved is how photos get lost. */
+      fr.onload = function (e) {
+        sweepSend({ itemId: id, outcome: 'waked', proof: e.target.result, note: '' });
+      };
+      fr.readAsDataURL(f);
+    };
+    inp.click();
+  }
+  function sweepSend(body) {
+    api('sweep_report', { body: body })
+      .then(function () { toast(t('Answer recorded'), 'ok'); sweepLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  /* Correcting an answer just puts the three buttons back on that row - the
+   * same choice he had the first time, in the same place. */
+  function sweepRedo(id) {
+    state._swRedo[id] = true;
+    state._swOpen = null;
+    elById('sweepBox').innerHTML = sweepHtml(state._sweep);
+  }
+
+  /* ---------------- what the office sees ---------------- */
+  function sweepAdminHtml() {
+    return '<div class="panel"><h2>' + svg('users') + t('Sleeping-agent sweep') + '</h2>' +
+      '<p class="note">' + t('Share every sleeping agent out equally, one week at a time, and ask for an answer on each one. Agents already answered for are left out of the next round, so the list shrinks until it is finished.') + '</p>' +
+      '<div id="swAdminBox"><div class="note">' + t('Loading') + '...</div></div></div>';
+  }
+  function sweepAdminLoad(id) {
+    var box = elById('swAdminBox'); if (!box) return;
+    api('sweep_progress', { qs: id ? '&id=' + id : '' }).then(function (d) {
+      state._swAdmin = d;
+      box.innerHTML = sweepAdminBody(d);
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function sweepAdminBody(d) {
+    var canE = can('agents', 'e');
+    var opener = canE
+      ? '<div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px">' +
+        '<div class="field"><label>' + t('From') + '</label><input id="swFrom" type="date"></div>' +
+        '<div class="field"><label>' + t('To') + '</label><input id="swTo" type="date"></div>' +
+        '<div class="field"><label>' + t('Name (optional)') + '</label><input id="swLabel" placeholder="' + t('e.g. Sweep week 1') + '"></div>' +
+        '<button class="btn" data-action="swCreate">' + t('Share the sleeping agents out') + '</button></div>'
+      : '';
+    if (!d.sweep) return opener + '<p class="note">' + t('No sweep has been run yet.') + '</p>';
+    var sw = d.sweep;
+    var picker = (d.sweeps || []).length > 1
+      ? '<div class="field"><label>' + t('Sweep') + '</label><select id="swPick" data-change="swPick">' +
+        d.sweeps.map(function (x) {
+          return '<option value="' + x.id + '"' + (String(x.id) === String(sw.id) ? ' selected' : '') + '>' +
+            esc(x.label) + ' (' + esc(x.date_from) + ') ' + (x.status === 'OPEN' ? '&bull;' : '') + '</option>';
+        }).join('') + '</select></div>'
+      : '';
+    var tot = 0, ans = 0, wk = 0, nv = 0, bl = 0, td = 0;
+    (d.rows || []).forEach(function (r) {
+      tot += Number(r.total) || 0; ans += Number(r.answered) || 0; wk += Number(r.waked) || 0;
+      nv += Number(r.never_back) || 0; bl += Number(r.blocked) || 0; td += Number(r.today) || 0;
+    });
+    var rows = (d.rows || []).map(function (r) {
+      var a = Number(r.answered) || 0, n = Number(r.total) || 0;
+      var pct = n ? Math.round(a / n * 100) : 0;
+      return '<tr><td class="c-name">' + esc(r.name || r.bdo) + '<div class="note">' + esc(r.bdo) + '</div></td>' +
+        '<td>' + a + ' / ' + n + '<div class="bar" style="width:90px"><i class="' + (pct >= 80 ? 'green' : (pct < 50 ? 'red' : '')) + '" style="width:' + pct + '%"></i></div></td>' +
+        '<td><span class="pill ok">' + (Number(r.waked) || 0) + '</span></td>' +
+        '<td><span class="pill bad">' + (Number(r.never_back) || 0) + '</span></td>' +
+        '<td><span class="pill gold">' + (Number(r.blocked) || 0) + '</span></td>' +
+        '<td><b>' + (Number(r.today) || 0) + '</b></td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">' + t('Nobody has been given anything yet.') + '</td></tr>';
+    var days = (d.byDay || []).map(function (x) {
+      return '<span class="pill dim">' + esc(x.d) + ': <b>' + x.n + '</b></span> ';
+    }).join('') || '<span class="note">' + t('nothing answered yet') + '</span>';
+    return opener +
+      '<div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + picker +
+      '<div class="spacer"></div>' +
+      '<button class="ghost" data-action="swExport" data-id="' + sw.id + '">' + svg('download') + t('Download Excel') + '</button>' +
+      (canE && sw.status === 'OPEN' ? '<button class="ghost" data-action="swClose" data-id="' + sw.id + '">' + t('Close this sweep') + '</button>' : '') +
+      '</div>' +
+      '<p class="note">' + esc(sw.label) + ' &middot; ' + esc(sw.date_from) + ' - ' + esc(sw.date_to) +
+      ' &middot; ' + (sw.status === 'OPEN' ? '<span class="pill fire">' + t('running') + '</span>' : '<span class="pill dim">' + t('closed') + '</span>') +
+      ' &middot; <b>' + ans + '</b> / ' + tot + ' ' + t('answered') + ' &middot; ' + t('today') + ': <b>' + td + '</b></p>' +
+      '<p class="note">' + t('Answered per day') + ': ' + days + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('Answered') + '</th>' +
+      '<th>' + t('Awake') + '</th><th>' + t('Not coming back') + '</th><th>' + t('Blocked') + '</th><th>' + t('Today') + '</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  function sweepCreate() {
+    var from = elById('swFrom').value, to = elById('swTo').value;
+    if (!from || !to) { toast(t('Give the week both dates'), 'warn'); return; }
+    if (!window.confirm(t('Share every sleeping agent out equally between the active BDOs?'))) return;
+    api('sweep_create', { body: { from: from, to: to, label: elById('swLabel').value } })
+      .then(function (r) {
+        toast(r.agents + ' ' + t('agents shared between') + ' ' + r.bdos + ' ' + t('BDOs'), 'ok');
+        sweepAdminLoad(r.id);
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function sweepClose(id) {
+    if (!window.confirm(t('Close this sweep? Officers can no longer answer on it.'))) return;
+    api('sweep_close', { body: { id: id } })
+      .then(function () { toast(t('Sweep closed'), 'ok'); sweepAdminLoad(id); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  /* The whole sweep as a workbook: every agent, his answer in full, and the
+   * officer who gave it - one sheet for everything, one sheet per officer, so
+   * the OM can hand a man his own page without cutting the file up. */
+  function sweepExport(id) {
+    if (!xlsxReady()) return;
+    api('sweep_export', { qs: '&id=' + id }).then(function (d) {
+      if (!(d.rows || []).length) { toast(t('Nothing to export yet'), 'warn'); return; }
+      var OUT = { waked: 'Awake', never: 'Not coming back', blocked: 'Blocked', '': 'NO ANSWER YET' };
+      function shape(r) {
+        return {
+          'Agent account': r.acc, 'Agent': r.agent, 'Phone': r.phone, 'Branch': r.branch,
+          'SA Station': r.station, 'Physical location': r.physical_location,
+          'BDO username': r.bdo, 'BDO name': r.bdo_name || '', 'BDO station': r.bdo_station || '',
+          'Answer': OUT[r.outcome] || r.outcome,
+          'What he said / what is blocking': r.note,
+          'Receipt photo': r.proof ? 'YES' : '',
+          'Answered at': r.done_at || ''
+        };
+      }
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(d.rows.map(shape)), 'All');
+      var per = {};
+      d.rows.forEach(function (r) { (per[r.bdo] = per[r.bdo] || []).push(r); });
+      Object.keys(per).forEach(function (b) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(per[b].map(shape)), String(b).slice(0, 28));
+      });
+      XLSX.writeFile(wb, 'sweep_' + (d.sweep.date_from || '') + '.xlsx');
+      toast(d.rows.length + ' ' + t('rows exported'), 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+
   /* Inactive agents - two categories, visible to every BDO and management. */
   /* Inactive agents grouped BY SA STATION (Arusha / Manyara / ...): the LOST
    * ones (active last month, silent now) first, then all inactive. A BDO with
@@ -2521,8 +2773,10 @@
         '<h2 style="margin:0">' + svg('zap') + t('Grow my round') + '</h2><div class="spacer"></div>' +
         (editable ? '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>' : '') + '</div>' +
         '<p class="note">' + t('A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.') + '</p></div>' +
+        (isManager() ? sweepAdminHtml() : '') +
         '<div id="inactivePanel"></div>';
       inactivePanelLoad();
+      if (isManager()) sweepAdminLoad(0);
       var sb = elById('baseSearch');
       if (sb) {
         sb.addEventListener('input', function () {
@@ -5749,6 +6003,13 @@
     }
     if (a === 'wdSave') { wdSave(); return; }
     if (a === 'dashSettingsSave') { dashSettingsSave(); return; }
+    if (a === 'swAnswer') { sweepAnswer(node.getAttribute('data-id'), node.getAttribute('data-o'), node.getAttribute('data-name')); return; }
+    if (a === 'swRedo') { sweepRedo(node.getAttribute('data-id')); return; }
+    if (a === 'swSave') { sweepSave(node.getAttribute('data-id')); return; }
+    if (a === 'swCancel') { sweepCancel(); return; }
+    if (a === 'swCreate') { sweepCreate(); return; }
+    if (a === 'swClose') { sweepClose(node.getAttribute('data-id')); return; }
+    if (a === 'swExport') { sweepExport(node.getAttribute('data-id')); return; }
     if (a === 'inactMode') { state._inactMode = node.getAttribute('data-m'); inactivePanelLoad(); return; }
     if (a === 'btSave') { btSave(); return; }
     if (a === 'btSaveAll') { btSaveAll(false); return; }
@@ -5802,6 +6063,7 @@
       if (n.parentNode && n.parentNode.classList) n.parentNode.classList.toggle('active', n.checked);
       return;
     }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'swPick') { sweepAdminLoad(n.value); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'wkPick') { state._weekId = n.value; weekBodyLoad(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'wkBdoPick') { state._wkBdo = n.value; weekBodyLoad(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'uRole') { uPatch(n.getAttribute('data-id'), { role: n.value }); return; }

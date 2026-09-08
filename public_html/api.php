@@ -2914,6 +2914,205 @@ try {
       respond(array('week' => $week, 'rows' => $out, 'mine' => $mine));
     }
 
+    /*
+     * ===================== THE SLEEPING-AGENT SWEEP =====================
+     *
+     * The inactive list was a list: everyone could see it, nobody owned any
+     * part of it, so it was worked at the edges - the easy agents, the near
+     * ones - while the rest slept on. A list nobody owns is a list nobody
+     * finishes.
+     *
+     * A sweep cuts it into equal shares, puts one officer's name on each, and
+     * asks for an ANSWER on every agent - not a number at the end of the week.
+     */
+
+    /*
+     * OM opens a sweep: every sleeping agent, split evenly, one week.
+     *
+     * Agents an earlier sweep already SETTLED are left out, so each round is
+     * shorter than the last and the programme ends instead of asking the same
+     * questions about the same people for ever. 'Blocked' is not settled - the
+     * obstacle was reported, not cleared, and he comes back round.
+     */
+    case 'sweep_create': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      if (!is_manager($u)) fail('Management access only', 403);
+      $from = trim((string)bval('from'));
+      $to   = trim((string)bval('to'));
+      $d = '/^\d{4}-\d{2}-\d{2}$/';
+      if (!preg_match($d, $from) || !preg_match($d, $to)) fail('Give both dates as YYYY-MM-DD');
+      if ($to < $from) fail('The week cannot end before it starts');
+      if ((strtotime($to) - strtotime($from)) > 31 * 86400) fail('A sweep is meant to be about a week - that span is over a month');
+      if (db()->query("SELECT id FROM sweeps WHERE status = 'OPEN' LIMIT 1")->fetch()) {
+        fail('A sweep is already running. Close it before opening another - two live sweeps would give the same agent to two officers.');
+      }
+      $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY username')->fetchAll();
+      if (!$bdos) fail('There are no active BDO accounts to share the work between');
+
+      /* every sleeping agent an earlier sweep has not already settled */
+      $aq = db()->query("SELECT a.id, a.acc, a.name, a.station FROM agents a
+                         WHERE a.act_current = 'INACTIVE'
+                           AND NOT EXISTS (SELECT 1 FROM sweep_items si
+                                           WHERE si.agent_id = a.id
+                                             AND si.outcome IN ('waked','never'))
+                         ORDER BY a.station, a.name");
+      $agents = $aq->fetchAll();
+      if (!$agents) fail('No sleeping agents are waiting - every one of them has already been answered for');
+
+      $label = mb_substr(trim((string)bval('label')), 0, 60);
+      if ($label === '') $label = 'Sweep ' . $from;
+      db()->prepare('INSERT INTO sweeps (label, month, date_from, date_to, created_by) VALUES (?,?,?,?,?)')
+          ->execute(array($label, substr($from, 0, 7), $from, $to, $u['username']));
+      $sid = (int)db()->lastInsertId();
+
+      /*
+       * EQUAL SHARES, dealt round-robin down a list already ordered by station.
+       * Dealing a sorted list one at a time keeps each officer's share spread
+       * across the same stations rather than handing one man every agent in a
+       * far region - the shares stay equal in number AND comparable in travel.
+       */
+      $ins = db()->prepare('INSERT IGNORE INTO sweep_items (sweep_id, agent_id, bdo) VALUES (?,?,?)');
+      $n = count($bdos); $i = 0; $per = array();
+      foreach ($agents as $a) {
+        $who = $bdos[$i % $n]['username'];
+        $ins->execute(array($sid, (int)$a['id'], $who));
+        if (!isset($per[$who])) $per[$who] = 0;
+        $per[$who]++;
+        $i++;
+      }
+      audit($u['id'], 'sweep_create', $label . ' ' . $from . '..' . $to . ' agents=' . count($agents) . ' bdos=' . $n);
+      respond(array('ok' => true, 'id' => $sid, 'label' => $label, 'agents' => count($agents),
+                    'bdos' => $n, 'per' => $per));
+    }
+
+    case 'sweep_close': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      if (!is_manager($u)) fail('Management access only', 403);
+      $id = (int)num(bval('id'));
+      db()->prepare("UPDATE sweeps SET status = 'CLOSED' WHERE id = ?")->execute(array($id));
+      audit($u['id'], 'sweep_close', 'sweep=' . $id);
+      respond(array('ok' => true));
+    }
+
+    /*
+     * THE OFFICER'S OWN SHARE. His agents, his answers, nobody else's - a man
+     * looking at a list of work is not helped by seeing everyone else's too.
+     */
+    case 'sweep_mine': {
+      $u = require_auth();
+      $sw = db()->query("SELECT * FROM sweeps WHERE status = 'OPEN' ORDER BY id DESC LIMIT 1")->fetch();
+      if (!$sw) respond(array('sweep' => null, 'items' => array()));
+      $q = db()->prepare("SELECT si.id, si.agent_id, si.outcome, si.note, si.proof, si.done_at,
+                                 a.acc, a.name, a.phone, a.branch, a.station, a.physical_location
+                          FROM sweep_items si JOIN agents a ON a.id = si.agent_id
+                          WHERE si.sweep_id = ? AND si.bdo = ?
+                          ORDER BY (si.outcome = '') DESC, a.station, a.name");
+      $q->execute(array((int)$sw['id'], $u['username']));
+      $items = $q->fetchAll();
+      $done = 0;
+      foreach ($items as $it) if ($it['outcome'] !== '') $done++;
+      respond(array('sweep' => $sw, 'items' => $items, 'total' => count($items), 'done' => $done,
+                    'today' => date('Y-m-d')));
+    }
+
+    /*
+     * ONE AGENT, ONE ANSWER. Three outcomes and no fourth.
+     *
+     * WAKED demands a receipt photo. It is the only outcome that flatters the
+     * officer, and the only one the office would otherwise have to take purely
+     * on trust - so it is the one that carries evidence. The other two cost him
+     * nothing to report honestly, and demanding a photo of an agent who refused
+     * to come back would only teach him to stop asking.
+     *
+     * NEVER and BLOCKED demand words instead, and the words are the point: what
+     * the agent actually said, or what is in the way and what would clear it.
+     * A tick with no sentence behind it is the report the office already had.
+     */
+    case 'sweep_report': {
+      $u = require_auth();
+      $itemId = (int)num(bval('itemId'));
+      $outcome = strtolower(trim((string)bval('outcome')));
+      if (!in_array($outcome, array('waked', 'never', 'blocked'), true)) fail('Choose one of the three answers');
+      $q = db()->prepare('SELECT si.*, s.status FROM sweep_items si JOIN sweeps s ON s.id = si.sweep_id WHERE si.id = ?');
+      $q->execute(array($itemId));
+      $it = $q->fetch();
+      if (!$it) fail('No such agent in this sweep', 404);
+      if ($it['status'] !== 'OPEN') fail('That sweep is closed');
+      if ($it['bdo'] !== $u['username'] && !is_manager($u)) fail('That agent was given to another officer', 403);
+
+      $note = mb_substr(trim((string)bval('note')), 0, 500);
+      $proof = (string)$it['proof'];
+      if ($outcome === 'waked') {
+        $img = (string)bval('proof');
+        if ($img !== '') $proof = save_proof_image($img);
+        if ($proof === '') fail('A photo of the receipts is needed to report him woken', 400, array('needProof' => true));
+      } else {
+        if ($note === '') {
+          fail($outcome === 'never'
+            ? 'Write what the agent said - his own words are the whole value of this answer'
+            : 'Write what is blocking him and what would clear it');
+        }
+      }
+      db()->prepare('UPDATE sweep_items SET outcome = ?, note = ?, proof = ?, done_at = NOW() WHERE id = ?')
+          ->execute(array($outcome, $note, $proof, $itemId));
+      audit($u['id'], 'sweep_report', 'sweep=' . $it['sweep_id'] . ' agent=' . $it['agent_id'] . ' ' . $outcome);
+      respond(array('ok' => true, 'outcome' => $outcome));
+    }
+
+    /*
+     * WHAT THE OFFICE SEES: who did what, today and over the sweep. Per officer
+     * so the OM can tell a man who is working through his share from one who
+     * has not started, and per day so a week of nothing is visible on Tuesday
+     * rather than on Friday when it is too late to say anything.
+     */
+    case 'sweep_progress': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $id = (int)num(isset($_GET['id']) ? $_GET['id'] : 0);
+      $sw = $id > 0
+        ? (function ($id) { $q = db()->prepare('SELECT * FROM sweeps WHERE id = ?'); $q->execute(array($id)); return $q->fetch(); })($id)
+        : db()->query('SELECT * FROM sweeps ORDER BY id DESC LIMIT 1')->fetch();
+      if (!$sw) respond(array('sweep' => null, 'rows' => array(), 'sweeps' => array()));
+      $sid = (int)$sw['id'];
+      $rq = db()->prepare("SELECT si.bdo, u.name,
+                             COUNT(*) total,
+                             SUM(si.outcome <> '') answered,
+                             SUM(si.outcome = 'waked') waked,
+                             SUM(si.outcome = 'never') never_back,
+                             SUM(si.outcome = 'blocked') blocked,
+                             SUM(DATE(si.done_at) = CURDATE()) today
+                           FROM sweep_items si LEFT JOIN users u ON u.username = si.bdo
+                           WHERE si.sweep_id = ? GROUP BY si.bdo, u.name ORDER BY answered DESC, si.bdo");
+      $rq->execute(array($sid));
+      $dq = db()->prepare("SELECT DATE(done_at) d, COUNT(*) n FROM sweep_items
+                           WHERE sweep_id = ? AND done_at IS NOT NULL
+                           GROUP BY DATE(done_at) ORDER BY d");
+      $dq->execute(array($sid));
+      $sweeps = db()->query('SELECT id, label, status, date_from, date_to FROM sweeps ORDER BY id DESC LIMIT 30')->fetchAll();
+      respond(array('sweep' => $sw, 'rows' => $rq->fetchAll(), 'byDay' => $dq->fetchAll(), 'sweeps' => $sweeps));
+    }
+
+    /* Every answer with the agent AND the officer beside it, for the workbook. */
+    case 'sweep_export': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $id = (int)num(isset($_GET['id']) ? $_GET['id'] : 0);
+      $sq = db()->prepare('SELECT * FROM sweeps WHERE id = ?');
+      $sq->execute(array($id));
+      $sw = $sq->fetch();
+      if (!$sw) fail('No such sweep', 404);
+      $q = db()->prepare("SELECT a.acc, a.name AS agent, a.phone, a.branch, a.station, a.physical_location,
+                                 si.bdo, u.name AS bdo_name, u.station AS bdo_station,
+                                 si.outcome, si.note, si.proof, si.done_at
+                          FROM sweep_items si
+                          JOIN agents a ON a.id = si.agent_id
+                          LEFT JOIN users u ON u.username = si.bdo
+                          WHERE si.sweep_id = ?
+                          ORDER BY si.bdo, (si.outcome = '') DESC, a.name");
+      $q->execute(array($id));
+      respond(array('sweep' => $sw, 'rows' => $q->fetchAll()));
+    }
+
     /* ================= DAILY BDO REPORTS ================= */
 
     /*

@@ -5,6 +5,62 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.65.0 — 2026-09-08 · The sleeping-agent sweep (schema v27)
+
+**Asked for:** share every inactive agent out equally between the BDOs, one week at a time, and make
+each officer come back with an answer on each agent — awake, never coming back, or blocked. Photos
+for the wakes. A panel that makes it easy on his phone. A daily report for the OM, and an Excel
+download with the officers' details in it.
+
+The inactive list has always been a list. Everyone could see it, nobody owned any part of it, so it
+was worked at the edges — the easy agents, the near ones — while the rest slept on for months. **A
+list nobody owns is a list nobody finishes.**
+
+A sweep cuts it into equal shares, puts one officer's name on each, and asks for an answer on every
+agent in it. Three answers exist and there is no fourth:
+
+| Answer | What it needs | Why |
+|---|---|---|
+| **He is awake** | a receipt photo, compulsory | the only outcome that flatters the officer, and the only one the office would otherwise take on trust |
+| **Not coming back** | the agent's own words | *"I have closed the shop and moved, delete me"* is a decision the office can act on, and it can only come from the man who stood in front of him |
+| **Blocked** | what is in the way, and what would clear it | worth more than the visit that found it — it is a job for the OM |
+
+Words are demanded for the two answers that cost the officer nothing to report honestly; a photo is
+demanded for the one that does not. Asking for a photo of an agent who refused to come back would
+only teach him to stop asking.
+
+### Equal shares, and an end
+
+Agents are dealt round-robin down a list already sorted by station, so each officer's share is equal
+in number **and** comparable in travel — nobody gets handed every agent in one far region.
+
+Each new sweep leaves out the agents an earlier one already **settled**, so every round is shorter
+than the last and the programme finishes instead of asking the same questions about the same people
+for ever. *Blocked* is deliberately not settled: the obstacle was reported, not cleared, so he comes
+back round. Only one sweep runs at a time — two would hand the same agent to two officers.
+
+### On his phone, in the row
+
+The officer's panel appears on his own dashboard and hides itself entirely when he has no share, so
+it never reads as a job he has failed to do. Tapping *awake* opens the camera and saves as soon as
+the photo is taken — nothing between the photo and it being stored, because that gap is how photos
+get lost. The other two open a text box **in the row itself**, not a browser prompt: a prompt is
+cramped on a phone, loses what he typed if he taps away, and cannot show him which agent he is
+answering for. Any answer can be changed — a report he cannot correct is one he will hesitate to
+make honestly the first time.
+
+### What the office sees
+
+Per officer: answered out of given, split by the three outcomes, and how many he did **today** — so
+a week of nothing is visible on Tuesday rather than on Friday when it is too late to say anything.
+Plus a per-day tally across the sweep.
+
+The Excel download carries every agent, his full answer, the receipt flag and the timestamp, with the
+officer's username, name and station beside each row — one sheet for everything and one sheet per
+officer, so the OM can hand a man his own page without cutting the file up.
+
+---
+
 ## v1.64.0 — 2026-09-04 · The OM can trust one officer with partner work (schema v26)
 
 **Asked for:** let the OM give an individual BDO the right to overturn partner work and serve the
