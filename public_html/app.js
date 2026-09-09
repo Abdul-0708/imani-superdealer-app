@@ -872,6 +872,9 @@
     { key: 'mybase', label: 'My Agent Base', icon: 'phone' },
     { key: 'daily', label: 'Daily Report', icon: 'cal' },
     { key: 'agents', label: 'Agents', icon: 'users' },
+    /* Waking agents was spread over four screens and therefore lived on none
+     * of them. It is one job, so it gets one tab. */
+    { key: 'activeness', label: 'Activeness', icon: 'zap' },
     { key: 'bdos', label: 'BDOs', icon: 'users' },
     { key: 'upload', label: 'Database Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
@@ -943,7 +946,13 @@
   function refreshBadges() {
     if (!state.user) return;
     Promise.all([
-      api('messages_unread', { silent: true }).then(function (d) { state.unreadMsgs = d.unread || 0; }, function () {}),
+      api('messages_unread', { silent: true }).then(function (d) {
+        state.unreadMsgs = d.unread || 0;
+        /* A warning the office has posted must reach a man mid-shift, not when
+         * he next happens to reload - so it repaints in place. */
+        state.notice = d.notice || null;
+        paintNotice();
+      }, function () {}),
       isFieldUser()
         ? api('my_flags', { silent: true }).then(function (d) { state.pendingFlags = d.pending || 0; }, function () {})
         : Promise.resolve()
@@ -1043,6 +1052,8 @@
         if (isOfficeRole()) return false;      /* he manages the round, he does not walk it */
         return can('mybase', m.key === 'daily' ? 'e' : 'v');
       }
+      /* The officer works this screen; the OM reads it. Nobody else needs it. */
+      if (m.key === 'activeness') return isManager() || can('mybase', 'v');
       if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
       /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
@@ -1217,6 +1228,7 @@
     v.innerHTML = skeletonHtml();
     if (state.tab === 'dashboard') viewDashboard(v);
     else if (state.tab === 'agents') viewAgents(v);
+    else if (state.tab === 'activeness') viewActiveness(v);
     else if (state.tab === 'mybase') viewMyBase(v);
     else if (state.tab === 'daily') viewDaily(v);
     else if (state.tab === 'data') viewData(v);
@@ -1505,7 +1517,7 @@
         '<div id="liveBox"></div></div>';
 
       v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
@@ -1513,7 +1525,6 @@
         '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
         '<p class="note">' + t('Visits, serving as a share of your round, and activeness. The weighted average is the percentage of fuel you get for next week.') + '</p>' +
         '<div id="myFuelBox"></div></div>' +
-        sweepPanelHtml() +
         '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
         '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
         '<div id="myScoreHist"></div></div>' +
@@ -1524,7 +1535,6 @@
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
       myFuelLoad('myFuelBox');
-      sweepLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -1717,6 +1727,80 @@
     XLSX.writeFile(wb, 'live_work_' + span + '_' + winTag + '.xlsx');
     toast(rows.length + ' ' + t('ticks exported'), 'ok');
   }
+  /*
+   * THE OFFICE NOTICE.
+   *
+   * One banner, at the top of the board, saying what the OM wants everybody to
+   * know - most often that a man has been caught sending false receipts. It
+   * carries who posted it and when, because a warning nobody can trace back to
+   * a person is a rumour, and it stays up until he takes it down.
+   */
+  function noticeHtml() {
+    var n = state.notice;
+    if (!n || !n.text) return '<div id="officeNotice"></div>';
+    return '<div id="officeNotice"><div class="panel" style="border-color:var(--bad);background:rgba(255,107,94,.08)">' +
+      '<div class="row" style="align-items:flex-start;gap:10px">' +
+      '<span class="tg-ic">' + svg('alert') + '</span>' +
+      '<div style="flex:1"><b>' + esc(n.text) + '</b>' +
+      '<div class="note">' + t('Posted by') + ' ' + esc(n.by || '') + ' &middot; ' + esc(n.at || '') + '</div></div>' +
+      (isManager() ? '<button class="ghost mini" data-action="noticeClear">' + t('Take it down') + '</button>' : '') +
+      '</div></div></div>';
+  }
+  function paintNotice() {
+    var el = elById('officeNotice');
+    if (!el) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = noticeHtml();
+    el.parentNode.replaceChild(tmp.firstChild, el);
+  }
+  /*
+   * A rejected receipt takes the credit with it - the month is left exactly as
+   * it would have been had the claim never been made. The photo is kept: it is
+   * the evidence the ruling rests on, and a ruling whose evidence was thrown
+   * away cannot be reviewed.
+   */
+  function proofVerdict(id, kpi, verdict) {
+    var note = elById('pvNote') ? String(elById('pvNote').value).trim() : '';
+    if (verdict === 'fake' && !note) { toast(t('Say what is wrong with it - the officer is owed a reason'), 'warn'); return; }
+    if (verdict === 'fake' && !window.confirm(t('Reject this receipt and take the credit back?'))) return;
+    api('proof_verdict', { body: { agentId: id, kpi: kpi, verdict: verdict, note: note,
+                                   month: state.month || state.openMonth || curMonth() } })
+      .then(function (r) {
+        closeModal();
+        if (verdict === 'fake') {
+          toast(t('Rejected - the credit is off') + ' (' + esc(r.bdo) + ')', 'ok');
+          /* Naming a man to the whole office is a separate, deliberate act -
+           * one bad photo may be a bad photo. The OM decides, here, now. */
+          if (window.confirm(t('Tell the whole office about this?'))) noticeCompose();
+        } else { toast(t('Receipt confirmed'), 'ok'); }
+        renderTab();
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
+  function noticeCompose() {
+    openModal('<h2>' + svg('alert') + ' ' + t('Tell the whole office') + '</h2>' +
+      '<p class="note">' + t('This sits at the top of every dashboard until you take it down. Naming a man here is a heavy thing - say what happened plainly.') + '</p>' +
+      '<textarea id="noticeText" rows="3" style="width:100%" maxlength="300" placeholder="' +
+      t('e.g. Receipts sent by X on 8 September were false. Every receipt is now being checked.') + '">' +
+      esc((state.notice && state.notice.text) || '') + '</textarea>' +
+      '<div class="row" style="justify-content:space-between;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="noticeSave">' + t('Post it') + '</button></div>');
+  }
+  function noticeSave() {
+    var txt = elById('noticeText') ? elById('noticeText').value : '';
+    api('notice_save', { body: { text: txt } })
+      .then(function (r) { state.notice = r.notice; closeModal(); paintNotice(); toast(t('Notice posted'), 'ok'); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function noticeClear() {
+    if (!window.confirm(t('Take the notice down?'))) return;
+    api('notice_save', { body: { text: '' } })
+      .then(function () { state.notice = null; paintNotice(); toast(t('Notice taken down'), 'ok'); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
   function viewDashboard(v) {
     /* A FIELD USER ALWAYS GETS HIS OWN DASHBOARD - by role, never by which
      * permission boxes happen to be ticked. Ticking "Dashboard: View" for the
@@ -1797,7 +1881,7 @@
         d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
 
       v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
+        noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
@@ -1964,6 +2048,161 @@
     return '<div class="panel" style="border-color:var(--bad)"><h2>' + svg('alert') + ' ' + t('Marking is switched off') + '</h2>' +
       '<p class="note">' + why + '</p></div>';
   }
+  /*
+   * ===================== THE ACTIVENESS SCREEN =====================
+   *
+   * Waking agents was spread over four screens and so it lived on none of
+   * them: the sleeping list under My Agent Base, the wake chip on the agent
+   * card, the recruits in their own pipeline, the sweep on the dashboard. An
+   * officer had to remember where each piece was in order to do one job.
+   *
+   * It is one job, so it is one screen: who is asleep, who he has woken, and
+   * who he has brought in - the last two being the two halves of the same KPI,
+   * which is why showing them apart was showing half a score.
+   */
+  function viewActiveness(v) {
+    v.innerHTML =
+      '<h1 class="page-title">' + t('Activeness') + '</h1>' +
+      '<p class="page-sub">' + t('Sleeping agents, the ones you have woken, and the ones you have brought in.') + '</p>' +
+      (isManager()
+        ? '<div class="row" style="margin-bottom:10px"><div class="spacer"></div>' +
+          '<button class="ghost" data-action="noticeCompose">' + svg('alert') + t('Tell the whole office') + '</button></div>'
+        : '') +
+      sweepPanelHtml() +
+      (isManager() ? sweepAdminHtml() : '') +
+      '<div id="actBox"><div class="note">' + t('Loading') + '...</div></div>';
+    sweepLoad();
+    if (isManager()) sweepAdminLoad(0);
+    activenessLoad();
+  }
+  function activenessLoad() {
+    var box = elById('actBox'); if (!box) return;
+    api('activeness_panel').then(function (d) {
+      state._act = d;
+      box.innerHTML = activenessHtml(d);
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function activenessHtml(d) {
+    var tab = state._actTab || 'sleeping';
+    var counts = {
+      sleeping: (d.sleeping || []).length,
+      waked: (d.waked || []).length,
+      recruits: (d.recruits || []).length
+    };
+    var tabs = [['sleeping', 'Still asleep'], ['waked', 'Woken this month'], ['recruits', 'Brought in']];
+    var head = '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+      tabs.map(function (x) {
+        return '<button class="' + (tab === x[0] ? 'btn' : 'ghost') + ' mini" data-action="actTab" data-t="' + x[0] + '">' +
+          t(x[1]) + ' (' + counts[x[0]] + ')</button>';
+      }).join('') + '</div>';
+    if (tab === 'waked') return '<div class="panel">' + head + wakedHtml(d) + '</div>';
+    if (tab === 'recruits') return '<div class="panel">' + head + recruitsHtml(d) + '</div>';
+    return '<div class="panel">' + head + sleepingHtml(d) + '</div>';
+  }
+
+  /*
+   * STILL ASLEEP. Two answers on every row and nothing else to learn: wake
+   * him, or say he is not coming back AND why. 'Won't return' is a deletion in
+   * all but name, so it never happens on a bare tap - the reason is the record
+   * the office is left with.
+   */
+  function sleepingHtml(d) {
+    var canE = d.canEdit;
+    var rows = (d.sleeping || []).map(function (a) {
+      var gone = !!a.wr_bdo;
+      return '<div class="tg-row" style="align-items:flex-start;flex-wrap:wrap">' +
+        '<span class="tg-name" style="width:auto;min-width:150px">' + esc(a.name) +
+        '<div class="note">' + esc(a.acc) + (a.station ? ' &middot; ' + esc(a.station) : '') +
+        (a.phone ? ' &middot; ' + esc(a.phone) : '') + '</div></span>' +
+        (a.act_prev === 'ACTIVE' ? '<span class="pill gold">' + t('was active') + '</span>' : '') +
+        (gone
+          ? '<span class="pill bad">' + t('not coming back') + '</span>' +
+            '<span class="note" style="flex:1">' + esc(a.wr_note || '') +
+            ' <i>&mdash; ' + esc(a.wr_bdo) + '</i></span>' +
+            (canE ? '<button class="ghost mini" data-action="actUndoGone" data-id="' + a.id + '">' + t('Undo') + '</button>' : '')
+          : (canE
+            ? '<div class="row" style="flex:1;gap:6px;flex-wrap:wrap">' +
+              '<button class="btn mini" data-action="actWake" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Wake him') + '</button>' +
+              '<button class="ghost mini" data-action="actGone" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Not coming back') + '</button>' +
+              '</div>'
+            : '<span class="note" style="flex:1">' + t('view only') + '</span>')) +
+        '</div>';
+    }).join('') || '<p class="note">' + t('Nobody is asleep. That is the whole point of the exercise.') + '</p>';
+    return rows;
+  }
+
+  /*
+   * WOKEN. The officer sees THAT a receipt is attached and never the photo -
+   * a receipt is evidence about him, and evidence a man can open and re-take
+   * is evidence he can tune. Management opens it; he keeps the knowledge that
+   * it arrived.
+   */
+  function wakedHtml(d) {
+    var mgr = isManager();
+    var rows = (d.waked || []).map(function (w) {
+      var proof = Number(w.hasProof)
+        ? (mgr
+          ? '<button class="ghost mini" data-action="viewProof" data-id="' + w.agent_id + '" data-kpi="active" data-name="' + esc(w.name) + '">' + svg('eye') + ' ' + t('receipt') + '</button>'
+          : '<span class="pill dim" title="' + esc(t('The office holds this photo')) + '">' + t('receipt attached') + '</span>')
+        : '<span class="pill bad">' + t('no receipt') + '</span>';
+      return '<tr><td class="c-name">' + esc(w.name) + '<div class="note">' + esc(w.acc) + '</div></td>' +
+        (d.all ? '<td>' + esc(w.bdo) + '</td>' : '') +
+        '<td>' + esc(String(w.at || '').slice(0, 16)) + '</td>' +
+        '<td>' + esc(w.station || '') + '</td>' +
+        '<td>' + proof + '</td></tr>';
+    }).join('') || '<tr><td colspan="5" class="note">' + t('Nobody woken yet this month.') + '</td></tr>';
+    return '<div class="tablewrap"><table><thead><tr><th>' + t('Agent') + '</th>' +
+      (d.all ? '<th>' + t('BDO') + '</th>' : '') +
+      '<th>' + t('When') + '</th><th>' + t('Station') + '</th><th>' + t('Receipt') + '</th></tr></thead><tbody>' +
+      rows + '</tbody></table></div>';
+  }
+
+  /* BROUGHT IN. The other half of activeness, and the reason an acc number is
+   * checked against the whole system before it counts for anybody. */
+  function recruitsHtml(d) {
+    var STAGE = { 1: 'Submitted', 2: 'Audited', 3: 'Approved', 4: 'Paid', 5: 'Full agent' };
+    var rows = (d.recruits || []).map(function (r) {
+      var done = Number(r.stage) >= 5;
+      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + esc(r.branch || '') + '</div></td>' +
+        (d.all ? '<td>' + esc(r.bdo) + '</td>' : '') +
+        '<td>' + esc(r.phone || '') + '</td>' +
+        '<td>' + (r.acc ? esc(r.acc) : '<span class="note">' + t('not yet') + '</span>') + '</td>' +
+        '<td><span class="pill ' + (done ? 'ok' : 'gold') + '">' + t(STAGE[r.stage] || String(r.stage)) + '</span></td>' +
+        '<td>' + esc(String(r.done_at || r.submitted_at || '').slice(0, 10)) + '</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="note">' + t('Nobody brought in yet.') + '</td></tr>';
+    return '<div class="tablewrap"><table><thead><tr><th>' + t('Name') + '</th>' +
+      (d.all ? '<th>' + t('BDO') + '</th>' : '') +
+      '<th>' + t('Phone') + '</th><th>' + t('Acc') + '</th><th>' + t('Stage') + '</th><th>' + t('Date') + '</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  /* Waking reuses the chip's own path, receipt rule and all - one way to wake
+   * an agent in the whole app, not a second one that drifts from it. */
+  function actWake(id, name) {
+    markKpi(id, 'active', name, null);
+  }
+  function actGone(id, name) {
+    openModal('<h2>' + svg('alert') + ' ' + t('Not coming back') + ' &mdash; ' + esc(name) + '</h2>' +
+      '<p class="note">' + t('What did he say? His own words if he gave them - this is what the office is left with when the agent is gone.') + '</p>' +
+      '<textarea id="goneNote" rows="3" style="width:100%" maxlength="255" placeholder="' +
+      t('e.g. He has closed the shop and moved to Dodoma. Asked to be removed.') + '"></textarea>' +
+      '<div class="row" style="justify-content:space-between;margin-top:12px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="actGoneGo" data-id="' + id + '">' + t('Record it') + '</button></div>');
+  }
+  function actGoneGo(id) {
+    var note = elById('goneNote') ? String(elById('goneNote').value).trim() : '';
+    if (!note) { toast(t('Write why he is not coming back'), 'warn'); return; }
+    api('wont_return_toggle', { body: { agentId: id, note: note } })
+      .then(function () { closeModal(); toast(t('Recorded'), 'ok'); activenessLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function actUndoGone(id) {
+    api('wont_return_toggle', { body: { agentId: id } })
+      .then(function () { toast(t('Put back on the list'), 'ok'); activenessLoad(); })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
   function viewAgents(v) {
     var restricted = !can('agents', 'v');
     var perOpts = [20, 50, 100].map(function (n) {
@@ -2287,47 +2526,6 @@
     }).catch(function (e) { toast(e.message, 'err'); });
   }
 
-  /* Inactive agents - two categories, visible to every BDO and management. */
-  /* Inactive agents grouped BY SA STATION (Arusha / Manyara / ...): the LOST
-   * ones (active last month, silent now) first, then all inactive. A BDO with
-   * edit rights - especially the activeness specialist - wakes them or marks
-   * won't-return straight from here. */
-  function inactivePanelLoad() {
-    var el = elById('inactivePanel'); if (!el) return;
-    api('inactive_agents').then(function (d) {
-      if (!d.counts.all) { el.innerHTML = ''; return; }
-      var mode = state._inactMode === 'all' ? 'all' : 'lost';
-      var list = mode === 'all' ? d.all : d.lost;
-      var editable = can('mybase', 'e');
-      var byStation = {};
-      list.forEach(function (a) {
-        var st = (a.station || 'NO STATION').toUpperCase();
-        (byStation[st] = byStation[st] || []).push(a);
-      });
-      var sections = Object.keys(byStation).sort().map(function (st) {
-        var rows = byStation[st].map(function (a) {
-          var lostTag = a.act_prev === 'ACTIVE' ? ' <span class="pill bad">was ACTIVE</span>' : '';
-          var actions = editable
-            ? '<div class="kchips"><button class="kchip todo" data-action="kpiMark" data-id="' + a.id + '" data-kpi="active" data-name="' + esc(a.name) + '">' + t('Wake') + '</button>' +
-              (isSpecial() ? ' <button class="kchip todo" data-action="wontReturn" data-id="' + a.id + '" data-name="' + esc(a.name) + '">' + t('Won\'t return') + '</button>' : '') + '</div>'
-            : '-';
-          return '<tr><td class="c-name">' + esc(a.name) + lostTag + '<div class="note">' + esc(a.acc) + '</div></td>' +
-            '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-            '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-            '<td class="c-kpis">' + actions + '</td></tr>';
-        }).join('');
-        return '<h3 style="margin:14px 0 6px;font-size:13px"><span class="pill fire">' + esc(st) + '</span> <span class="note">' + byStation[st].length + ' agent' + (byStation[st].length > 1 ? 's' : '') + '</span></h3>' +
-          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th><th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
-      }).join('') || '<div class="note">None - great.</div>';
-      el.innerHTML =
-        '<div class="panel"><h2>' + svg('zap') + 'Inactive Agents by SA Station &mdash; ' + esc(d.month) + '</h2>' +
-        '<p class="note">' + t('Were-ACTIVE-last-month first: they went silent - wake them before month end. Waking asks for receipt proof and the physical location.') + '</p>' +
-        '<div class="row" style="margin-bottom:4px">' +
-        '<button class="role-chip' + (mode === 'lost' ? ' active' : '') + '" data-action="inactMode" data-m="lost">Were active last month (' + d.counts.lost + ')</button>' +
-        '<button class="role-chip' + (mode === 'all' ? ' active' : '') + '" data-action="inactMode" data-m="all">All inactive this month (' + d.counts.all + ')</button></div>' +
-        sections + '</div>';
-    }).catch(function () { el.innerHTML = ''; });
-  }
   function locExport() {
     api('agents_location_export').then(function (d) {
       if (!d.count) { toast('No agents with a physical location yet', 'warn'); return; }
@@ -2563,7 +2761,12 @@
     var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
     var pr = ((c.key === 'active' || c.key === 'served') && mark.proof)
-      ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>' : '';
+      /* Only management opens a receipt. An officer sees that one is attached -
+       * the dot below - and never the photo: evidence a man can open, check and
+       * re-take is evidence he can tune. */
+      ? (isManager()
+        ? ' <button class="kchip-x" title="View proof" aria-label="View proof" data-action="viewProof" data-id="' + a.id + '" data-kpi="' + c.key + '" data-name="' + esc(a.name) + '" data-note="' + esc(mark.note || '') + '">' + svg('eye') + '</button>'
+        : ' <span class="pill dim" title="' + esc(t('The office holds this photo')) + '">&bull;</span>') : '';
     /* A flag QUERIES the mark, it does not cancel it. The tick stays; a small
      * marker carries the state so a queried agent never reads as "not done". */
     var fl = '';
@@ -2773,10 +2976,10 @@
         '<h2 style="margin:0">' + svg('zap') + t('Grow my round') + '</h2><div class="spacer"></div>' +
         (editable ? '<button class="btn mini" data-action="recruit">+ ' + t('Recruit new agent') + '</button>' : '') + '</div>' +
         '<p class="note">' + t('A brand-new agent you bring in counts in your Activeness exactly like waking a sleeping one.') + '</p></div>' +
-        (isManager() ? sweepAdminHtml() : '') +
-        '<div id="inactivePanel"></div>';
-      inactivePanelLoad();
-      if (isManager()) sweepAdminLoad(0);
+        /* The sleeping list used to hang here too. It has one home now - the
+         * Activeness tab - because two homes meant an officer could work one
+         * copy and be told off from the other. */
+        '';
       var sb = elById('baseSearch');
       if (sb) {
         sb.addEventListener('input', function () {
@@ -3077,8 +3280,11 @@
       .then(function () {
         toast(t('Status updated') + ' - ' + esc(name), 'ok');
         /* swap ONLY the tapped chip in place - never reload the list, so the
-         * BDO keeps his scroll position and carries on down the page */
-        swapChip(node, kpi, state.user.username);
+         * BDO keeps his scroll position and carries on down the page.
+         * Where there is no chip to swap - the Activeness screen marks from a
+         * button, not a chip - fall back to a redraw, or the row would sit
+         * there still saying 'wake him' after he just did. */
+        if (!swapChip(node, kpi, state.user.username)) renderTab();
       })
       .catch(function (e) {
         /* Not a dead end: tell him what to do about it. */
@@ -5529,7 +5735,7 @@
   /* Buttons that fire a request show their own spinner until the network
    * settles, so nobody taps twice wondering whether it registered. */
   var NO_SPIN = { tab: 1, closeModal: 1, toggleTheme: 1, themePick: 1, palSet: 1, toggleLang: 1,
-                  togglePw: 1, backToLogin: 1, agentClear: 1, flClear: 1, inactMode: 1,
+                  togglePw: 1, backToLogin: 1, agentClear: 1, flClear: 1,
                   baseBand: 1, kpiMark: 1 };
   function spinWhileBusy(node) {
     if (!node || node.tagName !== 'BUTTON' || node.classList.contains('loading')) return;
@@ -5726,7 +5932,21 @@
         '<div id="proofBox" style="margin-top:8px;min-height:60px"><span class="note">' + t('Loading the photo...') + '</span></div>' +
         '<div class="row" style="justify-content:space-between;margin-top:12px">' +
         '<a class="note" id="proofLink" href="' + purl + '" target="_blank" rel="noopener">' + t('Open the photo in a new tab') + '</a>' +
-        '<button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>');
+        '<button class="ghost" data-action="closeModal">' + t('Close') + '</button></div>' +
+        /*
+         * THE RULING GOES WHERE THE PHOTO IS.
+         *
+         * A receipt was demanded, stored and then believed - nobody ever said
+         * whether it showed anything. The verdict belongs on the same screen as
+         * the evidence, while the OM is actually looking at it; a separate
+         * review queue is a queue nobody opens.
+         */
+        '<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">' +
+        '<input id="pvNote" placeholder="' + t('What is wrong with it? (needed to reject)') + '" maxlength="255" style="width:100%">' +
+        '<div class="row" style="gap:8px;margin-top:8px">' +
+        '<button class="btn mini" data-action="pvOk" data-id="' + node.getAttribute('data-id') + '" data-kpi="' + (node.getAttribute('data-kpi') || 'active') + '">' + t('Receipt is good') + '</button>' +
+        '<button class="ghost mini" data-action="pvFake" data-id="' + node.getAttribute('data-id') + '" data-kpi="' + (node.getAttribute('data-kpi') || 'active') + '">' + t('Reject as false - take the credit back') + '</button>' +
+        '</div></div>');
       (function (url) {
         var box = elById('proofBox');
         var img = new Image();
@@ -6010,7 +6230,16 @@
     if (a === 'swCreate') { sweepCreate(); return; }
     if (a === 'swClose') { sweepClose(node.getAttribute('data-id')); return; }
     if (a === 'swExport') { sweepExport(node.getAttribute('data-id')); return; }
-    if (a === 'inactMode') { state._inactMode = node.getAttribute('data-m'); inactivePanelLoad(); return; }
+    if (a === 'actTab') { state._actTab = node.getAttribute('data-t'); elById('actBox').innerHTML = activenessHtml(state._act); return; }
+    if (a === 'actWake') { actWake(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
+    if (a === 'actGone') { actGone(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
+    if (a === 'actGoneGo') { actGoneGo(node.getAttribute('data-id')); return; }
+    if (a === 'actUndoGone') { actUndoGone(node.getAttribute('data-id')); return; }
+    if (a === 'noticeCompose') { noticeCompose(); return; }
+    if (a === 'noticeSave') { noticeSave(); return; }
+    if (a === 'noticeClear') { noticeClear(); return; }
+    if (a === 'pvOk') { proofVerdict(node.getAttribute('data-id'), node.getAttribute('data-kpi'), 'ok'); return; }
+    if (a === 'pvFake') { proofVerdict(node.getAttribute('data-id'), node.getAttribute('data-kpi'), 'fake'); return; }
     if (a === 'btSave') { btSave(); return; }
     if (a === 'btSaveAll') { btSaveAll(false); return; }
     if (a === 'btSaveMissing') { btSaveAll(true); return; }

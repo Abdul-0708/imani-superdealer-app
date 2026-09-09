@@ -441,6 +441,8 @@ try {
         'serveReceipt' => receipt_rule_for($u['username'], 'serve'),
         'wakeReceipt' => receipt_rule_for($u['username'], 'wake'),
         'officeServeReceipt' => setting_get('serve_receipt', 'optional'),
+        /* the office notice - shown at the top of every dashboard */
+        'notice' => json_decode(setting_get('office_notice', ''), true),
         /* so his own app knows before he taps, rather than after a 403 */
         'mayTakePartner' => is_manager($u) || partner_claim_allowed($u['username']),
         'officeWakeReceipt' => setting_get('wake_receipt', 'photo'),
@@ -1095,9 +1097,153 @@ try {
     }
 
     /* Serve a wake-proof photo (auth-checked; files are blocked from direct URL access). */
+    /*
+     * THE OM RULES ON A RECEIPT: confirmed, or false.
+     *
+     * A photo was demanded, stored, and then believed - the app checked that
+     * one existed and never that it showed anything. A verdict of FALSE takes
+     * the credit back with it, by exactly the route kpi_unmark uses when the
+     * OM overturns a mark, so a rejected claim leaves the month in the same
+     * state as a claim never made.
+     *
+     * The photo is NEVER deleted. It is the evidence the ruling rests on, and
+     * a ruling whose evidence has been thrown away cannot be reviewed.
+     */
+    case 'proof_verdict': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $agentId = (int)num(bval('agentId'));
+      $kpi = (string)bval('kpi') === 'served' ? 'served' : 'active';
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? (string)bval('month') : open_month();
+      $verdict = (string)bval('verdict') === 'fake' ? 'fake' : 'ok';
+      $note = mb_substr(trim((string)bval('note')), 0, 255);
+      if ($verdict === 'fake' && $note === '') fail('Say what is wrong with the photo - the officer is owed a reason');
+      $q = db()->prepare('SELECT bdo, source, proof FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?');
+      $q->execute(array($month, $agentId, $kpi));
+      $row = $q->fetch();
+      if (!$row) fail('No such mark to rule on', 404);
+      db()->prepare('INSERT INTO proof_verdicts (month, agent_id, kpi, bdo, verdict, note, proof, by_user)
+                     VALUES (?,?,?,?,?,?,?,?)')
+          ->execute(array($month, $agentId, $kpi, $row['bdo'], $verdict, $note, (string)$row['proof'], $u['username']));
+      if ($verdict === 'fake') {
+        db()->prepare('DELETE FROM agent_month_kpi WHERE month = ? AND agent_id = ? AND kpi = ?')
+            ->execute(array($month, $agentId, $kpi));
+        if ($kpi === 'served') {
+          db()->prepare('DELETE FROM service_history WHERE month = ? AND agent_id = ? AND bdo = ?')
+              ->execute(array($month, $agentId, $row['bdo']));
+        }
+      }
+      audit($u['id'], 'proof_verdict', $verdict . ' ' . $kpi . ' agent=' . $agentId . ' bdo=' . $row['bdo'] .
+                                       ($note !== '' ? ' - ' . $note : ''));
+      respond(array('ok' => true, 'verdict' => $verdict, 'bdo' => $row['bdo']));
+    }
+
+    /* Every ruling made this month, newest first - the OM's own record. */
+    case 'proof_verdicts': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $q = db()->prepare('SELECT v.*, a.name agent_name, a.acc FROM proof_verdicts v
+                          LEFT JOIN agents a ON a.id = v.agent_id
+                          WHERE v.month = ? ORDER BY v.id DESC LIMIT 300');
+      $q->execute(array($month));
+      respond(array('month' => $month, 'rows' => $q->fetchAll()));
+    }
+
+    /*
+     * THE OFFICE-WIDE NOTICE.
+     *
+     * Naming a man in front of the whole team is a heavy thing, so it is one
+     * deliberate act by the OM and not a side effect of a verdict - a false
+     * receipt might be a bad photo, and the second one might be carelessness.
+     * It carries who posted it and when, and it stays up until he takes it
+     * down, because a warning nobody can trace back to a person is a rumour.
+     */
+    case 'notice_save': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $text = mb_substr(trim((string)bval('text')), 0, 300);
+      if ($text === '') {
+        setting_set('office_notice', '');
+        audit($u['id'], 'notice_clear', 'notice taken down');
+        respond(array('ok' => true, 'notice' => null));
+      }
+      $n = array('text' => $text, 'by' => $u['username'], 'at' => date('Y-m-d H:i'));
+      setting_set('office_notice', json_encode($n));
+      audit($u['id'], 'notice_set', $text);
+      respond(array('ok' => true, 'notice' => $n));
+    }
+
+    /*
+     * ===================== THE ACTIVENESS SCREEN =====================
+     *
+     * Everything about a sleeping agent, in one place, because it was in four
+     * and so it was in none: the list lived under My Agent Base, the wake
+     * chips on the agent cards, the recruits in their own pipeline, and the
+     * officer had to remember where each thing was to do one job.
+     *
+     * Three lists, one call - a phone on a field connection should ask once:
+     *
+     *   sleeping  - who is still asleep, and what was said about him
+     *   waked     - who he has woken this month, with the proof flag
+     *   recruits  - who he has brought in, which is the other half of the
+     *               same KPI: activeness is waked PLUS recruited, so showing
+     *               them apart was showing half a score.
+     */
+    case 'activeness_panel': {
+      $u = require_auth();
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      /* The OM is looking at the office; an officer is looking at himself. */
+      $all = is_manager($u);
+      $me = $u['username'];
+
+      /* SLEEPING. The lost ones - active last month, silent now - first: they
+       * are the ones a visit is most likely to bring back. */
+      $sq = db()->prepare("SELECT a.id, a.acc, a.name, a.phone, a.branch, a.station,
+                                  a.physical_location, a.act_prev,
+                                  w.note wr_note, w.bdo wr_bdo
+                           FROM agents a
+                           LEFT JOIN wont_return w ON w.agent_id = a.id
+                           WHERE a.act_current = 'INACTIVE'
+                           ORDER BY (w.agent_id IS NOT NULL), (a.act_prev = 'ACTIVE') DESC, a.station, a.name
+                           LIMIT 600");
+      $sq->execute();
+      $sleeping = $sq->fetchAll();
+
+      /* WAKED this month. hasProof only - the photo itself is management's. */
+      $wsql = "SELECT k.agent_id, k.bdo, k.at, k.proof <> '' hasProof, k.source,
+                      a.acc, a.name, a.station, a.physical_location
+               FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+               WHERE k.month = ? AND k.kpi = 'active'" . ($all ? '' : ' AND k.bdo = ?') .
+              ' ORDER BY k.at DESC LIMIT 400';
+      $wq = db()->prepare($wsql);
+      $wq->execute($all ? array($month) : array($month, $me));
+
+      /* RECRUITED. The other half of the same KPI. */
+      $rsql = 'SELECT id, bdo, name, phone, branch, acc, stage, submitted_at, done_at, agent_id
+               FROM recruits WHERE 1' . ($all ? '' : ' AND bdo = ?') .
+              ' ORDER BY (stage < 5) DESC, id DESC LIMIT 300';
+      $rq = db()->prepare($rsql);
+      $rq->execute($all ? array() : array($me));
+
+      respond(array('month' => $month, 'all' => $all, 'me' => $me,
+                    'sleeping' => $sleeping, 'waked' => $wq->fetchAll(), 'recruits' => $rq->fetchAll(),
+                    'canEdit' => can($u, 'mybase', 'e'),
+                    'serveReceipt' => receipt_rule_for($me, 'wake')));
+    }
+
     case 'wake_proof': {
       $u = require_auth();
-      if (!can($u, 'agents', 'v') && !can($u, 'mybase', 'v')) fail('No access', 403);
+      /*
+       * THE PHOTO IS MANAGEMENT'S TO LOOK AT, AND NOBODY ELSE'S.
+       *
+       * It used to be the officer's own too. That sounds fair and is not: a
+       * receipt is evidence about him, and evidence a man can open, check and
+       * re-take is evidence he can tune. The office keeps it; he keeps the
+       * knowledge that it was received. He can still SEE that a proof is
+       * attached to a mark - what he cannot do is open it.
+       */
+      if (!is_manager($u)) fail('Receipt photos are opened by management only', 403);
       $agentId = (int)($_GET['agent'] ?? 0);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $pk = ($_GET['kpi'] ?? 'active') === 'served' ? 'served' : 'active';
@@ -1209,9 +1355,30 @@ try {
         $loc = trim((string)bval('location'));
         if ($acc === '' || $loc === '') fail('Fill the agent acc number and physical location to finish');
         if (strlen($acc) > 64 || !preg_match('/^[A-Za-z0-9\-\/]+$/', $acc)) fail('Acc number: letters and digits only');
+        /*
+         * ONE ACC, ONE AGENT, ANYWHERE IN THE SYSTEM.
+         *
+         * The account number is the only thing about an agent that cannot be
+         * spelt two ways, so it is the only safe test for 'we already have
+         * him'. Checking the agents table alone was not enough: an acc can
+         * also be sitting in ANOTHER officer's pipeline, finished a minute
+         * before this one - and the loser of that race would otherwise be
+         * told nothing and credited for a recruit the office already had.
+         *
+         * The message names where the clash is, because 'already exists' with
+         * no owner sends a man to the OM to ask a question the app could have
+         * answered.
+         */
         $ck = db()->prepare('SELECT id FROM agents WHERE acc = ?');
         $ck->execute(array($acc));
-        if ($ck->fetch()) fail('An agent with acc ' . $acc . ' already exists', 409);
+        if ($ck->fetch()) {
+          fail('Acc ' . $acc . ' is already an agent in the system - a recruit must be a NEW account', 409);
+        }
+        $ck2 = db()->prepare('SELECT bdo FROM recruits WHERE acc = ? AND id <> ? LIMIT 1');
+        $ck2->execute(array($acc, $id));
+        if ($other = $ck2->fetch()) {
+          fail('Acc ' . $acc . ' has already been recruited by ' . $other['bdo'] . ' - one account cannot be recruited twice', 409);
+        }
         $month = open_month();
         db()->prepare('INSERT INTO agents (acc, name, phone, branch, station, physical_location, act_current, act_month)
                        VALUES (?,?,?,?,?,?, "ACTIVE", ?)')
@@ -1527,6 +1694,13 @@ try {
         respond(array('ok' => true, 'marked' => false));
       }
       $note = mb_substr(trim((string)bval('note')), 0, 255);
+      /*
+       * THE REASON IS THE POINT. Marking a man gone is a deletion in all but
+       * name, and a deletion with no reason beside it cannot be reviewed, or
+       * argued with, or learned from. What he actually said - 'I have closed
+       * the shop and moved' - is worth more to the office than the tick.
+       */
+      if ($note === '') fail('Write why he is not coming back - his own words if he gave them');
       db()->prepare('INSERT INTO wont_return (agent_id, bdo, note) VALUES (?,?,?)')->execute(array($agentId, $u['username'], $note));
       specialist_touch_report($u);
       audit($u['id'], 'wont_return_mark', $agent['name'] . ($note !== '' ? ' - ' . $note : ''));
@@ -3377,7 +3551,10 @@ try {
       $seen = $u['msgs_seen_at'];
       $st = db()->prepare($sql);
       $st->execute(array($u['username'], $u['username'], $u['username'], $seen, $seen));
-      respond(array('unread' => (int)$st->fetch()['c']));
+      /* The office notice rides on the badge poll everyone already runs, so a
+       * warning reaches a man mid-shift instead of waiting for him to reload. */
+      respond(array('unread' => (int)$st->fetch()['c'],
+                    'notice' => json_decode(setting_get('office_notice', ''), true)));
     }
 
     /* Opening the Messages tab marks everything up to now as read. */

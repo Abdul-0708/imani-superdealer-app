@@ -462,6 +462,42 @@ function upgrade_schema($pdo) {
     schema_v27_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "27" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 28) {
+    schema_v28_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "28" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v28: SOMEBODY HAS TO LOOK AT THE PHOTO.
+ *
+ * A receipt was evidence nobody examined. It was demanded, stored, and then
+ * believed - the app checked that a photo existed and never that it showed
+ * anything. So the OM now rules on it: confirmed, or false. A false one takes
+ * the credit back with it.
+ *
+ * The verdict lives in its own table rather than on the mark, because ruling
+ * a claim false DELETES the mark - and a judgement that disappears with the
+ * thing it judged is no record at all. The photo itself is never deleted; it
+ * is the evidence the ruling rests on.
+ */
+function schema_v28_apply($pdo) {
+  $pdo->exec("
+  CREATE TABLE IF NOT EXISTS proof_verdicts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    kpi VARCHAR(12) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    verdict VARCHAR(8) NOT NULL DEFAULT 'ok',
+    note VARCHAR(255) NOT NULL DEFAULT '',
+    proof VARCHAR(80) NOT NULL DEFAULT '',
+    by_user VARCHAR(64) NOT NULL DEFAULT '',
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pv_month (month),
+    INDEX idx_pv_bdo (bdo, verdict)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
 }
 
 /*

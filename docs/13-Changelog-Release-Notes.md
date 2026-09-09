@@ -5,6 +5,67 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.66.0 — 2026-09-09 · Activeness gets its own screen, and somebody looks at the photo (schema v28)
+
+Four things, and the first three are really one: waking an agent was spread over four screens and so
+it lived on none of them.
+
+### 1. The Activeness tab
+
+The sleeping list was under My Agent Base, the wake chip on the agent card, the recruits in their own
+pipeline, the sweep on the dashboard. An officer had to remember where each piece was in order to do
+one job. **It is one job, so it is one screen**, with three lists:
+
+- **Still asleep** — every sleeping agent, two answers per row and nothing else to learn: *wake him*,
+  or *not coming back* **with the reason**. The reason is now compulsory: marking a man gone is a
+  deletion in all but name, and a deletion with nothing beside it cannot be reviewed, argued with, or
+  learned from. What he actually said is worth more to the office than the tick.
+- **Woken this month** — with the receipt flag.
+- **Brought in** — recruits, because activeness is *waked plus recruited*; showing them apart was
+  showing half a score.
+
+The sweep panel and the OM's sweep controls moved here too. The old sleeping list is gone from My
+Agent Base entirely — two homes meant an officer could work one copy and be told off from the other —
+and the dead loader behind it was deleted rather than left to rot. The wake chip **stays** on the
+agent list, as asked.
+
+### 2. One acc, one agent, anywhere
+
+A recruit already had to be a new account number; that check only looked at the `agents` table. An acc
+can also be sitting in **another officer's pipeline**, finished a minute earlier — and the loser of
+that race was told nothing and credited for a recruit the office already had. Both are checked now,
+and the message names where the clash is, because "already exists" with no owner sends a man to the OM
+to ask a question the app could have answered.
+
+### 3. The receipt photo is management's
+
+It used to be the officer's own too. That sounds fair and is not: **a receipt is evidence about him,
+and evidence a man can open, check and re-take is evidence he can tune.** He now sees *that* a proof
+is attached — a dot on the chip, a pill in the list — and never the photo. Management opens it.
+
+### 4. Somebody rules on it
+
+A photo was demanded, stored, and then believed: the app checked that one existed and never that it
+showed anything. The OM now rules **on the same screen as the evidence**, while he is actually looking
+at it — a separate review queue is a queue nobody opens. *Receipt is good*, or *reject as false*, and a
+rejection takes the credit back by the same route `kpi_unmark` uses, so a rejected claim leaves the
+month exactly as a claim never made.
+
+The verdict is kept in its own table, because rejecting a claim **deletes the mark** — and a judgement
+that disappears with the thing it judged is no record at all. **The photo is never deleted**: it is
+what the ruling rests on.
+
+### The office notice
+
+Naming a man to the whole team is a heavy thing, so it is a **separate, deliberate act** and not a
+side effect of a verdict — one false receipt might be a bad photo, and the second might be
+carelessness. After a rejection the OM is *asked* whether to post one. It sits at the top of every
+dashboard, carries who posted it and when — a warning nobody can trace back to a person is a rumour —
+and stays until he takes it down. It rides on the badge poll everyone already runs, so it reaches a
+man mid-shift instead of waiting for him to reload.
+
+---
+
 ## v1.65.0 — 2026-09-08 · The sleeping-agent sweep (schema v27)
 
 **Asked for:** share every inactive agent out equally between the BDOs, one week at a time, and make
