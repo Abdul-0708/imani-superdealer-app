@@ -2064,6 +2064,12 @@
     v.innerHTML =
       '<h1 class="page-title">' + t('Activeness') + '</h1>' +
       '<p class="page-sub">' + t('Sleeping agents, the ones you have woken, and the ones you have brought in.') + '</p>' +
+      /* ON TOP, because it is the thing he came to do when he has just signed
+       * somebody up - and a form three screens away is a form filled in at the
+       * end of the week from memory, if at all. Field officers only: the credit
+       * goes to whoever adds him, and an OM adding agents would be crediting
+       * himself for another man's recruit. */
+      (can('mybase', 'e') && !isOfficeRole() ? recruitFormHtml() : '') +
       (isManager()
         ? '<div class="row" style="margin-bottom:10px"><div class="spacer"></div>' +
           '<button class="ghost" data-action="noticeCompose">' + svg('alert') + t('Tell the whole office') + '</button></div>'
@@ -2075,6 +2081,34 @@
     if (isManager()) sweepAdminLoad(0);
     activenessLoad();
   }
+  /* A NEW AGENT, straight into the main database and his round, in one step. */
+  function recruitFormHtml() {
+    return '<div class="panel"><h2>' + svg('users') + t('Add an agent I have just recruited') + '</h2>' +
+      '<p class="note">' + t('He is added to the main agent list, to your round, and to your activeness at once. The account number must be new - one already in the system, or recruited by anybody else, is refused.') + '</p>' +
+      '<div class="row" style="flex-wrap:wrap;gap:8px;align-items:flex-end">' +
+      '<div class="field"><label>' + t('Account number') + ' *</label><input id="rdAcc" maxlength="64"></div>' +
+      '<div class="field"><label>' + t('Agent name') + ' *</label><input id="rdName" maxlength="191"></div>' +
+      '<div class="field"><label>' + t('Phone') + '</label><input id="rdPhone" maxlength="32" inputmode="tel"></div>' +
+      '<div class="field"><label>' + t('Branch') + '</label><input id="rdBranch" maxlength="128"></div>' +
+      '<div class="field" style="flex:1;min-width:200px"><label>' + t('Physical location') + ' *</label><input id="rdLoc" maxlength="255" placeholder="' + t('e.g. Sakina, opposite the market') + '"></div>' +
+      '<button class="btn" data-action="actRecruit">' + t('Add him') + '</button>' +
+      '</div></div>';
+  }
+  function actRecruit() {
+    var v = function (id) { var e = elById(id); return e ? String(e.value).trim() : ''; };
+    var body = { acc: v('rdAcc'), name: v('rdName'), phone: v('rdPhone'), branch: v('rdBranch'), location: v('rdLoc') };
+    if (!body.acc || !body.name || !body.location) { toast(t('Account number, name and location are needed'), 'warn'); return; }
+    api('recruit_direct', { body: body })
+      .then(function (r) {
+        toast(esc(r.name) + ' ' + t('added to your round'), 'ok');
+        ['rdAcc', 'rdName', 'rdPhone', 'rdBranch', 'rdLoc'].forEach(function (id) { var e = elById(id); if (e) e.value = ''; });
+        /* show him where he now lives, so the officer sees it worked */
+        state._actTab = 'recruits';
+        activenessLoad();
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+
   function activenessLoad() {
     var box = elById('actBox'); if (!box) return;
     api('activeness_panel').then(function (d) {
@@ -6230,6 +6264,7 @@
     if (a === 'swCreate') { sweepCreate(); return; }
     if (a === 'swClose') { sweepClose(node.getAttribute('data-id')); return; }
     if (a === 'swExport') { sweepExport(node.getAttribute('data-id')); return; }
+    if (a === 'actRecruit') { actRecruit(); return; }
     if (a === 'actTab') { state._actTab = node.getAttribute('data-t'); elById('actBox').innerHTML = activenessHtml(state._act); return; }
     if (a === 'actWake') { actWake(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }
     if (a === 'actGone') { actGone(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }

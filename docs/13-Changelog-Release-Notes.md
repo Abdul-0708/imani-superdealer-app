@@ -5,6 +5,62 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.68.0 — 2026-09-10 · The round is the portfolio the file assigns
+
+**Reported:** after v1.67.0 went live, bases still looked small.
+
+Joining the months was the wrong layer. v1.67.0 carried every agent to his last owner across all
+months — but an agent could only ever *have* an owner through two filters, and neither let most
+agents through:
+
+1. **Only a SERVED agent entered a round.** The performance file names an officer beside every agent
+   in its *Assigned BDO* column, and the app ignored that column unless the same row said SERVED.
+2. **The base file handed out nothing at all.** It is the one file that lists every agent with his
+   officer, and it stopped just before assigning anybody:
+
+   > *A DATABASE SEED HANDS OUT NO ROUNDS … Who holds an agent is decided by who serves him, not by
+   > whose name a spreadsheet put beside him.*
+
+So there was no history to join. An agent assigned to a man and never served by him was never in any
+base row in any month.
+
+That rule had a real reason — it stopped officers opening a month "holding" hundreds of agents they
+had never visited. It was paid for with every round shrinking to whatever the officer happened to
+serve: the file named hundreds beside him, the app counted a handful, and a man measured on a round he
+does not recognise stops trusting the number.
+
+### Now
+
+**The name beside the agent puts him in that officer's round** — from the base file and from the
+performance file alike. `base_assign()` keeps the two guards that still matter:
+
+- an agent with **no physical location** is in nobody's round until somebody captures where he is
+  (unchanged, as asked);
+- an agent another officer has **served** this month stays with the man who served him — a spreadsheet
+  does not take a door away from the officer who walked through it.
+
+**This takes effect at the next upload, not at deploy.** Rounds are written when a file is imported,
+so September fills in when its base file is uploaded again.
+
+### Adding a recruit, from the Activeness screen
+
+A form now sits at the top of the Activeness tab: account number, name, phone, branch, location. The
+agent is created **in the main agent list**, placed in the officer's round and counted in his
+activeness, in one step. The five-stage pipeline stays for prospects who do not yet have an account.
+
+The account number is the only thing about an agent that cannot be spelt two ways, so it is the test
+for *we already have him* — against every agent in the system **and** every recruit in anybody's
+pipeline. A match is refused, naming where the match is.
+
+It is not taken on trust. The activeness credit is an ordinary officer's mark, so the month-wide
+reconciliation checks it against the performance file, and an account the file has never heard of
+raises a flag for the OM.
+
+Field officers only: the credit goes to whoever adds the agent, and an OM adding one would be crediting
+himself for another man's recruit.
+
+---
+
 ## v1.67.0 — 2026-09-10 · The round is everything he holds, joined across all months
 
 **Asked:** why is a BDO's base counted only from the previous month, and not from all months joined?

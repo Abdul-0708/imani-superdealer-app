@@ -1397,6 +1397,68 @@ try {
     }
 
     /* BDO sees his own pipeline; OM/MD (targets.v) see everyone's. */
+    /*
+     * A NEW AGENT, ADDED BY THE OFFICER WHO BROUGHT HIM IN - in one step.
+     *
+     * The pipeline walks a recruit through five stages before he exists, which
+     * is right for a prospect and wrong for a man already trading with an
+     * account number in his hand. Here the officer types that number and the
+     * agent is created in the main database, placed in his round, and counted
+     * in his activeness, at once.
+     *
+     * The account number is the only thing about an agent that cannot be
+     * spelt two ways, so it is the test for 'we already have him' - against
+     * every agent in the system AND every recruit in anybody's pipeline. A
+     * match is refused and the message says where the match is.
+     *
+     * It is not taken on trust: the activeness credit is a BDO mark like any
+     * other, so the month-wide reconciliation checks it against the
+     * performance file, and an account the file has never heard of raises a
+     * flag for the OM.
+     */
+    case 'recruit_direct': {
+      $u = require_auth(); require_perm($u, 'mybase', 'e');
+      $acc  = trim((string)bval('acc'));
+      $name = mb_substr(trim((string)bval('name')), 0, 191);
+      $phone = mb_substr(trim((string)bval('phone')), 0, 32);
+      $branch = mb_substr(trim((string)bval('branch')), 0, 128);
+      $loc  = mb_substr(trim((string)bval('location')), 0, 255);
+      if ($acc === '' || $name === '') fail('Give the agent account number and name');
+      if (strlen($acc) > 64 || !preg_match('/^[A-Za-z0-9\-\/]+$/', $acc)) fail('Account number: letters and digits only');
+      /* a round is a list of doors; an agent with no place is not one yet */
+      if ($loc === '') fail('Give his physical location - an agent nobody can find is not in anybody\'s round');
+      $ck = db()->prepare('SELECT name FROM agents WHERE acc = ?');
+      $ck->execute(array($acc));
+      if ($ex = $ck->fetch()) {
+        fail('Account ' . $acc . ' is already in the system as ' . $ex['name'] . ' - a recruit must be a NEW account', 409);
+      }
+      $ck2 = db()->prepare('SELECT bdo FROM recruits WHERE acc = ? LIMIT 1');
+      $ck2->execute(array($acc));
+      if ($other = $ck2->fetch()) {
+        fail('Account ' . $acc . ' has already been recruited by ' . $other['bdo'] . ' - one account cannot be recruited twice', 409);
+      }
+      $month = open_month();
+      $me = $u['username'];
+      db()->prepare('INSERT INTO agents (acc, name, phone, branch, station, physical_location, act_current, act_month)
+                     VALUES (?,?,?,?,?,?, "ACTIVE", ?)')
+          ->execute(array($acc, $name, $phone, $branch, (string)$u['station'], $loc, $month));
+      $agentId = (int)db()->lastInsertId();
+      /* his round, straight away - he brought him in */
+      db()->prepare('DELETE FROM base WHERE month = ? AND agent_id = ?')->execute(array($month, $agentId));
+      db()->prepare('INSERT INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "new")')
+          ->execute(array($month, $me, $agentId));
+      /* and his activeness: a recruit is half of that KPI */
+      db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source) VALUES (?,?, "active", ?, "bdo")')
+          ->execute(array($month, $agentId, $me));
+      /* the pipeline keeps the record, marked finished */
+      db()->prepare('INSERT INTO recruits (bdo, name, branch, champion, phone, stage, done_at, acc, location, agent_id)
+                     VALUES (?,?,?,?,?, 5, NOW(), ?,?,?)')
+          ->execute(array($me, $name, $branch, '', $phone, $acc, $loc, $agentId));
+      specialist_touch_report($u);
+      audit($u['id'], 'recruit_direct', $acc . ' ' . $name . ' -> ' . $me);
+      respond(array('ok' => true, 'agentId' => $agentId, 'acc' => $acc, 'name' => $name));
+    }
+
     case 'recruit_pipe_list': {
       $u = require_auth();
       $all = can($u, 'targets', 'v');
@@ -2401,6 +2463,9 @@ try {
         $positive = ($r['served'] === 'SERVED' || $r['visit'] === 'YES' || $r['apk_yes'] || $r['waked']);
         if ($key === 'unassigned' && $positive) $key = 'partners';
         $bdos[$key] = true;
+        /* A REAL OFFICER NAMED BESIDE THIS AGENT - not the 'unassigned' or
+         * 'partners' placeholders, which are nobody's round. */
+        $named = ($key !== 'unassigned' && $key !== 'partners');
 
         $findAgent->execute(array($r['acc']));
         $found = $findAgent->fetch();
@@ -2454,13 +2519,27 @@ try {
          * touches the office snapshot - those agents are last months' known
          * base, not this month's claims. */
         if ($priorityMode) {
-          /* A DATABASE SEED HANDS OUT NO ROUNDS. It refreshes the agent record
-           * and stops. Who holds an agent is decided by who serves him, not by
-           * whose name a spreadsheet put beside him - otherwise an officer
-           * opens the month already "holding" hundreds of agents he has never
-           * been to. Unclaimed agents are visible to everyone under
-           * "NEW - not yet mine" in My Agent Base, and the first man to serve
-           * one takes him. */
+          /*
+           * THE BASE FILE HANDS OUT THE PORTFOLIO.
+           *
+           * It used to hand out nothing - 'who holds an agent is decided by who
+           * serves him, not by whose name a spreadsheet put beside him'. That
+           * kept officers from opening a month holding agents they had never
+           * visited, and it was paid for with every officer's round shrinking
+           * to whatever he had happened to serve: the file named hundreds of
+           * agents beside him, and the app counted a handful. The office
+           * assigns portfolios, the file says what they are, and an officer
+           * measured on a round he does not recognise stops trusting the
+           * number.
+           *
+           * So the name beside the agent puts him in that officer's base.
+           * base_assign() keeps the two guards that still matter: an agent
+           * with no physical location is in nobody's round until somebody
+           * captures where he is, and an agent another officer has SERVED
+           * this month stays with the man who served him - a spreadsheet does
+           * not take a door away from the officer who walked through it.
+           */
+          if ($named) base_assign($month, $key, $id, $kind);
           continue;
         }
 
@@ -2468,10 +2547,13 @@ try {
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'],
                                $r['wd_target'], $r['wd_txn'], $r['campaign'], $uploadId));
-        /* SERVED, and nothing else, puts him in this officer's round. A row
-         * that merely names him beside an agent - a visit, an APK, a blank -
-         * is not a claim on that agent. */
-        if ($r['served'] === 'SERVED') base_assign($month, $key, $id, $kind);
+        /* In his round if the file NAMES him beside the agent - the portfolio
+         * the office assigned - or if the file shows the agent SERVED. The
+         * old rule was served-only, which is why rounds read as a fraction of
+         * what the file said each officer held. base_assign() still refuses an
+         * agent with no location, and still leaves an agent with the officer
+         * who served him live this month. */
+        if ($r['served'] === 'SERVED' || $named) base_assign($month, $key, $id, $kind);
         /* Ledger credits (BDO personal scores; first credit wins). */
         if ($r['served'] === 'SERVED') $insKpi->execute(array($month, $id, 'served', $key, $uploadId));
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
