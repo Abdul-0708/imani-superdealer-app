@@ -518,6 +518,56 @@ function ensure_base_carry($cur) {
 }
 
 /*
+ * THE ROUND IS EVERYTHING HE HOLDS, NOT JUST WHAT HE SERVED LAST MONTH.
+ *
+ * ensure_base_carry() above carries forward only the agents an officer SERVED
+ * last month. On its own that made the base a rolling one-month window, rebuilt
+ * from scratch every 1st: a man who had built a round of 300 over half a year
+ * and served 150 of them in August opened September holding 150. The other 150
+ * did not go to anybody else - they simply stopped being counted as his. And
+ * because his round is the denominator of his weekly serving percentage and
+ * the floor his base growth is measured from, a shrinking round quietly paid
+ * him for recovering agents he already had.
+ *
+ * So every agent carries to his MOST RECENT owner, across ALL months - the
+ * base becomes every agent the officer has ever held, joined up. Runs after
+ * ensure_base_carry(), with INSERT IGNORE, so where somebody SERVED an agent
+ * last month that officer keeps him: serving still decides who owns a door.
+ *
+ * Two ways out, and only two:
+ *   - another officer serves him - kpi_mark moves him on the spot;
+ *   - he is marked WON'T RETURN - a man who said 'delete me' is not a door
+ *     anybody should be sent to, and carrying him for ever would inflate
+ *     every round with people who have gone.
+ *
+ * Its own lock, separate from the served carry, so that it runs for a month
+ * whose served carry has already happened - which is how the month this
+ * shipped in gets repaired rather than waiting for the next one.
+ */
+function ensure_base_join($cur) {
+  $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+  $lock->execute(array('basejoin_' . $cur, date('Y-m-d H:i:s')));
+  if ($lock->rowCount() !== 1) return;          /* already joined for this month */
+
+  /* each agent's last known owner, from the latest month before this one */
+  $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
+                        SELECT ?, b.bdo, b.agent_id, 'priority'
+                        FROM base b
+                        JOIN (SELECT agent_id, MAX(month) m FROM base
+                              WHERE month < ? GROUP BY agent_id) last
+                          ON last.agent_id = b.agent_id AND last.m = b.month
+                        JOIN agents a ON a.id = b.agent_id
+                        LEFT JOIN wont_return w ON w.agent_id = b.agent_id
+                        WHERE w.agent_id IS NULL
+                          AND b.bdo NOT IN ('partners','unassigned')
+                          AND TRIM(a.physical_location) <> ''");
+  $ins->execute(array($cur, $cur));
+  $n = $ins->rowCount();
+  db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "base_join", ?)')
+      ->execute(array($cur . ': ' . $n . ' agents joined back into the round they were last held in'));
+}
+
+/*
  * THE TARGETS COME WITH THE MONTH.
  *
  * The base carried, activeness carried, the round carried - but the TARGETS did
@@ -596,7 +646,7 @@ function maybe_roll_month() {
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
   /* Already on this month - but it may have been opened by an older build that
    * did not carry the bases, so make sure that has happened before leaving. */
-  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_targets_carry($cur); return; }
+  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_base_join($cur); ensure_targets_carry($cur); return; }
   $ended = $r['month'];
 
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
@@ -630,6 +680,7 @@ function maybe_roll_month() {
   repair_misfiled_marks($cur);
   month_start_messages($ended, $cur);
   ensure_base_carry($cur);
+  ensure_base_join($cur);
   ensure_targets_carry($cur);
 
   /* user_id NULL: nobody pressed anything, the calendar did it */
@@ -1267,10 +1318,35 @@ function bdo_base_count($month, $bdo) {
   $r = $q->fetch();
   return $r ? (int)$r['c'] : 0;
 }
-/* Where he ended last month: the floor this month's growth is measured from.
- * The OM can overrule it, but he should rarely have to. */
+/*
+ * Where he ended last month: the floor this month's growth is measured from.
+ * The OM can overrule it, but he should rarely have to.
+ *
+ * MEASURED THE SAME WAY AS THE ROUND ITSELF, or growth is a mirage.
+ *
+ * This used to read last month's base table directly. Once the round became
+ * every agent ever held (ensure_base_join), last month's table and this
+ * month's round were counted by two different rules - and the month the
+ * change shipped in, a man whose August table said 150 and whose joined
+ * September round said 300 would have scored 150 agents of 'growth' for
+ * recruiting nobody at all. The floor is now the same question the join asks:
+ * how many agents, as of the end of last month, were last held by him. Growth
+ * is then exactly the agents he added since - and nothing he already had.
+ */
 function base_start_default($month, $bdo) {
-  return bdo_base_count(prev_month($month), $bdo);
+  $q = db()->prepare("SELECT COUNT(*) c
+                      FROM base b
+                      JOIN (SELECT agent_id, MAX(month) m FROM base
+                            WHERE month < ? GROUP BY agent_id) last
+                        ON last.agent_id = b.agent_id AND last.m = b.month
+                      JOIN agents a ON a.id = b.agent_id
+                      LEFT JOIN wont_return w ON w.agent_id = b.agent_id
+                      /* exactly the join's own rules, so floor and round agree */
+                      WHERE b.bdo = ? AND w.agent_id IS NULL
+                        AND TRIM(a.physical_location) <> ''");
+  $q->execute(array($month, $bdo));
+  $r = $q->fetch();
+  return $r ? (int)$r['c'] : 0;
 }
 function bdo_actuals($month, $bdo) {
   $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? AND bdo = ? GROUP BY kpi');

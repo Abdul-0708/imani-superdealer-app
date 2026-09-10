@@ -5,6 +5,61 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.67.0 — 2026-09-10 · The round is everything he holds, joined across all months
+
+**Asked:** why is a BDO's base counted only from the previous month, and not from all months joined?
+
+Because `ensure_base_carry()` carried forward **only the agents an officer served last month** — not
+last month's base. On its own that made the base a rolling one-month window, rebuilt from scratch on
+every 1st:
+
+| | July | August | September |
+|---|---|---|---|
+| his base | 300 | served 150 of them | **opened on 150** |
+
+The other 150 did not go to anybody else. They simply stopped being counted as his. A man who spent
+half a year building a round was measured each month as if he held only what he had happened to
+serve in the previous thirty days.
+
+It mattered beyond the number, because the round feeds two things:
+
+- the **weekly serving percentage** that sets fuel — a round that shrank made that percentage easier
+  than the work behind it;
+- the **base-growth** floor — "where he ended" dropped every month, so a man could "grow" simply by
+  recovering agents he already had.
+
+### Now
+
+Every agent carries to his **most recent owner across all months**. The round is every agent the
+officer has ever held, joined up. It runs after the served carry with `INSERT IGNORE`, so where
+somebody served an agent last month that officer keeps him — **serving still decides who owns a
+door.** Two ways out, and only two:
+
+- **another officer serves him** — the live serve path already moves him on the spot;
+- **he is marked won't-return** — a man who said "delete me" is not a door anybody should be sent to,
+  and carrying him for ever would inflate every round with people who have gone.
+
+It has its own once-a-month lock, separate from the served carry, so it runs for a month whose served
+carry already happened. That is how **September gets repaired on the first load after deploy** rather
+than waiting for October.
+
+### The floor had to change with it
+
+Base growth measured its floor from last month's base table directly. Once the round is counted by the
+new rule, last month's table and this month's round are counted by two different rules — and in the
+month this ships, a man whose August table said 150 and whose joined September round said 300 would
+have scored **150 agents of growth for recruiting nobody at all**.
+
+The floor now asks exactly the question the join asks — how many agents, as of the end of last month,
+were last held by him, with the same won't-return and location rules. Growth is then precisely the
+agents he added since, and nothing he already had.
+
+**One thing for the OM to do:** a base-growth floor is stored when targets are saved. Any September
+base target saved *before* this deploy holds the old, smaller floor — re-save those targets once and
+the floor recomputes.
+
+---
+
 ## v1.66.0 — 2026-09-09 · Activeness gets its own screen, and somebody looks at the photo (schema v28)
 
 Four things, and the first three are really one: waking an agent was spread over four screens and so
