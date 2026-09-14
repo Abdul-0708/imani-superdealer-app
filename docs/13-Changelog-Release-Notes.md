@@ -5,6 +5,73 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.69.0 — 2026-09-14 · Fuel & Performance: a screen for the OM, and an alarm for the officer (schema v29)
+
+**Asked for:** a dedicated OM tab to manage and track weekly fuel targets and monthly performance,
+printable across all months; four weekly KPIs with weights totalling 100; a banded fuel award; and a
+very alarming message telling each officer what he is entitled to as of today.
+
+### Four weekly KPIs
+
+| KPI | Measured as |
+|---|---|
+| **Percentage of base served** | share of his own round served in the week |
+| **Unique serving** *(new)* | count of different agents served in the week |
+| **Agent visits** | count |
+| **Activeness** | count |
+
+Unique serving is new because a percentage alone flatters a small round: a man holding 20 agents who
+serves 10 has done 50%, and so has the man holding 300 who serves 150. The count keeps a floor under
+it, and the OM weighs the two against each other. Weeks saved before this release score as before —
+their unique weight is 0 — until the OM gives it one.
+
+### Fuel is banded now, not proportional
+
+The first version paid the score straight across: 64% of target bought 64% of fuel. The office runs
+fuel in three steps, and a number that does not match what the officer is handed at the pump is a
+number he learns to ignore:
+
+| Weekly score | Fuel |
+|---|---|
+| 70% and above | **FULL** |
+| 40% to 69% | **HALF** |
+| below 40% | **NOTHING** |
+
+### The Fuel & Performance tab
+
+OM only. Weekly targets moved here from the bottom of Monthly Targets — they used to be set panels
+away from anything to do with fuel; they now sit next to the result they produce. Below them, monthly
+weighted performance for every officer, month by month.
+
+**Print all months** produces one report: every month's weighted score for every officer as a grid,
+then every week's fuel award, coloured full / half / none. It is computed by the same functions as the
+screens, because a printed sheet that disagrees with the screen is worse than no sheet. The print
+window opens inside the click and fills once the data arrives — a window opened after a network call is
+no longer the user's own action, and browsers block it as a pop-up.
+
+### The alarm
+
+Above every screen a field officer opens: his score as of today, what it buys him in large type — red
+for nothing, amber for half, green only for full — and **how many points stand between him and the next
+tank**, because the useful thing to tell a man on a Wednesday is not his score but how far he is from
+the next step. It reads the running week and is scored by the same function as the OM's table, so the
+officer and the office never see two different numbers for the same man.
+
+### A correction to v1.66.0
+
+v1.66.0 said the office notice *rides on the badge poll everyone already runs, so it reaches a man
+mid-shift*. **It did not.** That poll ran exactly once, at sign-in; a notice posted at ten reached a man
+who signed in at eight only when he next reloaded the app. The badges, the notice and the fuel alarm are
+now re-read on every screen change and every five minutes.
+
+### And one found on the way
+
+The Admin permissions screen lists every tab, but the server's save skips modules it does not know —
+so the Activeness tab added in v1.66.0 showed toggles there that looked saved and changed nothing. Tabs
+whose visibility is decided by role (Activeness, Fuel & Performance) are left out of that matrix.
+
+---
+
 ## v1.68.0 — 2026-09-10 · The round is the portfolio the file assigns
 
 **Reported:** after v1.67.0 went live, bases still looked small.

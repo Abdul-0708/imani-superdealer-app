@@ -1517,27 +1517,53 @@ function week_actuals($from, $to, $bdo) {
 }
 
 /*
- * The week's weighted score, which IS the fuel percentage for the week that
- * follows. Three KPIs:
+ * THE WEEK'S SCORE, AND THE FUEL IT BUYS.
  *
+ * Four KPIs, each weighted by the OM, weights totalling 100:
+ *
+ *   serving     - PERCENTAGE OF HIS OWN ROUND served in the week. A man with
+ *                 40 agents and a man with 300 cannot be asked for the same
+ *                 count, but 'a quarter of your round' is the same work.
+ *   unique      - the COUNT of different agents served. The percentage alone
+ *                 flatters a small round; the count keeps a floor under it.
  *   visits      - a count.
- *   serving     - a PERCENTAGE OF HIS OWN ROUND, not a count. A man holding
- *                 40 agents and a man holding 300 cannot be asked for the
- *                 same number of visits-worth of serving; asking both for
- *                 'a quarter of your round' is the same amount of work.
  *   activeness  - a count.
  *
- * Weights are renormalised over whatever actually has a target and a weight,
- * exactly as the monthly score does, so a week with only two of the three set
- * up still scores out of 100 rather than quietly capping at the weight given.
+ * Weights are renormalised over what actually has a target and a weight, as
+ * the monthly score is, so a week with only some KPIs set up still scores out
+ * of 100.
+ *
+ * FUEL IS BANDED, NOT PROPORTIONAL. The first version paid the score straight
+ * across - 64% of target bought 64% of fuel. The office runs fuel in three
+ * steps, and a number that does not match what the officer is handed at the
+ * pump is a number he learns to ignore:
+ *
+ *   70% and above  - FULL fuel
+ *   40% to 69%     - HALF
+ *   below 40%      - NOTHING
+ *
+ * toFull / toHalf are the points still missing to the next step, because the
+ * useful thing to tell a man on a Wednesday is not his score but how far he
+ * is from the next tank.
  */
+function fuel_band($score) {
+  if ($score === null) return array('award' => 'none', 'pct' => 0, 'label' => 'NO SCORE YET');
+  $s = (float)$score;
+  if ($s >= 70) return array('award' => 'full', 'pct' => 100, 'label' => 'FULL FUEL');
+  if ($s >= 40) return array('award' => 'half', 'pct' => 50, 'label' => 'HALF FUEL');
+  return array('award' => 'none', 'pct' => 0, 'label' => 'NO FUEL');
+}
 function week_score($actuals, $t, $baseCount) {
   $kpis = array(); $wsum = 0; $acc = 0;
-  $servedPct = $baseCount > 0 ? ($actuals['served'] / $baseCount * 100) : null;
+  $served = (float)$actuals['served'];
+  $servedPct = $baseCount > 0 ? ($served / $baseCount * 100) : null;
+  /* a week saved before v29 has no unique_* columns in the row yet */
+  $tv = function ($k) use ($t) { return isset($t[$k]) ? $t[$k] : 0; };
   $spec = array(
-    'visits'     => array((float)$actuals['visit'],  (float)$t['visits_target'],     (int)$t['visits_w'],     'count'),
-    'serving'    => array($servedPct,                (float)$t['serving_target'],    (int)$t['serving_w'],    'pct'),
-    'activeness' => array((float)$actuals['active'], (float)$t['activeness_target'], (int)$t['activeness_w'], 'count'),
+    'serving'    => array($servedPct,                (float)$tv('serving_target'),    (int)$tv('serving_w'),    'pct'),
+    'unique'     => array($served,                   (float)$tv('unique_target'),     (int)$tv('unique_w'),     'count'),
+    'visits'     => array((float)$actuals['visit'],  (float)$tv('visits_target'),     (int)$tv('visits_w'),     'count'),
+    'activeness' => array((float)$actuals['active'], (float)$tv('activeness_target'), (int)$tv('activeness_w'), 'count'),
   );
   foreach ($spec as $key => $d) {
     list($actual, $target, $w, $kind) = $d;
@@ -1547,8 +1573,11 @@ function week_score($actuals, $t, $baseCount) {
     if ($w > 0 && $target > 0 && $pct !== null) { $acc += $pct * $w; $wsum += $w; }
   }
   $score = $wsum > 0 ? (int)round($acc / $wsum) : null;
-  /* The OM chose the direct rule: the score IS the fuel percentage. */
-  return array('kpis' => $kpis, 'score' => $score, 'fuelPct' => $score,
+  $band = fuel_band($score);
+  return array('kpis' => $kpis, 'score' => $score,
+               'fuelPct' => $band['pct'], 'award' => $band['award'], 'awardLabel' => $band['label'],
+               'toFull' => $score === null ? 70 : max(0, 70 - $score),
+               'toHalf' => $score === null ? 40 : max(0, 40 - $score),
                'baseCount' => (int)$baseCount, 'servedPct' => $servedPct === null ? null : round($servedPct, 1));
 }
 

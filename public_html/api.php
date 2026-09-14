@@ -3065,7 +3065,7 @@ try {
       $bq = db()->prepare("SELECT 1 FROM users WHERE username = ? AND role = 'bdo'");
       $bq->execute(array($bdo));
       if ($bdo === '' || !$bq->fetch()) fail('Choose a BDO');
-      $keys = array('visits', 'serving', 'activeness');
+      $keys = array('visits', 'serving', 'activeness', 'unique');
       $v = array(); $wsum = 0;
       foreach ($keys as $k) {
         $v[$k] = (int)num(bval($k));
@@ -3074,13 +3074,13 @@ try {
       }
       if ($v['serving'] < 0 || $v['serving'] > 100) fail('Serving is a percentage of his round - give 0 to 100');
       if ($wsum !== 100) fail('Weekly weights must add up to 100% (currently ' . $wsum . '%)');
-      db()->prepare('INSERT INTO weekly_targets (week_id, bdo, visits_target, serving_target, activeness_target, visits_w, serving_w, activeness_w)
-                     VALUES (?,?,?,?,?,?,?,?)
+      db()->prepare('INSERT INTO weekly_targets (week_id, bdo, visits_target, serving_target, activeness_target, visits_w, serving_w, activeness_w, unique_target, unique_w)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)
                      ON DUPLICATE KEY UPDATE visits_target=VALUES(visits_target), serving_target=VALUES(serving_target),
                        activeness_target=VALUES(activeness_target), visits_w=VALUES(visits_w),
-                       serving_w=VALUES(serving_w), activeness_w=VALUES(activeness_w)')
+                       serving_w=VALUES(serving_w), activeness_w=VALUES(activeness_w), unique_target=VALUES(unique_target), unique_w=VALUES(unique_w)')
           ->execute(array($wid, $bdo, $v['visits'], $v['serving'], $v['activeness'],
-                          $v['visits_w'], $v['serving_w'], $v['activeness_w']));
+                          $v['visits_w'], $v['serving_w'], $v['activeness_w'], $v['unique'], $v['unique_w']));
       audit($u['id'], 'weekly_targets_save', 'week=' . $wid . ' ' . $bdo);
       respond(array('ok' => true));
     }
@@ -3095,7 +3095,7 @@ try {
       $wq->execute(array($wid));
       if (!$wq->fetch()) fail('No such week', 404);
       $onlyMissing = (string)bval('onlyMissing') !== '';
-      $keys = array('visits', 'serving', 'activeness');
+      $keys = array('visits', 'serving', 'activeness', 'unique');
       $v = array(); $wsum = 0;
       foreach ($keys as $k) {
         $v[$k] = (int)num(bval($k));
@@ -3110,16 +3110,16 @@ try {
       $hq = db()->prepare('SELECT bdo FROM weekly_targets WHERE week_id = ?');
       $hq->execute(array($wid));
       foreach ($hq->fetchAll() as $r) $have[$r['bdo']] = true;
-      $ins = db()->prepare('INSERT INTO weekly_targets (week_id, bdo, visits_target, serving_target, activeness_target, visits_w, serving_w, activeness_w)
-                            VALUES (?,?,?,?,?,?,?,?)
+      $ins = db()->prepare('INSERT INTO weekly_targets (week_id, bdo, visits_target, serving_target, activeness_target, visits_w, serving_w, activeness_w, unique_target, unique_w)
+                            VALUES (?,?,?,?,?,?,?,?,?,?)
                             ON DUPLICATE KEY UPDATE visits_target=VALUES(visits_target), serving_target=VALUES(serving_target),
                               activeness_target=VALUES(activeness_target), visits_w=VALUES(visits_w),
-                              serving_w=VALUES(serving_w), activeness_w=VALUES(activeness_w)');
+                              serving_w=VALUES(serving_w), activeness_w=VALUES(activeness_w), unique_target=VALUES(unique_target), unique_w=VALUES(unique_w)');
       $set = 0; $skipped = 0;
       foreach ($bdos as $b) {
         if ($onlyMissing && isset($have[$b['username']])) { $skipped++; continue; }
         $ins->execute(array($wid, $b['username'], $v['visits'], $v['serving'], $v['activeness'],
-                            $v['visits_w'], $v['serving_w'], $v['activeness_w']));
+                            $v['visits_w'], $v['serving_w'], $v['activeness_w'], $v['unique'], $v['unique_w']));
         $set++;
       }
       audit($u['id'], 'weekly_targets_save_all', 'week=' . $wid . ' set=' . $set . ' kept=' . $skipped);
@@ -3132,6 +3132,82 @@ try {
      * A BDO sees his own line and nothing else - fuel is his own business and
      * a league table of it would be read as one. The OM sees everybody.
      */
+    /*
+     * THE OFFICER'S OWN FUEL, AS OF TODAY.
+     *
+     * The alarm above his screen reads this. It is the running week - the one
+     * whose dates contain today - scored by the same function the OM's table
+     * uses, so the officer and the office are never looking at two different
+     * numbers for the same man.
+     */
+    case 'fuel_status': {
+      $u = require_auth();
+      $today = date('Y-m-d');
+      $wq = db()->prepare('SELECT * FROM weeks WHERE date_from <= ? AND date_to >= ? ORDER BY date_from DESC LIMIT 1');
+      $wq->execute(array($today, $today));
+      $week = $wq->fetch();
+      if (!$week) respond(array('week' => null, 'hasTargets' => false, 'today' => $today));
+      $tq = db()->prepare('SELECT * FROM weekly_targets WHERE week_id = ? AND bdo = ?');
+      $tq->execute(array((int)$week['id'], $u['username']));
+      $tg = $tq->fetch();
+      if (!$tg) respond(array('week' => $week, 'hasTargets' => false, 'today' => $today));
+      $sc = week_score(week_actuals($week['date_from'], $week['date_to'], $u['username']), $tg,
+                       bdo_base_count($week['month'], $u['username']));
+      $daysLeft = max(0, (int)floor((strtotime($week['date_to']) - strtotime($today)) / 86400));
+      respond(array('week' => $week, 'hasTargets' => true, 'today' => $today, 'daysLeft' => $daysLeft) + $sc);
+    }
+
+    /*
+     * EVERYTHING, FOR PAPER.
+     *
+     * Every month's weighted score for every officer, and every week's fuel
+     * award, in one call - computed by the same functions the screens use,
+     * because a printed sheet that disagrees with the screen is worse than no
+     * sheet. Capped at two years of months and sixty weeks so a long-running
+     * office does not time out the shared host on one click.
+     */
+    case 'fuel_report': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      $bdos = db()->query('SELECT username, name, specialty FROM users WHERE role = "bdo" AND active = 1 ORDER BY name')->fetchAll();
+
+      $weeks = array_reverse(db()->query('SELECT * FROM weeks ORDER BY date_from DESC LIMIT 60')->fetchAll());
+      $wt = db()->prepare('SELECT * FROM weekly_targets WHERE week_id = ? AND bdo = ?');
+      $weekly = array();
+      foreach ($weeks as $w) {
+        $rows = array();
+        foreach ($bdos as $b) {
+          $wt->execute(array((int)$w['id'], $b['username']));
+          $tg = $wt->fetch();
+          if (!$tg) { $rows[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => false); continue; }
+          $sc = week_score(week_actuals($w['date_from'], $w['date_to'], $b['username']), $tg,
+                           bdo_base_count($w['month'], $b['username']));
+          $rows[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => true,
+                          'score' => $sc['score'], 'award' => $sc['award'], 'awardLabel' => $sc['awardLabel'],
+                          'kpis' => $sc['kpis']);
+        }
+        $weekly[] = array('week' => $w, 'rows' => $rows);
+      }
+
+      $months = array_reverse(db()->query('SELECT month, status FROM months ORDER BY month DESC LIMIT 24')->fetchAll());
+      $mt = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      $monthly = array();
+      foreach ($months as $m) {
+        $rows = array();
+        foreach ($bdos as $b) {
+          $mt->execute(array($m['month'], $b['username']));
+          $tg = $mt->fetch();
+          if (!$tg) { $rows[] = array('bdo' => $b['username'], 'score' => null, 'hasTargets' => false); continue; }
+          $sm = $b['specialty'] === 'activeness'
+            ? bdo_score_specialist(bdo_actuals($m['month'], $b['username']), $tg)
+            : bdo_score(bdo_actuals($m['month'], $b['username']), $tg);
+          $rows[] = array('bdo' => $b['username'], 'score' => $sm['score'], 'hasTargets' => true);
+        }
+        $monthly[] = array('month' => $m['month'], 'status' => $m['status'], 'rows' => $rows);
+      }
+      audit($u['id'], 'fuel_report', 'weeks=' . count($weeks) . ' months=' . count($months));
+      respond(array('generated' => date('Y-m-d H:i'), 'bdos' => $bdos, 'weekly' => $weekly, 'monthly' => $monthly));
+    }
+
     case 'weekly_performance': {
       $u = require_auth();
       $wid = (int)num(isset($_GET['weekId']) ? $_GET['weekId'] : 0);
@@ -3159,7 +3235,9 @@ try {
                          bdo_base_count($week['month'], $b['username']));
         $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => true,
                        'score' => $sc['score'], 'fuelPct' => $sc['fuelPct'], 'kpis' => $sc['kpis'],
-                       'baseCount' => $sc['baseCount'], 'servedPct' => $sc['servedPct']);
+                       'baseCount' => $sc['baseCount'], 'servedPct' => $sc['servedPct'],
+                       'award' => $sc['award'], 'awardLabel' => $sc['awardLabel'],
+                       'toFull' => $sc['toFull'], 'toHalf' => $sc['toHalf']);
       }
       usort($out, function ($a, $b) {
         $as = $a['score'] === null ? -1 : $a['score'];

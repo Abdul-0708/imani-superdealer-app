@@ -874,7 +874,11 @@
     { key: 'agents', label: 'Agents', icon: 'users' },
     /* Waking agents was spread over four screens and therefore lived on none
      * of them. It is one job, so it gets one tab. */
-    { key: 'activeness', label: 'Activeness', icon: 'zap' },
+    { key: 'activeness', label: 'Activeness', icon: 'zap', noPerm: true },
+    /* The OM's screen for what he pays on: fuel by the week, the score by the
+     * month. noPerm - like Activeness, who sees it is decided by role, so it has
+     * no row in the permissions matrix, where a toggle would save nothing. */
+    { key: 'fuel', label: 'Fuel & Performance', icon: 'flame', noPerm: true },
     { key: 'bdos', label: 'BDOs', icon: 'users' },
     { key: 'upload', label: 'Database Upload', icon: 'upload' },
     { key: 'targets', label: 'Monthly Targets', icon: 'target' },
@@ -938,6 +942,19 @@
     if (!state.user) { renderLogin(); return; }
     renderShell();
     refreshBadges();
+    /*
+     * A PULSE. The badges - and the office notice riding on them - used to be
+     * read once, at sign-in, so a notice posted at ten reached a man who signed
+     * in at eight only when he next reloaded the app. Every five minutes now,
+     * with the fuel alarm, which is meant to be current 'as of today'.
+     */
+    if (!state._liveTimer) {
+      state._liveTimer = setInterval(function () {
+        if (!state.user) return;
+        refreshBadges();
+        fuelAlarmLoad();
+      }, 5 * 60 * 1000);
+    }
   }
   /* Counts behind the nav badges. Fetched quietly in the background and painted
    * straight into the existing nav - re-rendering the shell here would re-fetch
@@ -1054,6 +1071,7 @@
       }
       /* The officer works this screen; the OM reads it. Nobody else needs it. */
       if (m.key === 'activeness') return isManager() || can('mybase', 'v');
+      if (m.key === 'fuel') return isManager();
       if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
       if (m.key === 'inbox') return true; // everyone has a message box
       /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
@@ -1098,7 +1116,7 @@
       '<button class="ghost tiny" data-action="toggleLang" title="Language">' + (LANG === 'sw' ? 'EN' : 'SW') + '</button>' +
       '<button class="ghost tiny" data-action="pwd">' + t('Password') + '</button>' +
       '<button class="ghost tiny" data-action="logout">' + t('Sign out') + '</button></div></div>' +
-      '</aside><main class="main" id="main" tabindex="-1"><div id="view"></div></main></div>' +
+      '</aside><main class="main" id="main" tabindex="-1"><div id="fuelAlarm"></div><div id="view"></div></main></div>' +
       bottomNavHtml(tabs);
     renderTab();
   }
@@ -1226,9 +1244,14 @@
      * it after the redraw, so they are unaffected.) */
     closeModal();
     v.innerHTML = skeletonHtml();
+    /* Re-read on every screen change, so what a man is told about his fuel
+     * and about the office is never older than the last thing he tapped. */
+    fuelAlarmLoad();
+    refreshBadges();
     if (state.tab === 'dashboard') viewDashboard(v);
     else if (state.tab === 'agents') viewAgents(v);
     else if (state.tab === 'activeness') viewActiveness(v);
+    else if (state.tab === 'fuel') viewFuel(v);
     else if (state.tab === 'mybase') viewMyBase(v);
     else if (state.tab === 'daily') viewDaily(v);
     else if (state.tab === 'data') viewData(v);
@@ -1523,7 +1546,7 @@
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         scorePanel +
         '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
-        '<p class="note">' + t('Visits, serving as a share of your round, and activeness. The weighted average is the percentage of fuel you get for next week.') + '</p>' +
+        '<p class="note">' + t('Share of your round served, different agents served, visits and activeness. 70% or more of your weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</p>' +
         '<div id="myFuelBox"></div></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
         '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
@@ -2638,17 +2661,16 @@
         '<span class="note" style="min-width:140px">' + (x.actual == null ? '-' : x.actual + unit) +
         ' / ' + x.target + unit + (raw == null ? '' : ' &middot; ' + raw + '%') + '</span></div>';
     }
-    var fuelCls = r.fuelPct == null ? 'dim' : (r.fuelPct < 50 ? 'bad' : (r.fuelPct >= 80 ? 'ok' : 'gold'));
     return head +
       '<div class="grid cards" style="margin-bottom:10px">' +
-      card('percent', t('Weighted this week'), (r.score == null ? '-' : r.score + '%'), t('visits, serving, activeness')) +
-      card('flame', t('Fuel earned for next week'), (r.fuelPct == null ? '-' : r.fuelPct + '%'),
+      card('percent', t('Weighted this week'), (r.score == null ? '-' : r.score + '%'), t('against your weekly target')) +
+      card('flame', t('Fuel for next week'), t(r.awardLabel || 'NO SCORE YET'),
            live ? t('still moving - the week is not over') : t('final for this week')) +
       '</div>' +
-      '<div class="pill ' + fuelCls + '" style="margin-bottom:8px;display:inline-block">' +
-      (r.fuelPct == null ? t('no score yet') : r.fuelPct + '% ' + t('of fuel')) + '</div>' +
+      '<p class="note">' + t('70% or more = FULL fuel. 40% to 69% = HALF. Below 40% = NOTHING.') + '</p>' +
+      bar('Percentage of base served (round of ' + (r.baseCount || 0) + ')', k.serving, true) +
+      bar('Unique serving', k.unique, false) +
       bar('Agent Visits', k.visits, false) +
-      bar('Serving (of your round of ' + (r.baseCount || 0) + ')', k.serving, true) +
       bar('Activeness', k.activeness, false);
   }
 
@@ -3924,17 +3946,20 @@
    * The dates are typed, not derived. The office does not always run Monday to
    * Sunday, and a rule that pretends otherwise gets worked around.
    */
+  /* 'serving' stays the storage key for the percentage - weeks already saved
+   * carry it - and 'unique' is the count of different agents served. */
   var WEEK_DEFS = [
+    { key: 'serving', label: 'Percentage of base served', icon: 'percent', unit: '%', hint: 'percent OF HIS OWN ROUND served in the week' },
+    { key: 'unique', label: 'Unique serving', icon: 'users', unit: '', hint: 'different agents served in the week' },
     { key: 'visits', label: 'Agent Visits', icon: 'target', unit: '', hint: 'visits marked in the week' },
-    { key: 'serving', label: 'Serving', icon: 'users', unit: '%', hint: 'percent OF HIS OWN ROUND served in the week' },
     { key: 'activeness', label: 'Activeness', icon: 'zap', unit: '', hint: 'agents waked in the week' }
   ];
-  var WEEK_DEFAULT_W = { visits: 30, serving: 45, activeness: 25 };
+  var WEEK_DEFAULT_W = { serving: 30, unique: 30, visits: 20, activeness: 20 };
 
   function weeklyPanel() {
     return '<div class="panel"><h2>' + svg('cal') + t('Weekly targets and fuel') + '</h2>' +
       '<p class="note">' +
-      t('Fuel is issued weekly, so it is earned weekly. Give the week the dates it actually ran - it does not have to be Monday to Sunday. The weighted average of the three is the percentage of fuel for the week that follows.') +
+      t('Fuel is issued weekly, so it is earned weekly. Give the week the dates it actually ran - it does not have to be Monday to Sunday. The weighted average of the four decides the fuel: 70% or more is FULL, 40% to 69% is HALF, below 40% is NOTHING.') +
       '</p><div id="weeklyBox"><div class="note">' + t('Loading') + '...</div></div></div>';
   }
 
@@ -4033,7 +4058,7 @@
   function weekPerfHtml(d) {
     var rows = (d.rows || []).map(function (r) {
       if (!r.hasTargets) {
-        return '<tr><td class="c-name">' + esc(r.name) + '</td><td colspan="4" class="note">' +
+        return '<tr><td class="c-name">' + esc(r.name) + '</td><td colspan="5" class="note">' +
           t('no weekly target set') + '</td><td><span class="pill dim">-</span></td></tr>';
       }
       var k = r.kpis || {};
@@ -4043,17 +4068,16 @@
         return '<span class="pill ' + cls + '">' + x.pct + '%</span>' +
           '<div class="note">' + x.actual + (x.kind === 'pct' ? '%' : '') + ' / ' + x.target + (x.kind === 'pct' ? '%' : '') + '</div>';
       }
-      var fuelCls = r.fuelPct == null ? 'dim' : (r.fuelPct < 50 ? 'bad' : (r.fuelPct >= 80 ? 'ok' : 'gold'));
       return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + t('round') + ': ' + fmt(r.baseCount || 0) + '</div></td>' +
-        '<td>' + cell(k.visits) + '</td><td>' + cell(k.serving) + '</td><td>' + cell(k.activeness) + '</td>' +
+        '<td>' + cell(k.serving) + '</td><td>' + cell(k.unique) + '</td><td>' + cell(k.visits) + '</td><td>' + cell(k.activeness) + '</td>' +
         '<td><b>' + (r.score == null ? '-' : r.score + '%') + '</b></td>' +
-        '<td><span class="pill ' + fuelCls + '">' + (r.fuelPct == null ? '-' : r.fuelPct + '% ' + t('fuel')) + '</span></td></tr>';
-    }).join('') || '<tr><td colspan="6" class="note">' + t('Nobody has a target for this week yet.') + '</td></tr>';
+        '<td>' + fuelAwardPill(r) + '</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="note">' + t('Nobody has a target for this week yet.') + '</td></tr>';
     return '<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">' +
       '<h3 style="margin:0 0 4px">' + t('What the week earned') + '</h3>' +
-      '<p class="note">' + t('The weighted average is the fuel percentage for next week.') + '</p>' +
-      '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('Visits') + '</th>' +
-      '<th>' + t('Serving') + '</th><th>' + t('Activeness') + '</th><th>' + t('Weighted') + '</th><th>' + t('Fuel') + '</th>' +
+      '<p class="note">' + t('70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('% of base served') + '</th>' +
+      '<th>' + t('Unique serving') + '</th><th>' + t('Visits') + '</th><th>' + t('Activeness') + '</th><th>' + t('Weighted') + '</th><th>' + t('Fuel') + '</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
 
@@ -4103,6 +4127,158 @@
         weekBodyLoad();
       })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+
+  /* ===================== FUEL & PERFORMANCE =====================
+   *
+   * The OM's own screen for the two things he pays on: the week (fuel) and
+   * the month (the weighted score). Weekly targets used to be set from the
+   * bottom of Monthly Targets, panels away from anything to do with fuel;
+   * they live here now, next to the result they produce.
+   */
+  function viewFuel(v) {
+    var m0 = state._fuelMonth || state.month || state.openMonth || curMonth();
+    v.innerHTML =
+      '<h1 class="page-title">' + t('Fuel & Performance') + '</h1>' +
+      '<p class="page-sub">' + t('Weekly fuel targets for every BDO, and how each one performed month by month.') + '</p>' +
+      '<div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">' +
+      '<span class="note" style="flex:1">' + t('Fuel rule: 70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</span>' +
+      '<button class="btn" data-action="fuelPrint">' + svg('download') + t('Print all months') + '</button></div></div>' +
+      weeklyPanel() +
+      '<div class="panel"><h2>' + svg('percent') + t('Monthly target performance') + '</h2>' +
+      '<div class="row" style="gap:8px;align-items:flex-end;margin-bottom:8px">' +
+      '<div class="field"><label>' + t('Month') + '</label><input id="fuelMonth" type="month" value="' + esc(m0) + '"></div>' +
+      '<button class="ghost" data-action="fuelMonthLoad">' + t('Load') + '</button></div>' +
+      '<div id="fuelMonthBox"><div class="note">' + t('Loading') + '...</div></div></div>';
+    weeklyLoad();
+    fuelMonthLoad();
+  }
+  function fuelMonthLoad() {
+    var box = elById('fuelMonthBox'); if (!box) return;
+    var inp = elById('fuelMonth');
+    var m = inp && inp.value ? inp.value : (state.openMonth || curMonth());
+    state._fuelMonth = m;
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    api('bdo_performance', { qs: '&month=' + encodeURIComponent(m) }).then(function (d) {
+      var rows = (d.rows || []).map(function (r) {
+        var cls = r.score == null ? 'dim' : (r.score < 50 ? 'bad' : (r.score >= 80 ? 'ok' : 'gold'));
+        return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + esc(r.bdo) + '</div></td>' +
+          '<td>' + (r.hasTargets
+            ? '<span class="pill ' + cls + '">' + (r.score == null ? '-' : r.score + '%') + '</span>'
+            : '<span class="note">' + t('no targets set') + '</span>') + '</td>' +
+          '<td style="min-width:320px">' + (r.hasTargets ? perfBars(r.kpis || {}) : '') + '</td></tr>';
+      }).join('') || '<tr><td colspan="3" class="note">' + t('No BDOs found.') + '</td></tr>';
+      box.innerHTML = '<div class="tablewrap"><table><thead><tr><th>' + t('BDO') + '</th><th>' + t('Weighted score') + '</th><th>' + t('By KPI') + '</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div>';
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+
+  /*
+   * PRINT EVERY MONTH. The window is opened FIRST, inside the click, and filled
+   * once the data arrives: a window opened after a network call is no longer
+   * the user's own action, and browsers block it as a pop-up.
+   */
+  function fuelPrint() {
+    var w = window.open('', '_blank');
+    if (!w) { toast(t('Allow pop-ups for this site to print the report'), 'warn'); return; }
+    try { w.document.write('<p style="font-family:Arial,sans-serif">' + esc(t('Preparing the report...')) + '</p>'); } catch (e) {}
+    api('fuel_report').then(function (d) {
+      w.document.open();
+      w.document.write(fuelReportHtml(d));
+      w.document.close();
+      setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 400);
+    }).catch(function (e) {
+      try { w.close(); } catch (x) {}
+      toast(e.message, 'err');
+    });
+  }
+  function fuelReportHtml(d) {
+    var css = '<style>body{font-family:Arial,sans-serif;color:#111;margin:18px}h1{font-size:20px;margin:0}' +
+      'h2{font-size:15px;margin:22px 0 6px;border-bottom:2px solid #111;padding-bottom:3px}h3{font-size:13px;margin:14px 0 4px}' +
+      'table{border-collapse:collapse;width:100%;font-size:11px;margin-bottom:6px}th,td{border:1px solid #999;padding:4px 6px;text-align:left}th{background:#eee}' +
+      '.full{background:#d9f2c8;font-weight:bold}.half{background:#fde9b0;font-weight:bold}.none{background:#f7c6c0;font-weight:bold}.muted{color:#777}' +
+      '.block{page-break-inside:avoid}@page{size:A4 landscape;margin:12mm}</style>';
+    var bdos = d.bdos || [];
+    var head = '<h1>Imani Superdealer - ' + esc(t('Fuel & Performance Report')) + '</h1>' +
+      '<div class="muted">' + esc(t('Generated')) + ' ' + esc(d.generated || '') + '</div>';
+    var months = d.monthly || [];
+    var mhead = '<tr><th>' + esc(t('BDO')) + '</th>' + months.map(function (m) { return '<th>' + esc(m.month) + '</th>'; }).join('') + '</tr>';
+    var mrows = bdos.map(function (b) {
+      return '<tr><td>' + esc(b.name) + '</td>' + months.map(function (m) {
+        var r = (m.rows || []).filter(function (x) { return x.bdo === b.username; })[0];
+        return '<td>' + (r && r.score != null ? r.score + '%' : '<span class="muted">-</span>') + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    var monthly = '<h2>' + esc(t('Monthly target performance')) + '</h2>' +
+      (months.length ? '<div class="block"><table>' + mhead + mrows + '</table></div>' : '<p class="muted">' + esc(t('No months yet.')) + '</p>');
+    function kv(x) { return x && x.pct != null ? x.pct + '%' : '-'; }
+    var weeks = d.weekly || [];
+    var weekly = '<h2>' + esc(t('Weekly fuel')) + '</h2>' +
+      '<p class="muted">' + esc(t('70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.')) + '</p>' +
+      (weeks.map(function (wk) {
+        var wd = wk.week || {};
+        var rows = (wk.rows || []).map(function (r) {
+          if (!r.hasTargets) return '<tr><td>' + esc(r.name) + '</td><td colspan="6" class="muted">' + esc(t('no weekly target set')) + '</td></tr>';
+          var k = r.kpis || {};
+          var cls = r.award === 'full' ? 'full' : (r.award === 'half' ? 'half' : 'none');
+          return '<tr><td>' + esc(r.name) + '</td><td>' + kv(k.serving) + '</td><td>' + kv(k.unique) + '</td><td>' + kv(k.visits) + '</td><td>' + kv(k.activeness) + '</td>' +
+            '<td>' + (r.score == null ? '-' : r.score + '%') + '</td><td class="' + cls + '">' + esc(t(r.awardLabel || '')) + '</td></tr>';
+        }).join('');
+        return '<div class="block"><h3>' + esc(wd.label || '') + ' (' + esc(wd.date_from || '') + ' - ' + esc(wd.date_to || '') + ')</h3><table>' +
+          '<tr><th>' + esc(t('BDO')) + '</th><th>' + esc(t('% of base served')) + '</th><th>' + esc(t('Unique serving')) + '</th><th>' + esc(t('Visits')) + '</th>' +
+          '<th>' + esc(t('Activeness')) + '</th><th>' + esc(t('Weighted')) + '</th><th>' + esc(t('Fuel')) + '</th></tr>' +
+          rows + '</table></div>';
+      }).join('') || '<p class="muted">' + esc(t('No weeks yet.')) + '</p>');
+    return '<!doctype html><html><head><meta charset="utf-8"><title>' + esc(t('Fuel & Performance Report')) + '</title>' + css +
+      '</head><body>' + head + monthly + weekly + '</body></html>';
+  }
+
+  /*
+   * THE FUEL ALARM.
+   *
+   * Fuel is the part of the week an officer feels in his pocket, and finding
+   * out on Monday that he earned half is a report, not a warning. So it sits
+   * above every screen he opens, says what he is entitled to as of today, and
+   * says how many points stand between him and the next tank. Red for
+   * nothing, amber for half, green only when he has earned the lot.
+   */
+  function fuelAlarmHtml(s) {
+    var award = s.award;
+    var score = s.score;
+    var colour = award === 'full' ? 'var(--ok)' : (award === 'half' ? '#e0a100' : 'var(--bad)');
+    var bg = award === 'full' ? 'rgba(143,209,79,.10)' : (award === 'half' ? 'rgba(224,161,0,.14)' : 'rgba(255,107,94,.16)');
+    var headline = award === 'full' ? t('You have earned FULL FUEL')
+      : (award === 'half' ? t('WARNING - you are on HALF FUEL') : t('ALERT - you are on NO FUEL'));
+    var next = award === 'full'
+      ? t('Stay at 70% or more until the week ends to keep it.')
+      : (award === 'half'
+        ? t('You need') + ' ' + s.toFull + ' ' + t('more points to reach 70% and FULL fuel.')
+        : (score == null
+          ? t('Nothing is counted for you yet this week. Every agent you serve, visit or wake counts.')
+          : t('You need') + ' ' + s.toHalf + ' ' + t('more points to reach 40% and HALF fuel - 70% for FULL.')));
+    return '<div role="alert" style="border:2px solid ' + colour + ';background:' + bg + ';border-radius:14px;padding:12px 16px;margin:0 0 12px">' +
+      '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">' +
+      '<span style="font-size:30px;font-weight:800;line-height:1;color:' + colour + '">' + (score == null ? 0 : score) + '%</span>' +
+      '<div style="flex:1;min-width:200px">' +
+      '<div style="font-size:17px;font-weight:800;color:' + colour + '">' + esc(headline) + '</div>' +
+      '<div class="note">' + t('As of today') + ' ' + esc(s.today || '') +
+      (s.week ? ' &middot; ' + esc(s.week.label || '') : '') +
+      (s.daysLeft != null ? ' &middot; ' + s.daysLeft + ' ' + t('days left in the week') : '') + '</div>' +
+      '<div style="margin-top:2px"><b>' + esc(next) + '</b></div>' +
+      '</div></div></div>';
+  }
+  function fuelAlarmLoad() {
+    var el = elById('fuelAlarm'); if (!el) return;
+    if (!state.user || !isFieldUser()) { el.innerHTML = ''; return; }
+    api('fuel_status', { silent: true }).then(function (d) {
+      var box = elById('fuelAlarm'); if (!box) return;
+      box.innerHTML = (d && d.week && d.hasTargets) ? fuelAlarmHtml(d) : '';
+    }, function () {});
+  }
+  function fuelAwardPill(r) {
+    if (!r || r.score == null) return '<span class="pill dim">-</span>';
+    var cls = r.award === 'full' ? 'ok' : (r.award === 'half' ? 'gold' : 'bad');
+    return '<span class="pill ' + cls + '">' + t(r.awardLabel || '') + '</span>';
   }
 
   function viewTargets(v) {
@@ -4158,11 +4334,9 @@
         fields + '</div>' +
         kpiSetupPanel(kcfg) +
         bdoTargetsPanel(bt) +
-        weeklyPanel() +
         '<div class="panel"><h2>' + svg('cal') + 'Saved Office Targets</h2><div class="tablewrap"><table><thead><tr><th>Month</th><th>SA Station</th><th>Serving</th><th>Float</th><th>Visits</th><th>APK</th><th>Activeness</th><th>Acceleration</th></tr></thead><tbody>' + hist + '</tbody></table></div></div>';
       btUpdateSum();
       tgUpdateSum();
-      weeklyLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function tgSave() {
@@ -5683,7 +5857,10 @@
       return '<button class="role-chip' + (r === state._permRole ? ' active' : '') + '" data-action="permRole" data-r="' + esc(r) + '">' + esc(roleLabel(r)) + '</button>';
     }).join('');
     var m = state._permMatrix[state._permRole] || {};
-    rowsEl.innerHTML = MODULES.map(function (mod) {
+    /* Tabs whose visibility is decided by role have no cell on the server - the
+     * save skips modules it does not know - so a toggle for them would look
+     * saved and change nothing. They are left out. */
+    rowsEl.innerHTML = MODULES.filter(function (mod) { return !mod.noPerm; }).map(function (mod) {
       var p = m[mod.key] || { v: false, e: false, d: false };
       function tgl(lvl, label, extra) {
         return '<button class="tgl' + (p[lvl] ? ' on' : '') + (extra || '') + '" data-action="permTgl" data-mod="' + mod.key + '" data-lvl="' + lvl + '">' + label + '</button>';
@@ -6264,6 +6441,8 @@
     if (a === 'swCreate') { sweepCreate(); return; }
     if (a === 'swClose') { sweepClose(node.getAttribute('data-id')); return; }
     if (a === 'swExport') { sweepExport(node.getAttribute('data-id')); return; }
+    if (a === 'fuelPrint') { fuelPrint(); return; }
+    if (a === 'fuelMonthLoad') { fuelMonthLoad(); return; }
     if (a === 'actRecruit') { actRecruit(); return; }
     if (a === 'actTab') { state._actTab = node.getAttribute('data-t'); elById('actBox').innerHTML = activenessHtml(state._act); return; }
     if (a === 'actWake') { actWake(node.getAttribute('data-id'), node.getAttribute('data-name')); return; }

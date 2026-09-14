@@ -466,6 +466,27 @@ function upgrade_schema($pdo) {
     schema_v28_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "28" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 29) {
+    schema_v29_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "29" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v29: A FOURTH WEEKLY KPI - UNIQUE SERVING.
+ *
+ * The week was scored on serving as a percentage of the officer's round. On
+ * its own a percentage flatters a small round: a man holding 20 agents who
+ * serves 10 has done 50%, and so has the man holding 300 who serves 150. The
+ * count of different agents served keeps a floor under it, and the OM weighs
+ * the two against each other.
+ */
+function schema_v29_apply($pdo) {
+  $alters = array(
+    'ALTER TABLE weekly_targets ADD COLUMN unique_target INT NOT NULL DEFAULT 0',
+    'ALTER TABLE weekly_targets ADD COLUMN unique_w INT NOT NULL DEFAULT 0',
+  );
+  foreach ($alters as $sql) { try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ } }
 }
 
 /*
@@ -699,6 +720,8 @@ function schema_v22_apply($pdo) {
     visits_w INT NOT NULL DEFAULT 0,
     serving_w INT NOT NULL DEFAULT 0,
     activeness_w INT NOT NULL DEFAULT 0,
+    unique_target INT NOT NULL DEFAULT 0,
+    unique_w INT NOT NULL DEFAULT 0,
     PRIMARY KEY (week_id, bdo)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
