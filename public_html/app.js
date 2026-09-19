@@ -2260,6 +2260,87 @@
       .catch(function (e) { toast(e.message, 'err'); });
   }
 
+  /*
+   * HIGH EARNERS NOBODY HAS SERVED, and the officer who holds each one - with
+   * a BLANK where nobody does. The blanks are the point: an agent carrying
+   * real money with no name against him is invisible in every other report,
+   * because every other report starts from somebody's round.
+   */
+  function heNotServedDownload() {
+    if (!xlsxReady()) return;
+    var m = state._bdMonth || state.openMonth || curMonth();
+    toast(t('Building the list...'), 'ok');
+    api('he_not_served', { qs: '&month=' + encodeURIComponent(m) }).then(function (d) {
+      var rows = d.rows || [];
+      if (!rows.length) { toast(t('Every high earner has been served this month.'), 'ok'); return; }
+      if (!xlsxReady()) return;
+      var sheet = rows.map(function (r) {
+        return { 'LIST': r.band, 'Agent': r.name, 'Account': r.acc,
+                 'Commission': r.commission || 0,
+                 /* blank, deliberately, when no officer holds him */
+                 'BDO': r.bdoName || r.bdo || '',
+                 'Phone': r.phone || '', 'Branch': r.branch || '',
+                 'Physical Location': r.location || '', 'SA Station': r.station || '',
+                 'Agent status': r.active || '',
+                 'In agent list': r.inSystem ? 'YES' : 'NO' };
+      });
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Not served');
+      XLSX.writeFile(wb, 'high_earners_not_served_' + d.month + (d.station ? '_' + d.station : '') + '.xlsx');
+      toast(rows.length + ' ' + t('high earners not served') +
+            (d.noBdo ? ' - ' + d.noBdo + ' ' + t('with no BDO') : ''), 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+
+  /*
+   * WHY THE ROUNDS ARE THE SIZE THEY ARE.
+   *
+   * Every gate that keeps an agent out of a round is invisible once it has
+   * done its work, so a round that looks too small has no explanation on any
+   * screen. This asks for the counts and lays them out in the order they
+   * apply. It is behind a button because it is several whole-table counts,
+   * and nobody needs them on every visit to the agent list.
+   */
+  function baseDiagHtml() {
+    return '<div class="panel"><h2>' + svg('alert') + t('Why the rounds are this size') + '</h2>' +
+      '<p class="note">' + t('An agent joins a round when a file names an officer against him, or when somebody serves him - and never without a physical location. This counts what each rule is keeping out.') + '</p>' +
+      '<div id="baseDiagBox"><button class="ghost" data-action="baseDiag">' + t('Check now') + '</button></div></div>';
+  }
+  function baseDiagLoad() {
+    var box = elById('baseDiagBox'); if (!box) return;
+    box.innerHTML = '<div class="note">' + t('Checking') + '...</div>';
+    api('base_diagnosis').then(function (d) { box.innerHTML = baseDiagBody(d); })
+      .catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function baseDiagBody(d) {
+    function line(label, val, note, bad) {
+      return '<div class="tg-row"><span class="tg-name" style="width:auto;min-width:210px">' + t(label) + '</span>' +
+        '<b style="min-width:70px' + (bad ? ';color:var(--bad)' : '') + '">' + fmt(val || 0) + '</b>' +
+        '<span class="note" style="flex:1">' + esc(note) + '</span></div>';
+    }
+    var drop = (d.inBasePrev || 0) - (d.inBase || 0);
+    var per = (d.perBdo || []).map(function (r) {
+      return '<span class="pill dim">' + esc(r.bdo) + ': <b>' + fmt(r.n) + '</b></span> ';
+    }).join('') || '<span class="note">' + t('nobody holds a round this month') + '</span>';
+    var noneNamed = (d.fileRows || 0) > 0 && (d.fileNamed || 0) === 0;
+    return line('Agents in the system', d.agentsTotal, t('everything in the agent list')) +
+      line('In a round this month', d.inBase, t('this is the number the screens show')) +
+      line('In a round last month', d.inBasePrev, String(d.prev || '')) +
+      (drop > 0 ? line('Dropped since last month', drop, t('held last month, held by nobody now'), true) : '') +
+      line('No physical location', d.noLocation, t('cannot be in any round until somebody captures where they are'), (d.noLocation || 0) > 0) +
+      line('Marked will not return', d.wontReturn, t('deliberately left out of every round')) +
+      line('Never in any round, ever', d.neverOwned, t('no file has named an officer against them, and nobody has served them'), (d.neverOwned || 0) > 0) +
+      line('Named by this month files', d.fileNamed, t('of') + ' ' + fmt(d.fileRows || 0) + ' ' + t('agents the files carry - if this is low, the Assigned BDO column is empty'), noneNamed) +
+      '<p class="note" style="margin-top:8px">' + t('Month-start carry') + ': ' +
+      (d.carryRan ? '<span class="pill ok">' + t('ran') + '</span>' : '<span class="pill bad">' + t('has not run') + '</span>') +
+      ' &middot; ' + t('all-months join') + ': ' +
+      (d.joinRan ? '<span class="pill ok">' + t('ran') + '</span>' : '<span class="pill bad">' + t('has not run') + '</span>') + '</p>' +
+      '<p class="note">' + t('Per officer') + ': ' + per + '</p>' +
+      (noneNamed
+        ? '<p class="note" style="color:var(--bad)"><b>' + t('The files this month name an officer against nobody. Until the Assigned BDO column is filled in, a round can only hold the agents that officer personally served.') + '</b></p>'
+        : '');
+  }
+
   function viewAgents(v) {
     var restricted = !can('agents', 'v');
     var perOpts = [20, 50, 100].map(function (n) {
@@ -2271,6 +2352,7 @@
       '<p class="page-sub">' + (restricted
         ? t('Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.')
         : t('Master list with live KPI status.')) + '</p>' +
+      (isManager() ? baseDiagHtml() : '') +
       '<div class="panel"><div class="row">' +
       '<div class="field"><label>' + t('Search in') + '</label><select data-change="agentField">' +
       [['', t('Everything')], ['acc', 'Account'], ['name', 'Name'], ['phone', 'Phone'], ['branch', 'Branch'], ['location', 'Physical Location']].map(function (o) {
@@ -4857,6 +4939,7 @@
         '<button class="btn" data-action="bdLoad">' + t('Load') + '</button>' +
         '<div class="spacer"></div>' +
         '<button class="ghost" data-action="bdDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
+        '<button class="ghost" data-action="heNotServed">' + svg('download') + ' ' + t('High earners NOT served') + '</button>' +
         '<button class="ghost" data-action="heXlsAll">' + svg('flame') + ' ' + t('High earners - Excel') + '</button>' +
         '<button class="ghost" data-action="heDocAll">' + svg('flame') + ' ' + t('High earners - Word') + '</button>' +
         '</div></div>' +
@@ -6060,6 +6143,8 @@
     if (a === 'bdBack') { state._bdOpen = null; renderTab(); return; }
     if (a === 'bdLoad') { state._bdMonth = elById('bdMonth').value; state._bdOpen = null; renderTab(); return; }
     if (a === 'bdDownload') { bdosDownload(); return; }
+    if (a === 'heNotServed') { heNotServedDownload(); return; }
+    if (a === 'baseDiag') { baseDiagLoad(); return; }
     if (a === 'heXlsAll') { heReport('', 'excel'); return; }
     if (a === 'heDocAll') { heReport('', 'word'); return; }
     if (a === 'heXlsOne') { heReport(node.getAttribute('data-bdo'), 'excel'); return; }

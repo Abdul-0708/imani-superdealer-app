@@ -5,6 +5,51 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.70.0 — 2026-09-19 · Why the rounds are this size, and the money nobody owns
+
+**Reported:** an officer has been serving agents for months and his round is still small, and getting
+smaller.
+
+### The gates, counted
+
+Four rules decide whether an agent is in anybody's round. Each is defensible on its own; together
+they can empty one, and **every one of them is invisible once it has done its work** — which is why no
+screen could answer the question.
+
+| Rule | Effect |
+|---|---|
+| No **physical location** | cannot be in any round, ever, until somebody captures where he is |
+| No officer **named in the file** | nothing to hand out — only agents he personally served can join |
+| Marked **won't return** | deliberately excluded |
+| Never served, never named | never in any round |
+
+**Agents → Why the rounds are this size → Check now** counts all of them for the month: how many
+agents exist, how many are in a round now and were last month, how many dropped, how many are held
+out by each rule, whether the month-start carry and the all-months join ran, and the size of each
+officer's round.
+
+The number that usually explains it is **"named by this month's files"**. Since v1.68.0 an agent joins
+a round when a file names an officer beside him — but if that *Assigned BDO* column is empty, there is
+no portfolio to hand out, and a round can still only hold what that officer personally served. When
+that count is zero the panel says so outright, in red.
+
+### High earners nobody has served
+
+`he_report` answers nearly the same question, but it reads **from the rounds**: an agent in nobody's
+round is in nobody's report. Those are exactly the ones worth finding — real money sitting in the list
+with no officer's name against it, invisible *because* it belongs to no one.
+
+The new **High earners NOT served** download starts from the high-earner list itself and hangs the
+round off it, so an unowned agent still appears with the **BDO column left blank** — the OM's cue to
+give him to somebody. One sheet: list band, agent, account, commission, BDO, phone, branch, physical
+location, station, agent status, and whether the account exists in the agent list at all.
+
+An account on the high-earner list that the office has never created as an agent has no station of its
+own, so the station filter deliberately keeps it in: money the office has no record for is the worst
+kind to drop out of a report.
+
+---
+
 ## v1.69.0 — 2026-09-14 · Fuel & Performance: a screen for the OM, and an alarm for the officer (schema v29)
 
 **Asked for:** a dedicated OM tab to manage and track weekly fuel targets and monthly performance,

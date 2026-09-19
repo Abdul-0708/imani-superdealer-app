@@ -4137,6 +4137,114 @@ try {
      * a workbook with a sheet per officer, or a Word document he can print and
      * carry into a meeting.
      */
+    /*
+     * HIGH EARNERS NOBODY HAS SERVED - INCLUDING THE ONES NOBODY OWNS.
+     *
+     * he_report answers nearly the same question, but it reads FROM base: an
+     * agent in nobody's round is in nobody's report. Those are exactly the ones
+     * worth finding - real money sitting in the list with no officer's name
+     * against it, invisible precisely because it belongs to no one.
+     *
+     * So this starts from the high-earner list itself and hangs the round off
+     * it, rather than the other way round. An unowned agent still appears, with
+     * the BDO column left BLANK - which is the OM's cue to give him to
+     * somebody.
+     */
+    case 'he_not_served': {
+      $u = require_auth(); require_officer_view($u);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
+      /* An account on the high-earner list that the office has never created as
+       * an agent has no station of its own. A station filter must not hide it:
+       * money the office does not even have a record for is the worst kind to
+       * drop out of the report. */
+      $stF = $station !== '' ? ' AND (a.station = ? OR a.id IS NULL)' : '';
+      $stV = $station !== '' ? array($station) : array();
+      $sql = "SELECT h.acc, h.commission, h.name he_name, h.station he_station,
+                     a.id agent_id, a.name, a.phone, a.branch, a.station, a.physical_location, a.act_current,
+                     b.bdo, u2.name bdo_name
+              FROM high_earners h
+              LEFT JOIN agents a ON a.acc = h.acc
+              LEFT JOIN base b ON b.month = ? AND b.agent_id = a.id AND b.bdo NOT IN ('partners','unassigned')
+              LEFT JOIN users u2 ON u2.username = b.bdo
+              WHERE NOT EXISTS (SELECT 1 FROM agent_month_kpi k
+                                WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served')" . $stF .
+             ' ORDER BY h.commission DESC';
+      $q = db()->prepare($sql);
+      $q->execute(array_merge(array($month, $month), $stV));
+      $bandMap = he_band_map();
+      $rows = array(); $noBdo = 0;
+      foreach ($q->fetchAll() as $r) {
+        if (trim((string)$r['bdo']) === '') $noBdo++;
+        $rows[] = array(
+          'band' => isset($bandMap[$r['acc']]) ? $bandMap[$r['acc']] : 'F',
+          'acc' => $r['acc'], 'commission' => (float)$r['commission'],
+          'name' => trim((string)$r['name']) !== '' ? $r['name'] : (string)$r['he_name'],
+          'phone' => (string)$r['phone'], 'branch' => (string)$r['branch'],
+          'station' => trim((string)$r['station']) !== '' ? $r['station'] : (string)$r['he_station'],
+          'location' => (string)$r['physical_location'],
+          'active' => (string)$r['act_current'],
+          'inSystem' => $r['agent_id'] !== null,
+          /* blank on purpose when nobody holds him */
+          'bdo' => (string)$r['bdo'], 'bdoName' => (string)$r['bdo_name']);
+      }
+      respond(array('month' => $month, 'station' => $station, 'rows' => $rows,
+                    'total' => count($rows), 'noBdo' => $noBdo, 'generatedAt' => date('Y-m-d H:i')));
+    }
+
+    /*
+     * WHY THE ROUNDS ARE THE SIZE THEY ARE.
+     *
+     * 'He has served for months and his base is still small' could not be
+     * answered from any screen, because every gate that keeps an agent out of a
+     * round is invisible once it has done its work: no physical location, no
+     * officer named in the file, marked won't-return, never served by anybody.
+     * Each one is defensible on its own and together they can empty a round.
+     *
+     * So they are counted, in one place, for one month. The number that
+     * usually explains it is fileNamed: if the uploaded files name an officer
+     * against almost nobody, there is no portfolio to hand out and a round can
+     * only ever hold the agents that officer personally served.
+     */
+    case 'base_diagnosis': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $prev = prev_month($month);
+      $one = function ($sql, $args = array()) {
+        $q = db()->prepare($sql); $q->execute($args); $r = $q->fetch();
+        return $r ? (int)$r['c'] : 0;
+      };
+      $agentsTotal = $one('SELECT COUNT(*) c FROM agents');
+      $noLocation  = $one("SELECT COUNT(*) c FROM agents WHERE TRIM(physical_location) = ''");
+      $wontReturn  = $one('SELECT COUNT(*) c FROM wont_return');
+      $inBase      = $one("SELECT COUNT(*) c FROM base WHERE month = ? AND bdo NOT IN ('partners','unassigned')", array($month));
+      $inBasePrev  = $one("SELECT COUNT(*) c FROM base WHERE month = ? AND bdo NOT IN ('partners','unassigned')", array($prev));
+      /* agents this month's FILES put a real officer against - if this is low,
+       * the Assigned BDO column is empty and no portfolio can be handed out */
+      $fileNamed   = $one("SELECT COUNT(DISTINCT agent_id) c FROM service_history
+                           WHERE month = ? AND source <> 'bdo' AND bdo NOT IN ('partners','unassigned')", array($month));
+      $fileRows    = $one("SELECT COUNT(DISTINCT agent_id) c FROM service_history WHERE month = ? AND source <> 'bdo'", array($month));
+      $neverOwned  = $one('SELECT COUNT(*) c FROM agents a
+                           WHERE NOT EXISTS (SELECT 1 FROM base b WHERE b.agent_id = a.id)');
+      $lost        = $one("SELECT COUNT(*) c FROM base b
+                           WHERE b.month = ? AND b.bdo NOT IN ('partners','unassigned')
+                             AND NOT EXISTS (SELECT 1 FROM base n WHERE n.month = ? AND n.agent_id = b.agent_id)",
+                          array($prev, $month));
+      $carry = $one('SELECT COUNT(*) c FROM app_settings WHERE name = ?', array('basecarry_' . $month));
+      $join  = $one('SELECT COUNT(*) c FROM app_settings WHERE name = ?', array('basejoin_' . $month));
+      $per = db()->prepare("SELECT b.bdo, COUNT(*) n FROM base b
+                            WHERE b.month = ? AND b.bdo NOT IN ('partners','unassigned')
+                            GROUP BY b.bdo ORDER BY n DESC");
+      $per->execute(array($month));
+      respond(array('month' => $month, 'prev' => $prev,
+                    'agentsTotal' => $agentsTotal, 'noLocation' => $noLocation, 'wontReturn' => $wontReturn,
+                    'inBase' => $inBase, 'inBasePrev' => $inBasePrev, 'lostSincePrev' => $lost,
+                    'neverOwned' => $neverOwned, 'fileNamed' => $fileNamed, 'fileRows' => $fileRows,
+                    'carryRan' => $carry > 0, 'joinRan' => $join > 0,
+                    'perBdo' => $per->fetchAll()));
+    }
+
     case 'he_report': {
       $u = require_auth(); require_officer_view($u);
       rate_limit($u['username'], 'he_report', 40, 300);      /* whole-team scan */
