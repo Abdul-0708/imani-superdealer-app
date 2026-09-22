@@ -2266,28 +2266,95 @@
    * real money with no name against him is invisible in every other report,
    * because every other report starts from somebody's round.
    */
-  function heNotServedDownload() {
+  /*
+   * Ask for the band first. The fixed lists (A to E) are offered as one-tap
+   * shortcuts, but any two numbers work - the OM's question is often 'who
+   * between half a million and a million has nobody been to', which is not
+   * one of the lists.
+   */
+  function heNotServedAsk() {
+    var last = state._heRange || {};
+    var bands = [['A', '2000001', ''], ['B', '1000001', '2000000'], ['C', '500001', '1000000'],
+                 ['D', '100001', '500000'], ['E', '', '100000'], [t('Any'), '', '']];
+    openModal('<h2>' + svg('download') + ' ' + t('High earners NOT served') + '</h2>' +
+      '<p class="note">' + t('Choose a commission range, or leave a box empty for no limit on that side. Every agent comes with the BDO who holds him - left blank when nobody does - and his physical location.') + '</p>' +
+      '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">' +
+      '<div class="field"><label>' + t('Commission from') + '</label>' +
+      '<input id="heMin" type="number" min="0" step="1000" value="' + esc(last.min != null ? last.min : '') + '" placeholder="500000"></div>' +
+      '<div class="field"><label>' + t('to') + '</label>' +
+      '<input id="heMax" type="number" min="0" step="1000" value="' + esc(last.max != null ? last.max : '') + '" placeholder="1000000"></div>' +
+      '</div>' +
+      '<div class="note" style="margin-top:8px">' + t('Or pick a list') + ':</div>' +
+      '<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">' +
+      bands.map(function (b) {
+        return '<button class="ghost mini" data-action="heNsBand" data-min="' + b[1] + '" data-max="' + b[2] + '">' + esc(b[0]) + '</button>';
+      }).join('') + '</div>' +
+      '<div class="row" style="justify-content:space-between;margin-top:14px">' +
+      '<button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +
+      '<button class="btn" data-action="heNsGo">' + svg('download') + ' ' + t('Download Excel') + '</button></div>');
+  }
+  function heNsGo() {
+    var lo = elById('heMin') ? String(elById('heMin').value).trim() : '';
+    var hi = elById('heMax') ? String(elById('heMax').value).trim() : '';
+    /* typed the wrong way round is still a band - put it in order */
+    if (lo !== '' && hi !== '' && Number(lo) > Number(hi)) { var sw = lo; lo = hi; hi = sw; }
+    state._heRange = { min: lo === '' ? null : lo, max: hi === '' ? null : hi };
+    closeModal();
+    heNotServedDownload(lo, hi);
+  }
+  function heRangeLabel(lo, hi) {
+    var f = function (v) { return fmt(Number(v)); };
+    if (lo == null && hi == null) return t('any commission');
+    if (lo == null) return t('up to') + ' ' + f(hi);
+    if (hi == null) return f(lo) + ' ' + t('and above');
+    return f(lo) + ' - ' + f(hi);
+  }
+  function heNotServedDownload(lo, hi) {
     if (!xlsxReady()) return;
     var m = state._bdMonth || state.openMonth || curMonth();
+    var qs = '&month=' + encodeURIComponent(m) +
+      (lo ? '&min=' + encodeURIComponent(lo) : '') + (hi ? '&max=' + encodeURIComponent(hi) : '');
     toast(t('Building the list...'), 'ok');
-    api('he_not_served', { qs: '&month=' + encodeURIComponent(m) }).then(function (d) {
+    api('he_not_served', { qs: qs }).then(function (d) {
       var rows = d.rows || [];
-      if (!rows.length) { toast(t('Every high earner has been served this month.'), 'ok'); return; }
+      var range = heRangeLabel(d.min, d.max);
+      if (!rows.length) { toast(t('No unserved high earners in') + ' ' + range, 'ok'); return; }
       if (!xlsxReady()) return;
       var sheet = rows.map(function (r) {
         return { 'LIST': r.band, 'Agent': r.name, 'Account': r.acc,
                  'Commission': r.commission || 0,
+                 /* said outright, so a blank BDO cell cannot be read as a missing value */
+                 'Owned by a BDO': r.bdo ? 'YES' : 'NO',
                  /* blank, deliberately, when no officer holds him */
                  'BDO': r.bdoName || r.bdo || '',
-                 'Phone': r.phone || '', 'Branch': r.branch || '',
-                 'Physical Location': r.location || '', 'SA Station': r.station || '',
+                 'Physical Location': r.location || '',
+                 'Phone': r.phone || '', 'Branch': r.branch || '', 'SA Station': r.station || '',
                  'Agent status': r.active || '',
                  'In agent list': r.inSystem ? 'YES' : 'NO' };
       });
+      var owned = rows.filter(function (r) { return !!r.bdo; }).length;
+      /* the band and the counts travel with the file, so a printed copy still
+       * says what it is a list of */
+      var about = [
+        { 'Item': 'Month', 'Value': d.month },
+        { 'Item': 'Commission range', 'Value': range },
+        { 'Item': 'High earners not served', 'Value': rows.length },
+        { 'Item': 'Owned by a BDO', 'Value': owned },
+        { 'Item': 'Owned by nobody', 'Value': rows.length - owned },
+        { 'Item': 'With no physical location', 'Value': rows.filter(function (r) { return !r.location; }).length },
+        { 'Item': 'Generated', 'Value': d.generatedAt || '' }
+      ];
+      var ws = XLSX.utils.json_to_sheet(sheet);
+      /* widths set for print, so the sheet does not come off the printer as
+       * eleven slivers of truncated text */
+      ws['!cols'] = [{ wch: 5 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 9 }, { wch: 22 },
+                     { wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 11 }, { wch: 8 }];
       var wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheet), 'Not served');
-      XLSX.writeFile(wb, 'high_earners_not_served_' + d.month + (d.station ? '_' + d.station : '') + '.xlsx');
-      toast(rows.length + ' ' + t('high earners not served') +
+      XLSX.utils.book_append_sheet(wb, ws, 'Not served');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(about), 'About');
+      var tag = (d.min != null ? d.min : 'any') + '-' + (d.max != null ? d.max : 'any');
+      XLSX.writeFile(wb, 'high_earners_not_served_' + d.month + '_' + tag + (d.station ? '_' + d.station : '') + '.xlsx');
+      toast(rows.length + ' ' + t('high earners not served') + ' (' + range + ')' +
             (d.noBdo ? ' - ' + d.noBdo + ' ' + t('with no BDO') : ''), 'ok');
     }).catch(function (e) { toast(e.message, 'err'); });
   }
@@ -6143,7 +6210,14 @@
     if (a === 'bdBack') { state._bdOpen = null; renderTab(); return; }
     if (a === 'bdLoad') { state._bdMonth = elById('bdMonth').value; state._bdOpen = null; renderTab(); return; }
     if (a === 'bdDownload') { bdosDownload(); return; }
-    if (a === 'heNotServed') { heNotServedDownload(); return; }
+    if (a === 'heNotServed') { heNotServedAsk(); return; }
+    if (a === 'heNsGo') { heNsGo(); return; }
+    if (a === 'heNsBand') {
+      var hmn = elById('heMin'), hmx = elById('heMax');
+      if (hmn) hmn.value = node.getAttribute('data-min') || '';
+      if (hmx) hmx.value = node.getAttribute('data-max') || '';
+      return;
+    }
     if (a === 'baseDiag') { baseDiagLoad(); return; }
     if (a === 'heXlsAll') { heReport('', 'excel'); return; }
     if (a === 'heDocAll') { heReport('', 'word'); return; }

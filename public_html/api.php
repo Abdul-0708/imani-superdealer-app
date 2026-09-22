@@ -4160,6 +4160,21 @@ try {
        * drop out of the report. */
       $stF = $station !== '' ? ' AND (a.station = ? OR a.id IS NULL)' : '';
       $stV = $station !== '' ? array($station) : array();
+      /*
+       * THE COMMISSION BAND THE OM ASKS FOR - any two numbers, not only the
+       * fixed A to E lists. Either side may be left open. The two are put in
+       * order whichever way round they were typed: '1,000,000 to 500,000' is
+       * a band, not an empty result, and refusing it would only make a man
+       * retype what he plainly meant.
+       */
+      $lo = trim((string)($_GET['min'] ?? ''));
+      $hi = trim((string)($_GET['max'] ?? ''));
+      $min = $lo === '' ? null : (int)round((float)num($lo));
+      $max = $hi === '' ? null : (int)round((float)num($hi));
+      if ($min !== null && $max !== null && $min > $max) { $sw = $min; $min = $max; $max = $sw; }
+      $cF = ''; $cV = array();
+      if ($min !== null) { $cF .= ' AND h.commission >= ?'; $cV[] = $min; }
+      if ($max !== null) { $cF .= ' AND h.commission <= ?'; $cV[] = $max; }
       $sql = "SELECT h.acc, h.commission, h.name he_name, h.station he_station,
                      a.id agent_id, a.name, a.phone, a.branch, a.station, a.physical_location, a.act_current,
                      b.bdo, u2.name bdo_name
@@ -4168,10 +4183,10 @@ try {
               LEFT JOIN base b ON b.month = ? AND b.agent_id = a.id AND b.bdo NOT IN ('partners','unassigned')
               LEFT JOIN users u2 ON u2.username = b.bdo
               WHERE NOT EXISTS (SELECT 1 FROM agent_month_kpi k
-                                WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served')" . $stF .
+                                WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served')" . $stF . $cF .
              ' ORDER BY h.commission DESC';
       $q = db()->prepare($sql);
-      $q->execute(array_merge(array($month, $month), $stV));
+      $q->execute(array_merge(array($month, $month), $stV, $cV));
       $bandMap = he_band_map();
       $rows = array(); $noBdo = 0;
       foreach ($q->fetchAll() as $r) {
@@ -4189,7 +4204,8 @@ try {
           'bdo' => (string)$r['bdo'], 'bdoName' => (string)$r['bdo_name']);
       }
       respond(array('month' => $month, 'station' => $station, 'rows' => $rows,
-                    'total' => count($rows), 'noBdo' => $noBdo, 'generatedAt' => date('Y-m-d H:i')));
+                    'total' => count($rows), 'noBdo' => $noBdo, 'min' => $min, 'max' => $max,
+                    'generatedAt' => date('Y-m-d H:i')));
     }
 
     /*

@@ -5,6 +5,31 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.71.0 — 2026-09-22 · Unserved high earners, in any commission band
+
+**Asked for:** let the OM pick a commission range for unserved agents — "from some to some", any values
+— print it in Excel, and show whether each agent is owned by a BDO and where he is.
+
+**High earners NOT served** now asks for the band first. Two boxes, *commission from* and *to*; either
+may be left empty for no limit on that side. The fixed lists A to E sit underneath as one-tap shortcuts,
+but the question an OM actually asks is often *who between half a million and a million has nobody been
+to*, which is not one of the lists.
+
+The two numbers are put in order whichever way round they were typed. "1,000,000 to 500,000" is a band,
+not an empty result, and refusing it would only make a man retype what he plainly meant. The range he
+chose is remembered for the next time the box opens.
+
+The sheet now says **Owned by a BDO: YES / NO** in its own column, beside the BDO's name — so a blank
+name cell cannot be mistaken for a missing value — and keeps the **physical location** next to it,
+since the two together are what the OM acts on: who should go, and where to.
+
+It prints properly. Column widths are set for paper, so the sheet does not come off the printer as a
+row of truncated slivers, and a second sheet, **About**, carries the month, the band, and how many are
+owned, unowned, and without a location — so a printed copy still says what it is a list of. The file
+name carries the band too.
+
+---
+
 ## v1.70.0 — 2026-09-19 · Why the rounds are this size, and the money nobody owns
 
 **Reported:** an officer has been serving agents for months and his round is still small, and getting
