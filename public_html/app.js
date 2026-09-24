@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.72.0';
+  var APP_VERSION = '1.73.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1549,7 +1549,7 @@
         '<p class="note">' + t('Share of your round served, different agents served, visits and activeness. 70% or more of your weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</p>' +
         '<div id="myFuelBox"></div></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
-        '<p class="note">' + t('Every month you were given targets, and the average you have actually achieved.') + '</p>' +
+        '<p class="note">' + t('Your last three months - the ones you can still do something about - and the average you have actually achieved.') + '</p>' +
         '<div id="myScoreHist"></div></div>' +
         standPanel +
         heScorePanel +
@@ -4294,14 +4294,138 @@
       '<span class="note" style="flex:1">' + t('Fuel rule: 70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</span>' +
       '<button class="btn" data-action="fuelPrint">' + svg('download') + t('Print all months') + '</button></div></div>' +
       weeklyPanel() +
-      '<div class="panel"><h2>' + svg('percent') + t('Monthly target performance') + '</h2>' +
+      momxHtml() +
+      '<div class="panel"><h2>' + svg('percent') + t('One month, KPI by KPI') + '</h2>' +
       '<div class="row" style="gap:8px;align-items:flex-end;margin-bottom:8px">' +
       '<div class="field"><label>' + t('Month') + '</label><input id="fuelMonth" type="month" value="' + esc(m0) + '"></div>' +
       '<button class="ghost" data-action="fuelMonthLoad">' + t('Load') + '</button></div>' +
       '<div id="fuelMonthBox"><div class="note">' + t('Loading') + '...</div></div></div>';
     weeklyLoad();
+    momxLoad();
     fuelMonthLoad();
   }
+  /*
+   * EVERY OFFICER, EVERY MONTH, ON ONE SCREEN.
+   *
+   * The OM was reading this by loading one month, writing the numbers down,
+   * and loading the next. Officers down, months across, and the average at
+   * the end - which is the column he actually sorts on, so the grid arrives
+   * sorted by it.
+   *
+   * Three downloads, because he asked for three different documents: the
+   * whole grid as one sheet, one month in full with its KPI breakdown, or a
+   * sheet per month for handing a single month to somebody.
+   */
+  function momxHtml() {
+    var n = state._momxMonths || 12;
+    var opts = [3, 6, 12, 24].map(function (x) {
+      return '<option value="' + x + '"' + (x === n ? ' selected' : '') + '>' + x + ' ' + t('months') + '</option>';
+    }).join('');
+    return '<div class="panel"><h2>' + svg('percent') + t('All BDO monthly weights') + '</h2>' +
+      '<p class="note">' + t('The weighted score every officer achieved, month by month. Flagged claims are not counted in it.') + '</p>' +
+      '<div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">' +
+      '<div class="field"><label>' + t('Show') + '</label><select id="momxN" data-change="momxN">' + opts + '</select></div>' +
+      '<div class="spacer"></div>' +
+      '<button class="ghost" data-action="momxAll">' + svg('download') + ' ' + t('All months') + '</button>' +
+      '<button class="ghost" data-action="momxEach">' + svg('download') + ' ' + t('Month by month') + '</button>' +
+      '<button class="ghost" data-action="momxOne">' + svg('download') + ' ' + t('One month, in full') + '</button>' +
+      '</div><div id="momxBox"><div class="note">' + t('Loading') + '...</div></div></div>';
+  }
+  function momxLoad() {
+    var box = elById('momxBox'); if (!box) return;
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    api('bdo_month_matrix', { qs: '&months=' + (state._momxMonths || 12) }).then(function (d) {
+      state._momx = d;
+      box.innerHTML = momxBody(d);
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function momxCell(v) {
+    if (v == null) return '<span class="note">-</span>';
+    var cls = v < 50 ? 'bad' : (v >= 80 ? 'ok' : 'gold');
+    return '<span class="pill ' + cls + '">' + v + '%</span>';
+  }
+  function momxBody(d) {
+    var months = d.months || [];
+    if (!months.length) return '<p class="note">' + t('No months yet.') + '</p>';
+    var head = '<tr><th>' + t('BDO') + '</th>' +
+      months.map(function (m) { return '<th>' + esc(m.month) + '</th>'; }).join('') +
+      '<th>' + t('Average') + '</th></tr>';
+    var rows = (d.rows || []).map(function (r) {
+      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + esc(r.bdo) +
+        (r.specialty === 'activeness' ? ' &middot; ' + t('activeness only') : '') + '</div></td>' +
+        months.map(function (m) { return '<td>' + momxCell(r.scores ? r.scores[m.month] : null) + '</td>'; }).join('') +
+        '<td><b>' + (r.avg == null ? '-' : r.avg + '%') + '</b></td></tr>';
+    }).join('') || '<tr><td colspan="' + (months.length + 2) + '" class="note">' + t('No BDOs found.') + '</td></tr>';
+    return '<div class="tablewrap"><table><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  /* rows shaped for a sheet: the officer, then one column per month */
+  function momxSheet(d) {
+    var months = d.months || [];
+    return (d.rows || []).map(function (r) {
+      var o = { 'BDO': r.name, 'Username': r.bdo };
+      months.forEach(function (m) {
+        var v = r.scores ? r.scores[m.month] : null;
+        o[m.month] = v == null ? '' : v;
+      });
+      o[t('Average')] = r.avg == null ? '' : r.avg;
+      o[t('Months scored')] = r.months || 0;
+      return o;
+    });
+  }
+  function momxAll() {
+    if (!xlsxReady()) return;
+    var d = state._momx;
+    if (!d || !(d.rows || []).length) { toast(t('Nothing to download yet'), 'warn'); return; }
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(momxSheet(d)), 'All months');
+    XLSX.writeFile(wb, 'bdo_monthly_weights_all_' + (d.months[0] || {}).month + '_to_' +
+                       (d.months[d.months.length - 1] || {}).month + '.xlsx');
+    toast(t('Downloaded'), 'ok');
+  }
+  /* one sheet per month - for handing a single month to one person without
+   * cutting the workbook up by hand */
+  function momxEach() {
+    if (!xlsxReady()) return;
+    var d = state._momx;
+    if (!d || !(d.months || []).length) { toast(t('Nothing to download yet'), 'warn'); return; }
+    var wb = XLSX.utils.book_new();
+    d.months.forEach(function (m) {
+      var rows = (d.rows || []).map(function (r) {
+        var v = r.scores ? r.scores[m.month] : null;
+        return { 'BDO': r.name, 'Username': r.bdo, 'Weighted score': v == null ? '' : v,
+                 'Targets set': v == null ? 'NO' : 'YES' };
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), String(m.month));
+    });
+    XLSX.writeFile(wb, 'bdo_monthly_weights_by_month.xlsx');
+    toast(d.months.length + ' ' + t('months exported'), 'ok');
+  }
+  /* the month on the picker below, in full: every KPI, not only the total */
+  function momxOne() {
+    if (!xlsxReady()) return;
+    var m = state._fuelMonth || state.openMonth || curMonth();
+    toast(t('Building the sheet...'), 'ok');
+    api('bdo_performance', { qs: '&month=' + encodeURIComponent(m) }).then(function (d) {
+      if (!xlsxReady()) return;
+      var rows = (d.rows || []).map(function (r) {
+        var o = { 'BDO': r.name, 'Username': r.bdo,
+                  'Weighted score': r.score == null ? '' : r.score,
+                  'Targets set': r.hasTargets ? 'YES' : 'NO' };
+        TARGET_DEFS.forEach(function (def) {
+          var k = (r.kpis || {})[def.key];
+          o[def.label] = k && k.pct != null ? k.pct : '';
+          o[def.label + ' (done/target)'] = k ? (k.actual + ' / ' + k.target) : '';
+        });
+        return o;
+      });
+      if (!rows.length) { toast(t('No BDOs found.'), 'warn'); return; }
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), String(d.month));
+      XLSX.writeFile(wb, 'bdo_monthly_weights_' + d.month + '.xlsx');
+      toast(t('Downloaded'), 'ok');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
+
   function fuelMonthLoad() {
     var box = elById('fuelMonthBox'); if (!box) return;
     var inp = elById('fuelMonth');
@@ -6601,6 +6725,9 @@
     if (a === 'swClose') { sweepClose(node.getAttribute('data-id')); return; }
     if (a === 'swExport') { sweepExport(node.getAttribute('data-id')); return; }
     if (a === 'fuelPrint') { fuelPrint(); return; }
+    if (a === 'momxAll') { momxAll(); return; }
+    if (a === 'momxEach') { momxEach(); return; }
+    if (a === 'momxOne') { momxOne(); return; }
     if (a === 'fuelMonthLoad') { fuelMonthLoad(); return; }
     if (a === 'actRecruit') { actRecruit(); return; }
     if (a === 'actTab') { state._actTab = node.getAttribute('data-t'); elById('actBox').innerHTML = activenessHtml(state._act); return; }
@@ -6665,6 +6792,7 @@
       if (n.parentNode && n.parentNode.classList) n.parentNode.classList.toggle('active', n.checked);
       return;
     }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'momxN') { state._momxMonths = Number(n.value) || 12; momxLoad(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'swPick') { sweepAdminLoad(n.value); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'wkPick') { state._weekId = n.value; weekBodyLoad(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'wkBdoPick') { state._wkBdo = n.value; weekBodyLoad(); return; }

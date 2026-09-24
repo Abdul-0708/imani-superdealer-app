@@ -2940,6 +2940,62 @@ try {
      * than 0: nobody scored zero, the OM simply never set a target, and a zero
      * would drag the average down for a month that was never measured.
      */
+    /*
+     * EVERY OFFICER'S WEIGHTED SCORE, EVERY MONTH, IN ONE GRID.
+     *
+     * bdo_performance answers 'how is everyone doing THIS month' and
+     * bdo_score_history answers 'how has THIS man travelled'. Neither answers
+     * the question an OM actually opens the app with - who is drifting - and
+     * he was reading it by loading one month, writing the numbers down, and
+     * loading the next.
+     *
+     * Same maths as both of those (bdo_score over scored actuals, so a flagged
+     * claim is out and a KPI switched off in a month is not scored in that
+     * month), laid out as officers down and months across.
+     *
+     * A month an officer had no targets in is null, never 0: nobody scored
+     * zero, the OM simply never set a target, and a zero would drag his
+     * average down for a month that was never measured.
+     */
+    case 'bdo_month_matrix': {
+      $u = require_auth(); require_perm($u, 'targets', 'v');
+      /* officers x months, each cell several queries - not a cheap screen */
+      rate_limit($u['username'], 'month_matrix', 20, 300);
+      $n = (int)num(isset($_GET['months']) ? $_GET['months'] : 12);
+      if ($n < 1) $n = 12;
+      if ($n > 24) $n = 24;
+      $months = array_reverse(db()->query('SELECT month, status FROM months ORDER BY month DESC LIMIT ' . $n)->fetchAll());
+      $bdos = db()->query('SELECT username, name, specialty FROM users WHERE role = "bdo" AND active = 1 ORDER BY name')->fetchAll();
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+      $rows = array();
+      foreach ($bdos as $b) {
+        $scores = array(); $acc = 0; $cnt = 0;
+        foreach ($months as $m) {
+          $tq->execute(array($m['month'], $b['username']));
+          $tg = $tq->fetch();
+          if (!$tg) { $scores[$m['month']] = null; continue; }
+          $sc = $b['specialty'] === 'activeness'
+            ? bdo_score_specialist(bdo_scored_actuals($m['month'], $b['username']), $tg)
+            : bdo_score(bdo_scored_actuals($m['month'], $b['username']), $tg);
+          $scores[$m['month']] = $sc['score'];
+          if ($sc['score'] !== null) { $acc += (int)$sc['score']; $cnt++; }
+        }
+        $rows[] = array('bdo' => $b['username'], 'name' => $b['name'],
+                        'specialty' => (string)$b['specialty'],
+                        'scores' => $scores, 'months' => $cnt,
+                        'avg' => $cnt ? (int)round($acc / $cnt) : null);
+      }
+      /* the steadiest at the top, and the officer nobody has set targets for
+       * at the bottom rather than mixed in among the low scores */
+      usort($rows, function ($a, $b) {
+        $x = $a['avg'] === null ? -1 : $a['avg'];
+        $y = $b['avg'] === null ? -1 : $b['avg'];
+        if ($x !== $y) return $y - $x;
+        return strcmp($a['name'], $b['name']);
+      });
+      respond(array('months' => $months, 'rows' => $rows, 'generatedAt' => date('Y-m-d H:i')));
+    }
+
     case 'bdo_score_history': {
       $u = require_auth();
       $bdo = strtolower(trim((string)(isset($_GET['bdo']) ? $_GET['bdo'] : '')));
@@ -2952,7 +3008,19 @@ try {
       $who = $uq->fetch();
       if (!$who) fail('No such officer', 404);
 
-      $months = db()->query('SELECT month, status FROM months ORDER BY month DESC LIMIT 24')->fetchAll();
+      /*
+       * THREE MONTHS FOR THE MAN, EVERYTHING FOR THE OFFICE.
+       *
+       * An officer is asking 'am I getting better', and that is answered by the
+       * months either side of this one - not by two years of history he cannot
+       * change and did not ask for. Management is asking a different question,
+       * about direction of travel over a career, so it keeps the long view.
+       *
+       * Enforced on the SERVER, not by what the screen asks for: the limit is
+       * part of what he may see, and a limit the caller chooses is not a limit.
+       */
+      $lim = can($u, 'targets', 'v') ? 24 : 3;
+      $months = db()->query('SELECT month, status FROM months ORDER BY month DESC LIMIT ' . (int)$lim)->fetchAll();
       $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
       $rows = array(); $acc = 0; $scored = 0; $best = null; $worst = null;
       foreach ($months as $m) {
@@ -2979,7 +3047,7 @@ try {
       $rows = array_reverse($rows);
       respond(array(
         'bdo' => $who['username'], 'name' => $who['name'],
-        'specialty' => (string)$who['specialty'],
+        'specialty' => (string)$who['specialty'], 'monthsShown' => (int)$lim,
         'rows' => $rows,
         'average' => $scored > 0 ? (int)round($acc / $scored) : null,
         'monthsScored' => $scored, 'best' => $best, 'worst' => $worst,

@@ -5,6 +5,51 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.73.0 — 2026-09-24 · All BDO monthly weights on one screen; three months for the officer
+
+**Asked for:** one window showing every BDO's monthly weights, downloadable as all months, one month,
+or month by month — and an officer able to see his own monthly achievement for three months only.
+
+### The grid — Fuel & Performance
+
+`bdo_performance` answered *how is everyone doing this month* and `bdo_score_history` answered *how has
+this man travelled*. Neither answered the question an OM opens the app with — **who is drifting** — and
+he was reading it by loading one month, writing the numbers down, and loading the next.
+
+Officers down, months across, the average at the end. It arrives sorted by that average, because that
+is the column he sorts on anyway, and an officer nobody has set targets for sits at the bottom rather
+than mixed in among the low scores. Show the last 3, 6, 12 or 24 months.
+
+A month an officer had no targets in reads as **–**, never 0. Nobody scored zero; the OM simply never
+set a target, and a zero would drag his average down for a month that was never measured.
+
+Same maths as everywhere else — flagged claims do not count (v1.72.0), and a KPI switched off in a
+given month is not scored in that month.
+
+### Three downloads, because they are three different documents
+
+| Download | What it is |
+|---|---|
+| **All months** | the whole grid as one sheet, plus average and months-scored |
+| **Month by month** | one sheet per month — for handing a single month to one person without cutting the workbook up |
+| **One month, in full** | the month on the picker below, **KPI by KPI**: each KPI's percentage and its done/target |
+
+### Three months for the officer
+
+His panel asked *am I getting better*, and answered it with two years he cannot change and did not ask
+for. It now shows his **last three months** — the ones he can still do something about.
+
+The limit is enforced on the **server**, not by what the screen asks for: what a man may see is not a
+thing the caller gets to choose. Management still gets the long view, because it is asking a different
+question, about direction of travel over a career.
+
+### Housekeeping
+
+`APP_VERSION` moves to 1.73.0 in both files, as promised last release — that is what keeps the
+partial-upload warning able to fire.
+
+---
+
 ## v1.72.0 — 2026-09-24 · A flagged claim does not count towards the score
 
 **Asked for:** when the month's performance file is inserted, a BDO's flags must not count in his
