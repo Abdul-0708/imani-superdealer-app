@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.55.0');
+define('APP_VERSION', '1.72.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -1405,6 +1405,31 @@ function bdo_actuals_unflagged($month, $bdo) {
   $k['base'] = bdo_base_count($month, $bdo);
   $k['accel'] = accel_count($month, $bdo);
   return $k;
+}
+
+/*
+ * WHAT ACTUALLY COUNTS TOWARDS A SCORE.
+ *
+ * A flag is the office file saying it cannot see the work a claim describes.
+ * Until that is resolved the claim is unproven - and an unproven claim was
+ * still being weighed into the month's score, so a man who marked a hundred
+ * agents the file had never heard of scored as if he had served them. The
+ * flags sat beside the score, contradicting it, and the score was the number
+ * anybody actually read.
+ *
+ * So the score is built from unflagged claims only. Nothing is deleted and
+ * nothing is accused: the claim stands, the officer can answer it, and the
+ * moment the OM CLEARS the flag the credit returns to the score by itself,
+ * because clearing removes the flag row this reads.
+ *
+ * Before any performance file is uploaded there are no flags, so this is the
+ * same as the raw actuals - which is why it needs no month-status test.
+ *
+ * It exists as its own name rather than as bdo_actuals_unflagged() spelled
+ * out at ten call sites, so 'what counts' is one decision in one place.
+ */
+function bdo_scored_actuals($month, $bdo) {
+  return bdo_actuals_unflagged($month, $bdo);
 }
 
 /* KPI key mapping: target/weight column prefix => actuals key */

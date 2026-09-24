@@ -756,18 +756,25 @@ try {
         return strcmp($x['name'], $y['name']);
       });
 
-      /* This BDO's weighted performance for the month (if OM set his targets),
-       * computed TWICE: as it stands, and as it would stand if every flag
-       * against him were upheld. He sees both and knows what the flags cost. */
-      $perf = null; $perfClean = null;
+      /*
+       * This BDO's weighted performance for the month (if the OM set his
+       * targets), computed TWICE - and the two have swapped places.
+       *
+       * $perf is now the REAL one: flagged claims do not count towards it.
+       * $perfIfCleared is what it would become if every flag against him were
+       * cleared - the size of the prize for answering them, which is the only
+       * reason to show him a second number at all.
+       */
+      $perf = null; $perfIfCleared = null;
       $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
       $tq->execute(array($month, $bdo));
       if ($t = $tq->fetch()) {
         $isSpec = user_specialty($bdo) === 'activeness';
-        $perf = $isSpec ? bdo_score_specialist(bdo_actuals($month, $bdo), $t)
-                        : bdo_score(bdo_actuals($month, $bdo), $t);
-        $ua = bdo_actuals_unflagged($month, $bdo);
-        $perfClean = $isSpec ? bdo_score_specialist($ua, $t) : bdo_score($ua, $t);
+        $sa = bdo_scored_actuals($month, $bdo);
+        $perf = $isSpec ? bdo_score_specialist($sa, $t) : bdo_score($sa, $t);
+        /* every claim counted, flags and all - what answering them is worth */
+        $ra = bdo_actuals($month, $bdo);
+        $perfIfCleared = $isSpec ? bdo_score_specialist($ra, $t) : bdo_score($ra, $t);
       }
       /* how many of his claims are under query right now */
       $fq2 = db()->prepare('SELECT COUNT(*) c FROM flags WHERE month = ? AND bdo = ?');
@@ -859,7 +866,7 @@ try {
         'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)),
                           'total' => count($ids), 'served' => $servedNow, 'unclaimed' => count($uc)),
         'agents' => $agents, 'unclaimed' => $uc,
-        'performance' => $perf, 'performanceClean' => $perfClean, 'flagCount' => $myFlagCount,
+        'performance' => $perf, 'performanceIfCleared' => $perfIfCleared, 'flagCount' => $myFlagCount,
         'standing' => array('base' => $myBase, 'served' => $myServed,
                             'coverage' => $myBase > 0 ? (int)round($myCov * 100) : null,
                             'baseRank' => $baseRank, 'coverageRank' => $covRank,
@@ -2903,8 +2910,8 @@ try {
         if (isset($targets[$b['username']])) {
           /* the activeness specialist is scored on activeness ONLY (waked + recruited) */
           $s = $b['specialty'] === 'activeness'
-            ? bdo_score_specialist(bdo_actuals($month, $b['username']), $targets[$b['username']])
-            : bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
+            ? bdo_score_specialist(bdo_scored_actuals($month, $b['username']), $targets[$b['username']])
+            : bdo_score(bdo_scored_actuals($month, $b['username']), $targets[$b['username']]);
           $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => $s['score'], 'flag' => $s['flag'], 'kpis' => $s['kpis'], 'hasTargets' => true);
         } else {
           $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'score' => null, 'flag' => 'none', 'kpis' => new stdClass(), 'hasTargets' => false);
@@ -2958,8 +2965,8 @@ try {
           continue;
         }
         $sc = $who['specialty'] === 'activeness'
-            ? bdo_score_specialist(bdo_actuals($mo, $bdo), $tg)
-            : bdo_score(bdo_actuals($mo, $bdo), $tg);
+            ? bdo_score_specialist(bdo_scored_actuals($mo, $bdo), $tg)
+            : bdo_score(bdo_scored_actuals($mo, $bdo), $tg);
         $rows[] = array('month' => $mo, 'status' => $m['status'], 'score' => $sc['score'],
                         'flag' => $sc['flag'], 'hasTargets' => true);
         if ($sc['score'] !== null) {
@@ -3198,8 +3205,8 @@ try {
           $tg = $mt->fetch();
           if (!$tg) { $rows[] = array('bdo' => $b['username'], 'score' => null, 'hasTargets' => false); continue; }
           $sm = $b['specialty'] === 'activeness'
-            ? bdo_score_specialist(bdo_actuals($m['month'], $b['username']), $tg)
-            : bdo_score(bdo_actuals($m['month'], $b['username']), $tg);
+            ? bdo_score_specialist(bdo_scored_actuals($m['month'], $b['username']), $tg)
+            : bdo_score(bdo_scored_actuals($m['month'], $b['username']), $tg);
           $rows[] = array('bdo' => $b['username'], 'score' => $sm['score'], 'hasTargets' => true);
         }
         $monthly[] = array('month' => $m['month'], 'status' => $m['status'], 'rows' => $rows);
@@ -3524,8 +3531,8 @@ try {
       foreach ($bdos as $b) {
         if (!isset($targets[$b['username']])) { $out[] = array('name' => $b['name'], 'bdo' => $b['username'], 'score' => null, 'flag' => 'none'); continue; }
         $s = $b['specialty'] === 'activeness'
-          ? bdo_score_specialist(bdo_actuals($month, $b['username']), $targets[$b['username']])
-          : bdo_score(bdo_actuals($month, $b['username']), $targets[$b['username']]);
+          ? bdo_score_specialist(bdo_scored_actuals($month, $b['username']), $targets[$b['username']])
+          : bdo_score(bdo_scored_actuals($month, $b['username']), $targets[$b['username']]);
         $out[] = array('name' => $b['name'], 'bdo' => $b['username'], 'score' => $s['score'], 'flag' => $s['flag']);
       }
       usort($out, function ($a, $b) {
@@ -3998,8 +4005,8 @@ try {
         $tq->execute(array($month, $b));
         if (!($tg = $tq->fetch())) continue;
         $sc = $row['specialty'] === 'activeness'
-            ? bdo_score_specialist(bdo_actuals($month, $b), $tg)
-            : bdo_score(bdo_actuals($month, $b), $tg);
+            ? bdo_score_specialist(bdo_scored_actuals($month, $b), $tg)
+            : bdo_score(bdo_scored_actuals($month, $b), $tg);
         $who[$b]['hasTargets'] = true;
         $who[$b]['score'] = $sc['score'];
         $who[$b]['flag'] = $sc['flag'];
@@ -4109,8 +4116,8 @@ try {
       $tq->execute(array($month, $bdo));
       if ($tg = $tq->fetch()) {
         $perf = $who['specialty'] === 'activeness'
-              ? bdo_score_specialist(bdo_actuals($month, $bdo), $tg)
-              : bdo_score(bdo_actuals($month, $bdo), $tg);
+              ? bdo_score_specialist(bdo_scored_actuals($month, $bdo), $tg)
+              : bdo_score(bdo_scored_actuals($month, $bdo), $tg);
       }
 
       $servedTotal = 0;

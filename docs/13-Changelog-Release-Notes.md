@@ -5,6 +5,61 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.72.0 — 2026-09-24 · A flagged claim does not count towards the score
+
+**Asked for:** when the month's performance file is inserted, a BDO's flags must not count in his
+performance weight total.
+
+A flag is the office file saying it cannot see the work a claim describes. Until that is settled the
+claim is unproven — and an unproven claim was still being weighed into the month's score. A man who
+marked a hundred agents the file had never heard of scored as though he had served them. **The flags
+sat beside the score, contradicting it, and the score was the number anybody actually read.**
+
+The monthly weighted score is now built from **unflagged claims only**, everywhere it is shown:
+
+- the OM's monthly performance table
+- an officer's month-by-month history
+- the printed Fuel & Performance report
+- the public BDO ranking
+- the officer window and one-officer detail
+- the officer's own dashboard
+
+### Nothing is deleted, and nothing is final
+
+The claim still stands and the officer can still answer it. The moment the OM **clears** the flag, the
+credit returns to the score by itself — clearing removes the very row the score reads. A flag the
+officer has *answered* but the OM has not yet cleared still does not count: an answer is a case, not a
+ruling.
+
+### No month-status test, on purpose
+
+Before a performance file is uploaded there are no flags, so the scored figure equals the raw one.
+After it, the flagged claims drop out. That is exactly the behaviour asked for, with nothing to switch
+on and nothing to remember.
+
+### On the officer's own screen the two numbers swapped places
+
+He was shown his score, and beside it what it would be *if every flag were upheld*. Now he is shown
+the real score — flags already excluded — and beside it **what it would become if every flag were
+cleared**: the size of the prize for answering them, which is the only reason to show a second number
+at all.
+
+### What this does not change
+
+**Commission is untouched.** It settles on the *office* achievement, computed from office KPIs against
+office targets, not from any officer's weighted score. **Weekly fuel is untouched too** — it scores a
+date range of its own, and flags are a monthly reconciliation. Say the word if fuel should ignore
+flagged claims as well.
+
+### Found on the way: the partial-upload guard had stopped guarding
+
+`APP_VERSION` is compared browser-against-server to catch a half-finished upload — "browser files are
+version X, the server is Y". Both files have read **1.55.0** since that release, so they agreed no
+matter which of them was stale, and the guard has been unable to catch anything for seventeen
+releases. Both are now bumped to 1.72.0, and bumping them is part of a release from here on.
+
+---
+
 ## v1.71.0 — 2026-09-22 · Unserved high earners, in any commission band
 
 **Asked for:** let the OM pick a commission range for unserved agents — "from some to some", any values
