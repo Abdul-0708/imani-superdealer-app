@@ -470,6 +470,42 @@ function upgrade_schema($pdo) {
     schema_v29_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "29" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 30) {
+    schema_v30_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "30" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v30: THE BRANCH IS THE ROUND.
+ *
+ * Until now an officer's round was assembled from what he had served and
+ * whose name a file put beside an agent, and the office spent months asking
+ * why the number never matched what it had actually given the man. The office
+ * assigns BRANCHES. So the branch is what the app should hold, and everything
+ * else - who is in his round, whose serving counts, whose visits, whose float
+ * - follows from it.
+ *
+ * One officer per branch, by primary key: a branch with two officers cannot
+ * answer 'whose KPI is this', and the whole point is that it can. An officer
+ * may hold as many branches as the office gives him.
+ *
+ * A branch nobody is assigned to keeps behaving exactly as before, so this
+ * can be rolled out one branch at a time instead of in a single night.
+ */
+function schema_v30_apply($pdo) {
+  $pdo->exec("
+  CREATE TABLE IF NOT EXISTS bdo_branches (
+    branch VARCHAR(128) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    by_user VARCHAR(64) NOT NULL DEFAULT '',
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (branch),
+    INDEX idx_bb_bdo (bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
+  /* every branch lookup below joins on it */
+  try { $pdo->exec('ALTER TABLE agents ADD INDEX idx_agents_branch (branch)'); } catch (Exception $e) { /* exists */ }
 }
 
 /*

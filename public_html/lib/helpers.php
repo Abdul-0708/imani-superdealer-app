@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.73.0');
+define('APP_VERSION', '1.74.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -457,6 +457,111 @@ function receipt_rule_for($username, $which) {
   return $cache[$key];
 }
 
+/*
+ * ===================== THE BRANCH IS THE ROUND =====================
+ *
+ * The office assigns branches to officers. Everything else follows: who is
+ * in a man's round, whose serving counts, whose visits, whose float.
+ *
+ * A branch with no officer assigned is left exactly as it was, so the change
+ * can be made one branch at a time. That is also why nothing here throws when
+ * the table is missing - a half-applied upgrade must not take the app down.
+ */
+function branch_owner_map() {
+  static $map = null;
+  if ($map !== null) return $map;
+  $map = array();
+  try {
+    foreach (db()->query('SELECT branch, bdo FROM bdo_branches')->fetchAll() as $r) {
+      $k = strtolower(trim((string)$r['branch']));
+      if ($k !== '') $map[$k] = $r['bdo'];
+    }
+  } catch (Exception $e) { /* not migrated yet - nobody owns a branch */ }
+  return $map;
+}
+function branch_owner($branch) {
+  $m = branch_owner_map();
+  $k = strtolower(trim((string)$branch));
+  return isset($m[$k]) ? $m[$k] : '';
+}
+function branch_owner_of_agent($agentId) {
+  $q = db()->prepare('SELECT branch FROM agents WHERE id = ?');
+  $q->execute(array((int)$agentId));
+  $r = $q->fetch();
+  return $r ? branch_owner($r['branch']) : '';
+}
+
+/*
+ * MAKE THE MONTH'S ROUNDS MATCH THE BRANCHES.
+ *
+ * Two statements, in this order. The DELETE removes a row only where the
+ * agent's branch HAS an owner and that owner is somebody else - a leftover
+ * from the old serving-wins model. An agent in an unassigned branch keeps
+ * whoever held him, which is what lets the office move one branch at a time.
+ *
+ * The INSERT is IGNORE, so it never disturbs a row that is already right.
+ * Written as 'priority' because to the officer it IS his standing round, and
+ * My Agent Base already knows how to show that.
+ *
+ * Called when a month opens, after an upload brings new agents in, and the
+ * moment the OM changes an assignment - never on an ordinary page load, which
+ * would be two writes on every request for nothing.
+ */
+function sync_branch_base($month) {
+  try {
+    $del = db()->prepare('DELETE b FROM base b
+                          JOIN agents a ON a.id = b.agent_id
+                          JOIN bdo_branches bb ON bb.branch = a.branch
+                          WHERE b.month = ? AND bb.bdo <> b.bdo');
+    $del->execute(array($month));
+    $moved = $del->rowCount();
+    $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
+                          SELECT ?, bb.bdo, a.id, 'priority'
+                          FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch");
+    $ins->execute(array($month));
+    return array('added' => $ins->rowCount(), 'moved' => $moved);
+  } catch (Exception $e) { return array('added' => 0, 'moved' => 0); }
+}
+
+/*
+ * WHAT HIS BRANCHES PUT INTO THE SUPER-AGENT COMMISSION.
+ *
+ * Shown to a field officer only, and only once the OFFICE as a whole has
+ * cleared 50% for the month. Below that the office is not in a position to
+ * celebrate anybody's share, and a percentage handed out in a bad month reads
+ * as the app telling him the month went well when it did not.
+ *
+ * His share is his branches' agents as a percentage of the whole commission
+ * file - not of his own targets - because the question he is asking is how
+ * much of the money the office earned came off his own streets.
+ */
+function branch_share_for($user, $month) {
+  if (!can($user, 'mybase', 'e')) return null;
+  try {
+    $oa = office_attainment($month);
+    $ach = isset($oa['achievement']) ? $oa['achievement'] : null;
+    if ($ach === null || (float)$ach < 50) return null;
+    $tq = db()->prepare('SELECT COALESCE(SUM(sa_commission),0) c FROM commission_rows WHERE month = ?');
+    $tq->execute(array($month));
+    $total = (float)$tq->fetch()['c'];
+    if ($total <= 0) return null;
+    $mq = db()->prepare('SELECT COALESCE(SUM(cr.sa_commission),0) c
+                         FROM commission_rows cr
+                         JOIN agents a ON a.acc = cr.acc
+                         JOIN bdo_branches bb ON bb.branch = a.branch
+                         WHERE cr.month = ? AND bb.bdo = ?');
+    $mq->execute(array($month, $user['username']));
+    $mine = (float)$mq->fetch()['c'];
+    $bq = db()->prepare('SELECT branch FROM bdo_branches WHERE bdo = ? ORDER BY branch');
+    $bq->execute(array($user['username']));
+    $branches = array();
+    foreach ($bq->fetchAll() as $r) $branches[] = $r['branch'];
+    return array('month' => $month, 'achievement' => (int)$ach,
+                 'pct' => $total > 0 ? round($mine / $total * 100, 1) : 0,
+                 'mine' => $mine, 'total' => $total, 'branches' => $branches);
+  } catch (Exception $e) { return null; }
+}
+
 /* argument order follows the table itself: month, bdo, agent, kind */
 function base_assign($month, $bdo, $agentId, $kind) {
   $agentId = (int)$agentId;
@@ -681,6 +786,7 @@ function maybe_roll_month() {
   month_start_messages($ended, $cur);
   ensure_base_carry($cur);
   ensure_base_join($cur);
+  sync_branch_base($cur);
   ensure_targets_carry($cur);
 
   /* user_id NULL: nobody pressed anything, the calendar did it */

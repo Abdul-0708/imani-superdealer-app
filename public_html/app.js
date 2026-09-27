@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.73.0';
+  var APP_VERSION = '1.74.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -968,7 +968,9 @@
         /* A warning the office has posted must reach a man mid-shift, not when
          * he next happens to reload - so it repaints in place. */
         state.notice = d.notice || null;
+        state.branchShare = d.branchShare || null;
         paintNotice();
+        paintBranchShare();
       }, function () {}),
       isFieldUser()
         ? api('my_flags', { silent: true }).then(function (d) { state.pendingFlags = d.pending || 0; }, function () {})
@@ -1540,7 +1542,7 @@
         '<div id="liveBox"></div></div>';
 
       v.innerHTML =
-        noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
+        noticeHtml() + branchShareHtml() + greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
@@ -2408,6 +2410,83 @@
         : '');
   }
 
+  /*
+   * ===================== BRANCHES =====================
+   *
+   * The office assigns branches; the app follows. One officer per branch,
+   * because a branch with two officers cannot answer whose KPI a row is.
+   *
+   * The list is built from the agents themselves, so a branch that turns up in
+   * a file turns up here the same day. A branch left unassigned keeps working
+   * exactly as it did, which is what lets the office move one at a time - and
+   * why the count of what is still unassigned is on the screen.
+   */
+  function branchAssignHtml() {
+    return '<div class="panel"><h2>' + svg('users') + t('Branches and who holds them') + '</h2>' +
+      '<p class="note">' + t('An officer holds a branch, and every agent in it is his - serving, visits, activeness, float and acceleration alike. A branch left blank keeps behaving as it did before.') + '</p>' +
+      '<div id="brBox"><button class="ghost" data-action="brLoad">' + t('Show branches') + '</button></div></div>';
+  }
+  function branchLoad() {
+    var box = elById('brBox'); if (!box) return;
+    box.innerHTML = '<div class="note">' + t('Loading') + '...</div>';
+    api('branches_get').then(function (d) { state._br = d; box.innerHTML = branchBody(d); })
+      .catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function branchBody(d) {
+    var bdos = d.bdos || [];
+    var rows = (d.branches || []).map(function (b) {
+      var opts = '<option value="">' + t('- nobody -') + '</option>' +
+        bdos.map(function (o) {
+          return '<option value="' + esc(o.username) + '"' + (o.username === b.bdo ? ' selected' : '') + '>' +
+            esc(o.name) + '</option>';
+        }).join('');
+      return '<tr><td class="c-name">' + esc(b.branch) +
+        (b.bdo ? '' : ' <span class="pill gold">' + t('unassigned') + '</span>') + '</td>' +
+        '<td>' + fmt(b.agents) + '<div class="note">' + fmt(b.active) + ' ' + t('active') + '</div></td>' +
+        '<td><select data-change="brPick" data-branch="' + esc(b.branch) + '">' + opts + '</select></td></tr>';
+    }).join('') || '<tr><td colspan="3" class="note">' + t('No branches found on any agent yet.') + '</td></tr>';
+    return '<p class="note"><b>' + fmt(d.held || 0) + '</b> ' + t('of') + ' ' + fmt(d.total || 0) + ' ' +
+      t('branches assigned') + ' &middot; ' + fmt(d.agentsHeld || 0) + ' ' + t('agents covered') + '</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>' + t('Branch') + '</th><th>' + t('Agents') + '</th>' +
+      '<th>' + t('Held by') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+  function branchAssign(branch, bdo) {
+    api('branch_assign_save', { body: { branch: branch, bdo: bdo } })
+      .then(function (r) {
+        var sy = r.sync || {};
+        toast(esc(branch) + ' -> ' + (bdo ? esc(bdo) : t('nobody')) +
+              ((sy.added || sy.moved) ? ' (' + t('rounds updated') + ')' : ''), 'ok');
+        branchLoad();
+      })
+      .catch(function (e) { toast(e.message, 'err'); branchLoad(); });
+  }
+
+  /*
+   * WHAT HIS BRANCHES PUT INTO THE MONTH'S COMMISSION.
+   *
+   * Only appears once the OFFICE has cleared 50% for the month - below that
+   * the server sends nothing, because a share handed out in a bad month reads
+   * as the app telling him it went well when it did not.
+   */
+  function branchShareHtml() {
+    var b = state.branchShare;
+    if (!b || b.pct == null) return '<div id="branchShare"></div>';
+    return '<div id="branchShare"><div class="panel" style="border-color:var(--ok);background:rgba(143,209,79,.08)">' +
+      '<div class="row" style="align-items:center;gap:14px;flex-wrap:wrap">' +
+      '<span style="font-size:30px;font-weight:800;line-height:1;color:var(--ok)">' + b.pct + '%</span>' +
+      '<div style="flex:1;min-width:200px">' +
+      '<div style="font-size:16px;font-weight:800">' + t('Your branches brought this share of the super-agent commission') + '</div>' +
+      '<div class="note">' + esc(b.month || '') + ' &middot; ' + t('the office achieved') + ' ' + b.achievement + '%' +
+      ((b.branches || []).length ? ' &middot; ' + esc((b.branches || []).join(', ')) : '') + '</div>' +
+      '</div></div></div></div>';
+  }
+  function paintBranchShare() {
+    var el = elById('branchShare'); if (!el) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = branchShareHtml();
+    el.parentNode.replaceChild(tmp.firstChild, el);
+  }
+
   function viewAgents(v) {
     var restricted = !can('agents', 'v');
     var perOpts = [20, 50, 100].map(function (n) {
@@ -2419,6 +2498,7 @@
       '<p class="page-sub">' + (restricted
         ? t('Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.')
         : t('Master list with live KPI status.')) + '</p>' +
+      (isManager() ? branchAssignHtml() : '') +
       (isManager() ? baseDiagHtml() : '') +
       '<div class="panel"><div class="row">' +
       '<div class="field"><label>' + t('Search in') + '</label><select data-change="agentField">' +
@@ -6342,6 +6422,7 @@
       if (hmx) hmx.value = node.getAttribute('data-max') || '';
       return;
     }
+    if (a === 'brLoad') { branchLoad(); return; }
     if (a === 'baseDiag') { baseDiagLoad(); return; }
     if (a === 'heXlsAll') { heReport('', 'excel'); return; }
     if (a === 'heDocAll') { heReport('', 'word'); return; }
@@ -6790,6 +6871,10 @@
       var pl = elById('rpPlan');
       if (pl) pl.value = picked.join(' -> ');
       if (n.parentNode && n.parentNode.classList) n.parentNode.classList.toggle('active', n.checked);
+      return;
+    }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'brPick') {
+      branchAssign(n.getAttribute('data-branch'), n.value);
       return;
     }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'momxN') { state._momxMonths = Number(n.value) || 12; momxLoad(); return; }

@@ -5,6 +5,73 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.74.0 — 2026-09-27 · The branch is the round (schema v30)
+
+**The business change:** officers are assigned to branches. Everything follows from that — who is in a
+man's round, and whose serving, visits, activeness, float and transaction acceleration count.
+
+Until now a round was assembled from what an officer had served and whose name a file put beside an
+agent, and the office spent months asking why the number never matched what it had actually given the
+man. The office assigns branches, so the branch is what the app holds now.
+
+### One officer per branch
+
+Enforced by the key. A branch with two officers cannot answer *whose KPI is this*, and the whole point
+is that it can. An officer may hold as many branches as the office gives him.
+
+**Agents → Branches and who holds them.** The list is built from the agents themselves, so a branch
+that appears in a file appears here the same day — there is no second list to maintain, and no way to
+have a branch full of agents the assignment screen has never heard of. It shows how many branches are
+assigned and how many agents that covers.
+
+### It can be rolled out one branch at a time
+
+**A branch nobody is assigned to keeps behaving exactly as it did.** Serving still wins there, the
+file's *Assigned BDO* column still applies there. Assign one branch, watch it, assign the next. Nothing
+has to happen in a single night.
+
+### What changes for an assigned branch
+
+| | Before | Now |
+|---|---|---|
+| Who is in his round | served + whoever a file named | **every agent in his branches** |
+| Who gets the KPI credit | the file's *Assigned BDO* column | **the branch's officer**, whatever the column says |
+| Another officer serves his agent | the agent moved to that officer | **the agent stays** — a visit does not move a shop to another branch |
+
+Rounds follow an assignment **immediately** — an OM who had to wait until next month to see it would
+assume it had not worked. They are rebuilt again after every performance upload, so agents arriving in
+a file land with the right officer.
+
+### The priority base is ordered by money
+
+His round now comes back **highest commission first**, with the agents carrying nothing at the bottom.
+An officer works down a list, so the order of the list decides what actually gets done.
+
+### His branch's share of the commission
+
+When the commission file is uploaded, each officer sees at the top of his dashboard **what percentage
+of the super-agent commission his branches brought in** — his branches' agents against the whole
+commission file, because the question he is asking is how much of the money the office earned came off
+his own streets.
+
+It appears **only once the office itself has cleared 50%** for the month, as asked. Below that the
+server sends nothing at all: a share handed out in a bad month reads as the app telling him the month
+went well when it did not.
+
+### One rule this reverses, on purpose
+
+An agent with **no physical location** used to be in nobody's round. Inside an assigned branch he now
+is in one — you asked for *all* his branch agents, and the officer is responsible for the whole branch
+whether or not somebody has captured the shop's location yet. Outside an assigned branch the old rule
+still stands.
+
+### Not in this release
+
+The **prepared reports** wait on your sample's header row. The **six-tab layout** is deliberately a
+separate release, so that if navigation breaks it is obviously the cause.
+
+---
+
 ## v1.73.0 — 2026-09-24 · All BDO monthly weights on one screen; three months for the officer
 
 **Asked for:** one window showing every BDO's monthly weights, downloadable as all months, one month,

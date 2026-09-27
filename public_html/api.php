@@ -691,7 +691,15 @@ try {
       $agents = array();
       if ($ids) {
         $in = implode(',', array_fill(0, count($ids), '?'));
-        $q = db()->prepare("SELECT id, acc, name, phone, branch, station, physical_location, act_current, act_prev, act_month FROM agents WHERE id IN ($in)");
+        /* PRIORITY BASE: the money at the top. An officer works down a list,
+         * so the list decides what gets done - highest commission first, and
+         * the ones carrying nothing at the bottom. */
+        $q = db()->prepare("SELECT a.id, a.acc, a.name, a.phone, a.branch, a.station, a.physical_location,
+                                   a.act_current, a.act_prev, a.act_month,
+                                   COALESCE(h.commission, 0) commission"
+                           . " FROM agents a LEFT JOIN high_earners h ON h.acc = a.acc
+                               WHERE a.id IN ($in)
+                               ORDER BY COALESCE(h.commission, 0) DESC, a.name");
         $q->execute($ids);
         $agents = $q->fetchAll();
       }
@@ -1076,7 +1084,14 @@ try {
         $prev = db()->prepare('SELECT bdo FROM base WHERE month = ? AND agent_id = ?');
         $prev->execute(array($month, $agentId));
         $before = ($pr = $prev->fetch()) ? $pr['bdo'] : '';
-        if ($before !== $bdo) {
+        /*
+         * SERVING NO LONGER MOVES AN AGENT. He belongs to whoever holds his
+         * branch, and a visit from another officer does not change which
+         * branch the shop is in. Where the branch has no owner the old
+         * serving-wins transfer still applies, so unassigned branches behave
+         * exactly as they did.
+         */
+        if ($before !== $bdo && branch_owner_of_agent($agentId) === '') {
           db()->prepare('DELETE FROM base WHERE month = ? AND agent_id = ?')->execute(array($month, $agentId));
           db()->prepare('INSERT INTO base (month, bdo, agent_id, kind) VALUES (?,?,?, "served")')
               ->execute(array($month, $bdo, $agentId));
@@ -2469,6 +2484,19 @@ try {
         /* Positive results with no BDO named = the partner did it -> "partners". */
         $positive = ($r['served'] === 'SERVED' || $r['visit'] === 'YES' || $r['apk_yes'] || $r['waked']);
         if ($key === 'unassigned' && $positive) $key = 'partners';
+        /*
+         * THE BRANCH DECIDES WHO IS CREDITED.
+         *
+         * The file's Assigned BDO column is a note somebody typed; the branch
+         * assignment is what the office actually decided. Where a branch has
+         * an owner he takes the row - serving, visits, APK, activeness, float
+         * and acceleration alike - whatever name the column carries.
+         *
+         * A branch nobody is assigned to falls through to the old behaviour,
+         * so the office can move one branch at a time.
+         */
+        $bOwn = branch_owner($r['branch']);
+        if ($bOwn !== '') $key = $bOwn;
         $bdos[$key] = true;
         /* A REAL OFFICER NAMED BESIDE THIS AGENT - not the 'unassigned' or
          * 'partners' placeholders, which are nobody's round. */
@@ -2713,6 +2741,9 @@ try {
        * A priority seed never writes it. */
       if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
+      /* new agents arrived, so the branches must own them before anything
+       * counts a round size */
+      $branchSync = sync_branch_base($month);
       $restored = isset($restored) ? $restored : 0;
       /* Which standard the wakes were judged against. An OM who uploads
        * performance before the base file should be told his activeness was
@@ -3789,7 +3820,10 @@ try {
       /* The office notice rides on the badge poll everyone already runs, so a
        * warning reaches a man mid-shift instead of waiting for him to reload. */
       respond(array('unread' => (int)$st->fetch()['c'],
-                    'notice' => json_decode(setting_get('office_notice', ''), true)));
+                    'notice' => json_decode(setting_get('office_notice', ''), true),
+                    /* his branches' share of the month's commission, or null
+                     * until the office itself has cleared 50% */
+                    'branchShare' => branch_share_for($u, open_month())));
     }
 
     /* Opening the Messages tab marks everything up to now as read. */
@@ -4297,6 +4331,60 @@ try {
      * against almost nobody, there is no portfolio to hand out and a round can
      * only ever hold the agents that officer personally served.
      */
+    /*
+     * THE BRANCHES, AND WHO HOLDS THEM.
+     *
+     * Built from the agents themselves rather than a list somebody maintains,
+     * so a branch that appears in a file appears here the same day - there is
+     * no second place to keep up to date, and no way to have a branch full of
+     * agents that the assignment screen has never heard of.
+     */
+    case 'branches_get': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $rows = db()->query("SELECT TRIM(branch) branch, COUNT(*) agents,
+                                  SUM(act_current = 'ACTIVE') active
+                           FROM agents WHERE TRIM(branch) <> ''
+                           GROUP BY TRIM(branch) ORDER BY agents DESC")->fetchAll();
+      $own = branch_owner_map();
+      $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY name')->fetchAll();
+      $out = array(); $held = 0; $agentsHeld = 0;
+      foreach ($rows as $r) {
+        $k = strtolower(trim((string)$r['branch']));
+        $who = isset($own[$k]) ? $own[$k] : '';
+        if ($who !== '') { $held++; $agentsHeld += (int)$r['agents']; }
+        $out[] = array('branch' => $r['branch'], 'agents' => (int)$r['agents'],
+                       'active' => (int)$r['active'], 'bdo' => $who);
+      }
+      respond(array('branches' => $out, 'bdos' => $bdos, 'held' => $held,
+                    'agentsHeld' => $agentsHeld, 'total' => count($out)));
+    }
+
+    /* One branch, one officer. Blank hands it back to nobody. */
+    case 'branch_assign_save': {
+      $u = require_auth(); require_perm($u, 'agents', 'e');
+      if (!is_manager($u)) fail('Management access only', 403);
+      $branch = mb_substr(trim((string)bval('branch')), 0, 128);
+      $bdo = strtolower(trim((string)bval('bdo')));
+      if ($branch === '') fail('Which branch?');
+      if ($bdo !== '') {
+        $ck = db()->prepare("SELECT 1 FROM users WHERE username = ? AND role = 'bdo' AND active = 1");
+        $ck->execute(array($bdo));
+        if (!$ck->fetch()) fail('No such BDO');
+        db()->prepare('INSERT INTO bdo_branches (branch, bdo, by_user) VALUES (?,?,?)
+                       ON DUPLICATE KEY UPDATE bdo = VALUES(bdo), by_user = VALUES(by_user), at = NOW()')
+            ->execute(array($branch, $bdo, $u['username']));
+      } else {
+        db()->prepare('DELETE FROM bdo_branches WHERE branch = ?')->execute(array($branch));
+      }
+      /* the rounds follow the assignment immediately - an OM who has to wait
+       * until next month to see it will assume it did not work */
+      $sync = sync_branch_base(open_month());
+      audit($u['id'], 'branch_assign', $branch . ' -> ' . ($bdo !== '' ? $bdo : 'nobody') .
+                                       ' (moved ' . $sync['moved'] . ', added ' . $sync['added'] . ')');
+      respond(array('ok' => true, 'branch' => $branch, 'bdo' => $bdo, 'sync' => $sync));
+    }
+
     case 'base_diagnosis': {
       $u = require_auth();
       if (!is_manager($u)) fail('Management access only', 403);
