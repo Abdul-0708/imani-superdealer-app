@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.76.0';
+  var APP_VERSION = '1.77.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1550,22 +1550,36 @@
        * which is what makes him go and settle them. */
       var scorePanel = '';
       if (d.performance) {
-        var withF = d.performance, clean = d.performanceClean || d.performance;
-        var gap = (withF.score != null && clean.score != null) ? (withF.score - clean.score) : 0;
+        /*
+         * WHAT THE TWO NUMBERS ARE - and they are not what they used to be.
+         *
+         * v1.72.0 made the headline score the HONEST one (flagged claims do not
+         * count) and renamed the second to performanceIfCleared. This panel was
+         * never updated: it still read performanceClean, which the server had
+         * stopped sending, so it fell back to the same object and showed the
+         * same number twice with a permanent 0% between them. A panel whose
+         * whole job is to compare two figures had been comparing one figure
+         * with itself.
+         *
+         * The gap is now what he would GAIN by answering his flags, not what
+         * they cost him - because they have already been taken off.
+         */
+        var withF = d.performance, clean = d.performanceIfCleared || d.performance;
+        var gap = (withF.score != null && clean.score != null) ? (clean.score - withF.score) : 0;
         var nFlags = d.flagCount || 0;
         scorePanel =
-          '<div class="panel"><h2>' + svg('percent') + t('My weighted score vs my monthly target') + '</h2>' +
+          '<div class="panel"><h2>' + svg('percent') + t('My score') + '</h2>' +
           '<div class="grid cards" style="margin-bottom:10px">' +
-          card('percent', t('As I claimed'), (withF.score == null ? '-' : withF.score + '%'),
-               t('every KPI I ticked')) +
-          card(nFlags ? 'alert' : 'check', t('If every flag stands'), (clean.score == null ? '-' : clean.score + '%'),
-               nFlags ? (fmt(nFlags) + ' ' + t('flags would remove this much')) : t('no flags against me')) +
+          card('percent', t('This month'), (withF.score == null ? '-' : withF.score + '%'),
+               nFlags ? t('flagged claims already taken off') : t('nothing is being questioned')) +
+          card(nFlags ? 'alert' : 'check', t('If my flags were cleared'), (clean.score == null ? '-' : clean.score + '%'),
+               nFlags ? (fmt(nFlags) + ' ' + t('flags are holding this back')) : t('no flags against me')) +
           '</div>' +
           (nFlags
             ? '<div style="border-top:1px solid var(--line);padding-top:10px">' +
               '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">' +
-              '<span class="pill ' + (gap >= 10 ? 'bad' : 'fire') + '">-' + (gap > 0 ? gap : 0) + '%</span>' +
-              '<b>' + t('is what your flags cost you') + '</b></div>' +
+              '<span class="pill ' + (gap >= 10 ? 'ok' : 'gold') + '">+' + (gap > 0 ? gap : 0) + '%</span>' +
+              '<b>' + t('is what answering your flags is worth') + '</b></div>' +
               '<div class="note" style="margin:6px 0 8px">' + t('Answer them on the Flags panel - a claim you can prove is a claim the OM can clear.') + '</div>' +
               '<button class="btn mini" data-action="tab" data-tab="performance" data-sub="flags">' + t('Work on my flags') + '</button></div>'
             : '<div class="note">' + t('Clean month - nothing is being questioned. Both numbers are the same.') + '</div>') +
@@ -1621,10 +1635,17 @@
         '<tr><td><b>' + t('This month') + '</b></td>' + bandCells('month') + '</tr>' +
         '</tbody></table></div></div>';
 
-      /* THE WHOLE TEAM'S DAY, read-only. He watches it; the export stays with
-       * management. */
+      /*
+       * THE WHOLE TEAM'S DAY, read-only. He watches it; the export stays with
+       * management.
+       *
+       * It is a SECTION of Today now, not a panel of its own. His day and the
+       * team's day are the same question asked twice, and two panels an inch
+       * apart both headed with today's date is how a screen stops being read.
+       */
       var teamBoard =
-        '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
+        '<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">' +
+        '<div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
         '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
         '<div class="field"><label>' + t('From day') + '</label><input id="liveDate" type="date" value="' + isoToday() + '" max="' + isoToday() + '"></div>' +
@@ -1639,6 +1660,20 @@
         '<p class="note">' + t('What everyone ticked inside the chosen time window (EAT). You can watch it, not download it.') + '</p>' +
         '<div id="liveBox"></div></div>';
 
+      /*
+       * HIS SCORE AND ITS TREND ARE ONE QUESTION, SO THEY ARE ONE PANEL.
+       * Two panels showing the same number under different headings is how a
+       * dashboard grows to eleven blocks and stops being read at all.
+       */
+      if (scorePanel) {
+        scorePanel = scorePanel.replace(/<\/div>$/,
+          '<h3 style="margin:16px 0 6px;font-size:13px;color:var(--muted);font-weight:700">' +
+          t('My last three months') + '</h3><div id="myScoreHist"></div></div>');
+      } else {
+        scorePanel = '<div class="panel"><h2>' + svg('percent') + t('My score') + '</h2>' +
+          '<p class="note">' + t('No targets have been set for you this month yet.') + '</p>' +
+          '<div id="myScoreHist"></div></div>';
+      }
       v.innerHTML =
         noticeHtml() + branchShareHtml() + greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
@@ -1648,13 +1683,10 @@
         '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
         '<p class="note">' + t('Share of your round served, different agents served, visits and activeness. 70% or more of your weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</p>' +
         '<div id="myFuelBox"></div></div>' +
-        '<div class="panel"><h2>' + svg('percent') + t('My score, month by month') + '</h2>' +
-        '<p class="note">' + t('Your last three months - the ones you can still do something about - and the average you have actually achieved.') + '</p>' +
-        '<div id="myScoreHist"></div></div>' +
         standPanel +
         heScorePanel +
-        livePanel +
-        teamBoard;
+        /* one Today: his half, then the team's, inside the same panel */
+        livePanel.replace(/<\/div>$/, teamBoard + '</div>');
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
       myFuelLoad('myFuelBox');
@@ -4844,6 +4876,10 @@
   function fuelAlarmLoad() {
     var el = elById('fuelAlarm'); if (!el) return;
     if (!state.user || !isFieldUser()) { el.innerHTML = ''; return; }
+    /* The dashboard carries the full week panel - bars, targets and all - so
+     * the strip would be the same fuel figure twice on one screen. It shows
+     * everywhere else, which is what 'always visible' was actually for. */
+    if (state.tab === 'dashboard') { el.innerHTML = ''; return; }
     api('fuel_status', { silent: true }).then(function (d) {
       var box = elById('fuelAlarm'); if (!box) return;
       box.innerHTML = (d && d.week && d.hasTargets) ? fuelAlarmHtml(d) : '';

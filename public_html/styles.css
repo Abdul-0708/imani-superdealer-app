@@ -880,3 +880,86 @@ body.light .panel.idle-alert{background:linear-gradient(180deg,rgba(198,47,29,.1
   background:var(--grad);color:#2b1000;font-weight:800;padding:12px 18px;
   border-radius:0 0 12px 0;text-decoration:none;box-shadow:var(--glow-strong)}
 .skip-link:focus{left:0}
+
+/* ==========================================================================
+ * REFINEMENT LAYER
+ *
+ * Appended rather than merged into the rules above on purpose: this file is
+ * 880 lines of working, live styling, and rewriting it to change spacing and
+ * tap sizes would risk every screen at once to fix things the cascade can fix
+ * from the end. Everything here is a deliberate override of a measured
+ * problem, not a restyle.
+ * ========================================================================== */
+:root{
+  /* one spacing scale, 4/8 based - panel padding was 18px, which belongs to
+     no scale and made every gap on the page slightly arbitrary */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+  --tap:44px;      /* the minimum a finger can hit reliably */
+  --dur:180ms;     /* one duration for every micro-interaction */
+  /* surface tokens, so the rules below work in BOTH themes: a hairline
+     top-light and a sunken fill for a panel nested inside a panel */
+  --hair:rgba(255,255,255,.03); --sunk:rgba(255,255,255,.022);
+}
+body.light{ --hair:rgba(0,0,0,0); --sunk:rgba(0,0,0,.028); }
+
+/* ---- 1. TOUCH TARGETS -------------------------------------------------
+ * .btn was 8px/13px - about 31px tall. On a phone, in the field, that is a
+ * miss waiting to happen. 44px is the floor; .mini stays smaller because it
+ * only ever sits inside a row that is itself comfortably tappable. */
+.btn,.ghost,.role-chip{
+  min-height:var(--tap);padding:10px 16px;font-size:14px;
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+}
+.btn.mini,.ghost.mini{min-height:36px;padding:7px 12px;font-size:13px}
+.nav-item{min-height:var(--tap)}
+select,input:not([type=checkbox]):not([type=radio]),textarea{min-height:var(--tap)}
+
+/* ---- 2. NO ZOOM-ON-FOCUS ----------------------------------------------
+ * iOS zooms the whole page when a field smaller than 16px takes focus, and
+ * the officer then has to pinch back out to see what he typed. */
+@media (max-width:767px){
+  input,select,textarea{font-size:16px}
+}
+
+/* ---- 3. RHYTHM --------------------------------------------------------
+ * Panels on the scale, and breathing room that says where one thing ends.
+ * Bigger padding on a wide screen, not on a phone where it wastes the fold. */
+.panel{padding:var(--s4);border-radius:16px;margin-bottom:var(--s4)}
+@media (min-width:768px){ .panel{padding:var(--s5)} }
+.panel h2{margin:0 0 var(--s3);font-size:15px;letter-spacing:.2px}
+.panel > .note:first-of-type{margin-top:calc(var(--s1) * -1)}
+.page-title{font-size:20px;margin:0 0 var(--s1)}
+.page-sub{margin:0 0 var(--s4)}
+.grid{gap:var(--s3)}
+.tg-row{padding:var(--s3) 0}
+.tg-row:last-child{border-bottom:0}
+
+/* ---- 4. ONE SURFACE AT A TIME -----------------------------------------
+ * Every panel was a gradient with a shadow, so nothing sat above anything
+ * else and the eye had no route through the page. Flat surface, hairline
+ * top-light for edge definition, and a nested panel drops back instead of
+ * competing. */
+.panel{background:var(--panel);box-shadow:inset 0 1px 0 var(--hair),var(--e1)}
+.panel .panel{background:var(--sunk);box-shadow:none;border-color:var(--line)}
+
+/* ---- 5. TABLES --------------------------------------------------------
+ * Headings stop shouting in sentence case and start reading as labels; rows
+ * get enough height to be scanned on a phone. */
+th,td{padding:var(--s3) 10px}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:700}
+
+/* ---- 6. MOTION --------------------------------------------------------
+ * One duration, one easing, and a press that answers the finger inside
+ * 180ms. transform/opacity only, so nothing reflows while it moves. */
+.btn,.ghost,.role-chip,.nav-item,.bn-item,.pill{
+  transition:transform var(--dur) var(--ease),background var(--dur) var(--ease),
+             color var(--dur) var(--ease),border-color var(--dur) var(--ease),
+             box-shadow var(--dur) var(--ease);
+}
+.btn:active,.ghost:active,.role-chip:active,.bn-item:active{transform:scale(.97)}
+
+/* ---- 7. QUIETER ACCENTS ----------------------------------------------
+ * The brand mark pulsed for ever in the corner of every screen. A thing that
+ * moves without meaning is a thing the eye keeps checking. */
+.sb-mark{animation:none;box-shadow:0 0 16px rgba(255,140,26,.28)}
+.pill{font-size:11px;padding:4px 10px}

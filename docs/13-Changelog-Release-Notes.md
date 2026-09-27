@@ -5,6 +5,64 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.77.0 — 2026-09-27 · Fewer things, said once
+
+### A panel that was comparing a number with itself
+
+v1.72.0 made the headline score the honest one (flagged claims do not count) and renamed the second
+figure to `performanceIfCleared`. **The officer's score panel was never updated.** It still read
+`performanceClean`, which the server had stopped sending, so it fell back to the same object and
+showed **the same number twice** with a permanent `0%` between them — a panel whose entire job is to
+compare two figures had been comparing one figure with itself, and its labels still described the old
+meaning.
+
+Fixed, and the labels now say what the numbers are: **This month** (flagged claims already taken off)
+and **If my flags were cleared**. The gap between them is what answering the flags is *worth* — a gain
+to go and get, not a cost already paid.
+
+### The officer's dashboard: eight panels down to five
+
+| Was | Now |
+|---|---|
+| My day so far **+** Live work today — whole team | **My day so far**, with the team as a section inside it |
+| My weighted score vs target **+** My score, month by month | **My score**, with the last three months inside it |
+| Fuel alarm strip **+** My week, and the fuel it earns | the **week panel** here; the strip on every other screen |
+
+His day and the team's day were the same question asked twice, an inch apart, both headed with
+today's date. His score and its trend were two panels showing the same number under different
+headings. The fuel figure appeared in a banner and again in a panel directly below it.
+
+The always-visible fuel strip still does its job everywhere else — which is what *always visible* was
+actually for.
+
+### The design pass
+
+Measured problems, not a restyle. Appended as a layer rather than merged into 880 lines of live CSS,
+because rewriting all of it to change spacing would risk every screen at once.
+
+- **Touch targets.** Buttons were about **31px** tall. On a phone, in the field, that is a miss
+  waiting to happen. Everything interactive is now at least **44px**; `.mini` stays smaller because it
+  only ever sits inside a row that is already comfortably tappable.
+- **No zoom-on-focus.** Inputs under 16px make iOS zoom the whole page on focus, and the officer then
+  pinches back out to read what he typed. Fields are 16px on phones.
+- **One spacing scale.** Panel padding was `18px`, which belongs to no scale and made every gap on
+  the page slightly arbitrary. Everything is on a 4/8 rhythm now, with wider padding only where the
+  screen can afford it.
+- **One surface at a time.** Every panel was a gradient with a shadow, so nothing sat above anything
+  else and the eye had no route through the page. Flat surface, hairline top-light, nested panels drop
+  back instead of competing.
+- **One motion.** A single duration and easing for every micro-interaction, and a press that answers
+  the finger — transform and opacity only, so nothing reflows while it moves.
+- **Quieter accents.** The brand mark pulsed for ever in the corner of every screen. A thing that
+  moves without meaning is a thing the eye keeps checking.
+
+### Still to do
+
+This pass fixed the worst screen and the global layer. **Daily Report (5 panels), Settings & Data (4)
+and Admin (4)** have not had the same treatment yet.
+
+---
+
 ## v1.76.0 — 2026-09-27 · Six tabs
 
 Thirteen tabs was a filing cabinet, not a tool. Half were one screen each, and a man looking for Flags
