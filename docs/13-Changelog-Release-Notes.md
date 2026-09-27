@@ -5,6 +5,85 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.78.0 — 2026-09-27 · The rest of the screens
+
+The same treatment as v1.77.0, applied outwards. Along the way the screens gave up four defects that no
+syntax check could see, so this release ends with a checker that finds them.
+
+### Three things that were broken and silent
+
+**Waking a sleeping agent did nothing.** The Activeness button called `markKpi()`. The function is
+called `kpiMark()`. Nothing is named `markKpi` anywhere, so every tap threw a `ReferenceError` in the
+officer's phone and the wake was never recorded — the comment above it says *"waking reuses the chip's
+own path, receipt rule and all"*, which is exactly what the correct name does.
+
+**"Load his data" on Settings & Data threw too.** Its button said `data-action="bdLoad"`, and so does
+the Team screen's month picker. `onClick` answered the Team one first, looked for a `#bdMonth` field
+this screen does not have, and died. The inspector has its own name now.
+
+**A BDO's own report-day grid was headed in management's words.** There were *two* functions called
+`reportDaysPanel` — his and the office's — and because they are declarations the second silently won
+for both call sites. One definition now, and `mine` decides what it says.
+
+### Working days came back
+
+`working_days_save` has been live on the server all along, and **every MISS mark on every report-day
+grid is decided by it.** The panel that set it was removed in an earlier release: the endpoint, the
+per-officer column and the office setting all survived, but nothing rendered its fields any more — so
+the office had been stuck on the Mon–Sat default with no way to say otherwise, and no error to show for
+it.
+
+It is a grid now, not a form: the office week on the top row, every officer under it, seven days across.
+The real question is *who works Sundays*, and that is a column. An officer whose row matches the office
+week keeps no override, so changing the office week still changes him.
+
+### Fewer things, screen by screen
+
+| Screen | Was | Now |
+|---|---|---|
+| **Daily Report** | Send report · route plan · performance trend · my reports · my report days | **route plan · float report · my report days** |
+| **Dashboard (OM)** | 9 panels, 9 cards, six KPIs shown three times each | **4 panels, 4 cards** |
+| **Settings & Data** | rules · filing · uploads · one BDO · erase members | **rules (+ working days) · filing · uploads · erasing** |
+| **Messages** | announcement · market feedback · your box | **write · your box** |
+| **Admin** | 2FA · members · access · activity | **members · access · activity** (2FA is a footnote once it is on) |
+
+- **The officer's KPI bars were on two screens.** His score panel on the dashboard and "Performance
+  trend" on Daily Report were the same `perfBars()` of the same numbers. Where he writes the report he
+  now gets one line — his score, and the way to the bars — because that is the only question the report
+  answers.
+- **His float table and his report-day grid said the same thing.** The table existed to show the float
+  per day; the grid showed OK/LATE/MISS for the same days with the float hidden in a tooltip, which on a
+  phone is nowhere. The float is in the cell now and the table is gone.
+- **Six KPIs, three times over.** On the OM's dashboard each of Served, Float, Visits, APK, Activeness
+  and Acceleration had a card, a bar under it, and a row in the combined table under that. The table is
+  the only one carrying the target, the field half and the attainment, so the cards keep what it does
+  not say: how many agents there are, and the headline the commission is settled on. With no combined
+  figures (that endpoint is allowed to fail) the full cards and bars stay — then they are all there is.
+- **A filter row is not a panel.** Six screens wrapped a month picker and a Load button in panel chrome,
+  so the controls read as the first content on the page. One `.toolbar` now.
+- **Progressive disclosure, once.** A `reveal` action for the whole app: Admin's five-field add-member
+  form and the 2FA switch-off wait until they are asked for.
+
+### Dead code removed
+
+`heStationsFill()`, `heLoad()` and `heUpload()` served a high-earner panel replaced long ago — nothing
+had rendered `#heStation`, `#heBox` or `#heFile` since, and two dispatch branches pointed at them. High
+earners come from the officer's own band filter and the Upload screen's "high earners" kind.
+
+### A checker for what `node --check` cannot see
+
+`verify.py` cross-checks every call against every declaration, every `data-action` against its handler
+(both ways), every `data-change`, every deep link against the real tab list, and every `elById` id
+against what is actually rendered. All four bugs above would have been caught the day they were written.
+
+### Still to do
+
+The OM's Team drill-down still shows **high earners served and not served as two panels**, and his
+score beside his month-by-month, and **Base coverage beside Per BDO** — two per-officer tables that want
+to be one.
+
+---
+
 ## v1.77.0 — 2026-09-27 · Fewer things, said once
 
 ### A panel that was comparing a number with itself

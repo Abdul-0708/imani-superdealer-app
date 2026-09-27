@@ -963,3 +963,25 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted
  * moves without meaning is a thing the eye keeps checking. */
 .sb-mark{animation:none;box-shadow:0 0 16px rgba(255,140,26,.28)}
 .pill{font-size:11px;padding:4px 10px}
+
+/* ---- 8. A FILTER ROW IS NOT A PANEL ------------------------------------
+ * A month picker and a Load button are the controls FOR the panels below,
+ * not content of their own. Three screens wrapped them in panel chrome, so
+ * a filter row read as the first thing on the page. One toolbar instead. */
+.toolbar{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:flex-end;margin:0 0 var(--s4)}
+.toolbar .field{margin:0}
+.toolbar > .note{flex:1 1 220px;min-width:180px}
+
+/* ---- 9. TWO RELATED THINGS, ONE PANEL ---------------------------------
+ * When two panels answer one question they become one panel with a section
+ * inside it. This is that divider, so every screen does it the same way
+ * instead of each inventing its own inline border-top. */
+.sec{border-top:1px solid var(--line);margin-top:var(--s4);padding-top:var(--s3)}
+.sec > h3,h3.sec-sub{margin:0 0 var(--s2);font-size:13px;color:var(--muted);
+  font-weight:700;letter-spacing:.3px}
+
+/* ---- 10. REVEALED ON DEMAND -------------------------------------------
+ * An add-member form with five fields does not need to sit open above the
+ * table anyone came to read. [hidden] is honoured even against display
+ * rules that would otherwise win. */
+[hidden]{display:none !important}

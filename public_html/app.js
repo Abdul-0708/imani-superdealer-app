@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.77.0';
+  var APP_VERSION = '1.78.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1416,7 +1416,10 @@
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
   /* His report days for a month: OK / LATE / MISS per elapsed working day.
    * Shared by the BDO dashboard and the management Reports tab. */
-  function reportDaysMatrix(dr, month) {
+  /* `mine` = one officer looking at his own month. Then the BDO-name column is
+   * his own name repeated once, and the float he typed - which used to live in
+   * a title tooltip, i.e. nowhere on a phone - goes inside the day cell. */
+  function reportDaysMatrix(dr, month, mine) {
     var byKey = {};
     (dr.reports || []).forEach(function (r) { byKey[r.bdo + '|' + r.date] = r; });
     var today = dr.today, days = [];
@@ -1427,7 +1430,7 @@
       days.push(ds);
     }
     var shown = days.slice(-10);
-    var head = '<th>BDO</th>' + shown.map(function (ds) {
+    var head = (mine ? '' : '<th>BDO</th>') + shown.map(function (ds) {
       return '<th>' + Number(ds.slice(8)) + '<div class="note">' + DAY_NAMES[isoDow(ds)] + '</div></th>';
     }).join('');
     var body = (dr.bdos || []).map(function (b) {
@@ -1436,13 +1439,15 @@
         var r = byKey[b.username + '|' + ds];
         if (r) {
           var cls = r.late ? 'gold' : 'ok';
-          return '<td><span class="pill ' + cls + '" title="Float ' + fmt(r.float) + '">' + (r.late ? 'LATE' : 'OK') + '</span></td>';
+          return '<td><span class="pill ' + cls + '"' + (mine ? '' : ' title="Float ' + fmt(r.float) + '"') + '>' +
+            (r.late ? 'LATE' : 'OK') + '</span>' +
+            (mine ? '<div class="note">' + fmt(r.float) + '</div>' : '') + '</td>';
         }
         if (!wd) return '<td><span class="pill dim">-</span></td>';
         return '<td><span class="pill bad" title="' + esc(t('No report on a working day')) + '">MISS</span></td>';
       }).join('');
-      return '<tr><td>' + esc(b.name) + '</td>' + cells + '</tr>';
-    }).join('') || '<tr><td class="note">' + t('No report days yet.') + '</td></tr>';
+      return '<tr>' + (mine ? '' : '<td>' + esc(b.name) + '</td>') + cells + '</tr>';
+    }).join('') || '<tr><td colspan="' + (shown.length + (mine ? 0 : 1)) + '" class="note">' + t('No report days yet.') + '</td></tr>';
     return { head: head, body: body, days: shown.length };
   }
   /* HIS ONE PAGE: how is MY day and MY month going, and where do I stand.
@@ -1576,7 +1581,7 @@
                nFlags ? (fmt(nFlags) + ' ' + t('flags are holding this back')) : t('no flags against me')) +
           '</div>' +
           (nFlags
-            ? '<div style="border-top:1px solid var(--line);padding-top:10px">' +
+            ? '<div class="sec">' +
               '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">' +
               '<span class="pill ' + (gap >= 10 ? 'ok' : 'gold') + '">+' + (gap > 0 ? gap : 0) + '%</span>' +
               '<b>' + t('is what answering your flags is worth') + '</b></div>' +
@@ -1644,7 +1649,7 @@
        * apart both headed with today's date is how a screen stops being read.
        */
       var teamBoard =
-        '<div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">' +
+        '<div class="sec">' +
         '<div class="row" style="align-items:center;margin-bottom:6px">' +
         '<h2 style="margin:0">' + svg('zap') + t('Live work today - whole team') + '</h2>' +
         '<span class="pill dim">' + t('view only') + '</span><div class="spacer"></div>' +
@@ -1667,8 +1672,8 @@
        */
       if (scorePanel) {
         scorePanel = scorePanel.replace(/<\/div>$/,
-          '<h3 style="margin:16px 0 6px;font-size:13px;color:var(--muted);font-weight:700">' +
-          t('My last three months') + '</h3><div id="myScoreHist"></div></div>');
+          '<div class="sec"><h3>' + t('My last three months') + '</h3>' +
+          '<div id="myScoreHist"></div></div></div>');
       } else {
         scorePanel = '<div class="panel"><h2>' + svg('percent') + t('My score') + '</h2>' +
           '<p class="note">' + t('No targets have been set for you this month yet.') + '</p>' +
@@ -1995,9 +2000,9 @@
         if (att[k] && att[k].custom) defs.push({ key: k, label: att[k].label || k, icon: 'chart' });
       });
 
-      /* NB: the loop variable must NOT be called `t` - that shadows the t()
-       * translation helper used inside the body. */
-      var bars = defs.map(function (def) {
+      /* NB: the loop variable must NOT be called `def`-something else - `t`
+       * shadows the t() translation helper used inside the body. */
+      function barRows(list) { return list.map(function (def) {
         var a = att[def.key];
         /* A NEGATIVE result (e.g. activeness -11: more agents lost than waked)
          * must never draw a bar - a raw negative width is invalid CSS and the
@@ -2013,7 +2018,15 @@
           '<span class="tg-meta">' + meta + '</span>' +
           '<span class="tg-pct' + (neg ? ' bad' : '') + '">' + (raw == null ? '-' : raw + '%') +
           (neg ? ' <span class="pill bad">' + t('GOING BACKWARDS') + '</span>' : '') + '</span></div>';
-      }).join('');
+      }).join(''); }
+
+      /*
+       * A KPI THE OM INVENTED HIMSELF has no field half - it comes out of the
+       * uploaded file - so the combined table below (the six fixed office KPIs)
+       * cannot carry it. Those keep a panel; everything the combined table does
+       * cover is not drawn a second time here.
+       */
+      var customDefs = defs.filter(function (def) { return att[def.key] && att[def.key].custom; });
 
       var cards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents));
       if (shown('serving')) cards += card('users', 'Served' + stTag, fmt(cardVal('serving')));
@@ -2031,15 +2044,31 @@
         if (att[k] && att[k].custom) cards += card('chart', att[k].label + stTag, fmt(att[k].actual),
           att[k].target > 0 ? 'target ' + fmt(att[k].target) : 'no target set');
       });
-      cards += card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
+      var achieveCard = card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
         d.achievement == null ? '-' : d.achievement + '%',
         d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
+      cards += achieveCard;
+      /*
+       * WITH THE COMBINED TABLE PRESENT, EVERY PER-KPI CARD IS A REPEAT.
+       *
+       * Served, Float, Visits, APK, Activeness and Acceleration each had a card
+       * here, a bar directly underneath it, and a row in the combined table
+       * below that - the same figure three times on one screen. The table is the
+       * one that carries the target, the field half and the attainment, so the
+       * cards fall back to what it does not say: how many agents there are, and
+       * the headline the commission is settled on.
+       *
+       * With no combined figures (the endpoint is allowed to fail) the full card
+       * row and the bars stay exactly as they were - then they are all there is.
+       */
+      var leanCards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents)) + achieveCard;
 
       v.innerHTML =
         noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
-        '<div class="panel"><div class="row"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
+        /* the controls for everything below, not a panel of their own */
+        '<div class="toolbar"><div class="field"><label>Month</label><input id="dashMonth" type="month" value="' + esc(d.month) + '"></div>' +
         '<div class="field"><label>SA Station</label><select data-change="dashStation">' +
         '<option value="">All stations</option>' +
         (d.stations || []).map(function (s) { return '<option value="' + esc(s) + '"' + (d.station === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
@@ -2054,7 +2083,7 @@
                 ? ' &middot; <span class="pill dim">' + t('no targets set') + '</span>'
                 : '') + '</span>'
           : '<span class="note">' + t('All stations combined') + '</span>') +
-        '</div></div>' +
+        '</div>' +
         /* NO TARGET, NO SCORE - and say which it is.
          * A weighted average has no meaning without a denominator, so with no
          * target typed the whole screen reads blank however hard the team is
@@ -2100,10 +2129,17 @@
         '<div id="liveBox"></div></div>' +
         '<h2 class="sec-head">' + svg('upload') + ' ' + t('THE OFFICE RESULT - FROM THE PERFORMANCE FILE') + '</h2>' +
         '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
-        '<div class="grid cards" style="margin-bottom:16px">' + cards + '</div>' +
-        '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
-        (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
-        (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + bars + '</div>' +
+        '<div class="grid cards" style="margin-bottom:16px">' + (cb ? leanCards : cards) + '</div>' +
+        (cb
+          ? (customDefs.length
+              ? '<div class="panel"><h2>' + svg('target') + t('My own KPIs this month') +
+                (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') + '</h2>' +
+                '<p class="note">' + t('KPIs you added yourself. They come from the uploaded file, so they have no field half and are not in the combined table below.') + '</p>' +
+                barRows(customDefs) + '</div>'
+              : '')
+          : '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
+            (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
+            (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + barRows(defs) + '</div>') +
         (cb ? combinedSection(cb) : '');
       liveTodayLoad();
       flagAlertLoad();
@@ -2368,7 +2404,7 @@
   /* Waking reuses the chip's own path, receipt rule and all - one way to wake
    * an agent in the whole app, not a second one that drifts from it. */
   function actWake(id, name) {
-    markKpi(id, 'active', name, null);
+    kpiMark(id, 'active', name, null);
   }
   function actGone(id, name) {
     openModal('<h2>' + svg('alert') + ' ' + t('Not coming back') + ' &mdash; ' + esc(name) + '</h2>' +
@@ -2630,7 +2666,7 @@
         : t('Master list with live KPI status.')) + '</p>' +
       (isManager() ? branchAssignHtml() : '') +
       (isManager() ? baseDiagHtml() : '') +
-      '<div class="panel"><div class="row">' +
+      '<div class="toolbar">' +
       '<div class="field"><label>' + t('Search in') + '</label><select data-change="agentField">' +
       [['', t('Everything')], ['acc', 'Account'], ['name', 'Name'], ['phone', 'Phone'], ['branch', 'Branch'], ['location', 'Physical Location']].map(function (o) {
         return '<option value="' + o[0] + '"' + ((state._agentField || '') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
@@ -2653,7 +2689,7 @@
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
       (isManager() ? '<button class="ghost mini" data-action="agentsExport" title="' + esc(t('Every agent, one sheet per BDO')) + '">' + svg('download') + ' ' + t('All agents') + '</button>' : '') +
-      '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div></div>' +
+      '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div>' +
       '<div class="panel wide"><div class="tablewrap tall cardwrap"><table class="cardable"><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
       '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
@@ -3408,52 +3444,11 @@
   }
   /* ---- high-earner priority list (bands A-E, live not-served match) ---- */
   var BAND_META = { A: 'above 2,000,000', B: 'above 1,000,000', C: 'above 500,000', D: 'above 100,000', E: 'above 50,000' };
-  function heStationsFill() {
-    var sel = elById('heStation'); if (!sel) return;
-    api('high_earners_get').then(function (d) {
-      sel.innerHTML = '<option value="">' + t('pick...') + '</option><option value="ALL">' + t('All stations') + '</option>' +
-        (d.stations || []).map(function (s) { return '<option value="' + esc(s) + '">' + esc(s) + '</option>'; }).join('');
-      var box = elById('heBox');
-      if (box && !d.total) box.innerHTML = '<span class="note">' + t('The OM has not uploaded a high-earner list yet.') + '</span>';
-    }).catch(function () { /* panel stays quiet */ });
-  }
-  function heLoad() {
-    var sel = elById('heStation'), box = elById('heBox');
-    if (!sel || !box) return;
-    if (!sel.value) { toast(t('Pick your SA station first'), 'warn'); return; }
-    var qs = sel.value === 'ALL' ? '' : '&station=' + encodeURIComponent(sel.value);
-    box.innerHTML = '<div class="skel skel-line"></div><div class="skel skel-line"></div>';
-    api('high_earners_get', { qs: qs }).then(function (d) {
-      var editable = can('mybase', 'e') && !isSpecial();
-      var html = '<div class="row" style="margin-bottom:6px"><span class="note">' +
-        fmt(d.servedAlready) + ' ' + t('already served') + ' &middot; ' + t('showing the NOT-served only') + '</span></div>';
-      var any = false;
-      ['A', 'B', 'C', 'D', 'E'].forEach(function (b) {
-        var list = d.bands[b] || [];
-        if (!list.length) return;
-        any = true;
-        /* commission figures are management-only: BDOs get the band letter,
-         * the server never sends them the amount */
-        var money = !!d.showMoney;
-        html += '<h3 style="margin:12px 0 6px;font-size:13px"><span class="pill fire">' + t('LIST') + ' ' + b + '</span> ' +
-          '<span class="note">' + (money ? t(BAND_META[b]) + ' &middot; ' : '') + list.length + '</span></h3>' +
-          '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>Agent</th>' + (money ? '<th>Commission</th>' : '') + '<th>Phone</th><th>Branch</th><th>Location</th><th>Action</th></tr></thead><tbody>' +
-          list.map(function (a) {
-            var act = a.agentId
-              ? (editable ? '<button class="kchip todo" data-action="kpiMark" data-id="' + a.agentId + '" data-kpi="served" data-name="' + esc(a.name) + '">' + t('Serve') + '</button>' : '-')
-              : '<span class="pill dim">' + t('not in system yet') + '</span>';
-            return '<tr><td class="c-name">' + esc(a.name || a.acc) + '<div class="note">' + esc(a.acc) + '</div></td>' +
-              (money ? '<td class="c-meta" data-l="commission"><b>' + fmt(a.commission) + '</b></td>' : '') +
-              '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
-              '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-              '<td class="c-meta" data-l="location">' + (a.location ? esc(a.location) : '<span class="pill bad">missing</span>') + '</td>' +
-              '<td class="c-kpis">' + act + '</td></tr>';
-          }).join('') + '</tbody></table></div>';
-      });
-      if (!any) html += '<div class="note">' + t('Every high earner here is already served. Excellent.') + '</div>';
-      box.innerHTML = html;
-    }).catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
-  }
+  /* An officer now reads his high earners inside his own base list, filtered by
+   * band (LIST A-E), and the OM downloads them from the Team screen. The
+   * station-picker panel those two paths replaced is gone, and nothing has
+   * rendered #heStation or #heBox since - so heStationsFill() and heLoad() sat
+   * here unreachable, looking maintained. */
   /* New agent recruited in the field - counts as the BDO's activeness credit. */
   function recruitModal() {
     openModal('<h2>' + svg('users') + ' ' + t('Recruit new agent') + '</h2>' +
@@ -3558,21 +3553,20 @@
         ? '<div class="panel"><h2>' + svg('pin') + t('My route plan today') + ' <span class="pill dim">' + esc(rp.now || '') + ' EAT</span></h2>' +
           '<p class="note">' + t('Write the places you are going to visit BEFORE 10:00 EAT. Your team leader approves it.') + '</p>' + routeHtml + '</div>'
         : '';
-      var mine = (d.reports || []).filter(function (r) { return r.bdo === state.user.username; }).reverse();
-      var tot = { f: 0, a: 0 };
-      mine.forEach(function (r) { tot.f += Number(r.float) || 0; tot.a += Number(r.apk) || 0; });
-      var hist = mine.slice(0, 14).map(function (r) {
-        return '<tr><td>' + esc(r.date) + '</td><td>' + fmt(r.float) + '</td>' +
-          '<td>' + (r.late ? '<span class="pill gold">LATE</span>' : '<span class="pill ok">OK</span>') + '</td></tr>';
-      }).join('') || '<tr><td colspan="3" class="note">-</td></tr>';
-      var totalRow = mine.length
-        ? '<tr style="font-weight:800"><td>' + t('Total') + ' (' + mine.length + ')</td><td>' + fmt(tot.f) + '</td><td></td></tr>'
-        : '';
-      var perfPanel = base.performance
-        ? '<div class="panel"><h2>' + svg('percent') + t('Performance trend') + ' ' + flagPill(base.performance.flag, base.performance.score) + '</h2>' +
-          '<p class="note">' + esc(t('My reports this month')) + ' + KPI = ' + esc(t('My Performance')) + '</p>' +
-          perfBars(base.performance.kpis) + '</div>'
-        : '<div class="panel"><div class="note">' + esc(t('Your OM has not set your targets for')) + ' ' + esc(base.month || '') + ' ' + esc(t('yet - your weighted score will appear here.')) + '</div></div>';
+      /*
+       * HIS SCORE LIVES ON HIS DASHBOARD - drawn from these very numbers by the
+       * same perfBars(). A second copy of those bars here was one screen showing
+       * another screen's panel. What belongs on the page where he writes the
+       * report is only the answer to 'did that move anything': the number, and
+       * the way to the bars.
+       */
+      var scoreLine = base.performance
+        ? '<div class="sec"><div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<b>' + t('My weighted score this month') + '</b> ' + flagPill(base.performance.flag, base.performance.score) +
+          '<div class="spacer"></div>' +
+          '<button class="ghost mini" data-action="tab" data-tab="dashboard">' + t('See where it comes from') + '</button>' +
+          '</div></div>'
+        : '<div class="sec"><div class="note">' + esc(t('Your OM has not set your targets for')) + ' ' + esc(base.month || '') + ' ' + esc(t('yet - your weighted score will appear here.')) + '</div></div>';
       /* the activeness specialist types NOTHING: his report is COMPUTED from
        * his agent taps + forms, so it always matches the agent list. No float
        * shortage for him either. */
@@ -3586,33 +3580,29 @@
           card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
           card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited)) +
           '</div>' +
-          routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
-          reportDaysPanel(d, base.month || curMonth());
+          routePanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
+          reportDaysPanel(d, base.month || curMonth(), true);
         return;
       }
       v.innerHTML =
         greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
         '<p class="page-sub">' + t('Type only FLOAT here. Every other KPI is ticked on the agent itself, so we always know which agent was handled by whom.') + '</p>' +
+        /* the day in the order he lives it: the route before 10:00, the float
+         * when he comes back, the month underneath both */
+        routePanel +
         '<div class="panel"><h2>' + svg('cal') + t('Send report') + '</h2>' +
         '<div class="row"><div class="field"><label>' + t('Report date (today or up to 2 days back)') + '</label><input id="drDate" type="date" value="' + isoToday() + '" min="' + isoDaysAgo(2) + '" max="' + isoToday() + '"></div>' +
         '<div class="field"><label>' + t('Total float served') + '</label><input id="drFloat" type="number" min="0" placeholder="0"></div></div>' +
         '<p class="note" style="margin-top:8px">' + svg('users') + ' ' + t('Serving, visits, APK and activeness: tick them on the agent, not here.') + ' <button class="ghost tiny" data-action="tab" data-tab="' + (can('agents', 'v') ? 'agents' : 'mybase') + '">' + t('Open agent list') + '</button></p>' +
         '<div class="row" style="margin-top:10px"><button class="btn" data-action="drSave">' + t('Save report') + '</button>' +
-        '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div></div>' +
-        routePanel + perfPanel + activenessPanel + (pipe ? pipePanel(pipe) : '') +
-        '<div class="panel"><h2>' + svg('chart') + t('My reports this month') + '</h2>' +
-        '<div class="tablewrap"><table><thead><tr><th>' + t('Date') + '</th><th>Float</th><th>' + t('Status') + '</th></tr></thead><tbody>' + hist + totalRow + '</tbody></table></div></div>' +
-        /* the report-days grid belongs next to where he writes reports, not on
-         * the dashboard - OK / LATE / MISS for every working day of the month */
-        reportDaysPanel(d, base.month || curMonth());
+        '<button class="ghost" data-action="shortage">' + svg('alert') + ' ' + t('Report float shortage') + '</button></div>' +
+        scoreLine + '</div>' +
+        activenessPanel + (pipe ? pipePanel(pipe) : '') +
+        /* OK / LATE / MISS for every working day, with the float he typed in the
+         * cell. The 14-row table that used to sit here showed those same floats
+         * and the same LATE marks, one screen-length above them. */
+        reportDaysPanel(d, base.month || curMonth(), true);
     }).catch(function (e) { v.innerHTML = errBox(e); });
-  }
-  function reportDaysPanel(dr, month) {
-    var mx = reportDaysMatrix(dr, month);
-    return '<div class="panel"><h2>' + svg('cal') + t('My report days') + ' - ' + esc(month || '') + '</h2>' +
-      '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> &middot; <span class="pill bad">MISS</span> ' +
-      t('working day without a report') + '</p>' +
-      '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
   }
   function drSave() {
     api('daily_report_save', { body: { date: elById('drDate').value, float: elById('drFloat').value } })
@@ -4121,16 +4111,6 @@
       '<div class="row" style="margin-top:6px"><button class="ghost mini" data-action="upClear">' + t('Clear result') + '</button></div>' +
       '</div>';
   }
-  function heUpload() {
-    readExcel(elById('heFile'), function (rows) {
-      api('high_earners_upload', { body: { rows: rows } })
-        .then(function (d) {
-          elById('heResult').innerHTML = '<span class="pill ok">' + d.count + ' ' + t('high earners saved') + '</span> ' + t('BDOs now see the not-served ones on their priority list.');
-          toast(d.count + ' ' + t('high earners saved'), 'ok');
-        })
-        .catch(function (e) { elById('heResult').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
-    });
-  }
   function readExcel(fileInput, cb) {
     var f = fileInput.files && fileInput.files[0];
     if (!f) { toast('Choose an Excel file first', 'warn'); return; }
@@ -4623,9 +4603,9 @@
     v.innerHTML =
       '<h1 class="page-title">' + t('Fuel & Performance') + '</h1>' +
       '<p class="page-sub">' + t('Weekly fuel targets for every BDO, and how each one performed month by month.') + '</p>' +
-      '<div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">' +
+      '<div class="toolbar">' +
       '<span class="note" style="flex:1">' + t('Fuel rule: 70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</span>' +
-      '<button class="btn" data-action="fuelPrint">' + svg('download') + t('Print all months') + '</button></div></div>' +
+      '<button class="btn" data-action="fuelPrint">' + svg('download') + t('Print all months') + '</button></div>' +
       weeklyPanel() +
       momxHtml() +
       '<div class="panel"><h2>' + svg('percent') + t('One month, KPI by KPI') + '</h2>' +
@@ -5078,9 +5058,26 @@
   var DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function isoDow(dateStr) { var d = new Date(dateStr + 'T12:00:00'); var n = d.getDay(); return n === 0 ? 7 : n; }
   /* Who sent his daily report, who was late, who missed a working day. */
-  function reportDaysPanel(dr, m) {
-    var mx = reportDaysMatrix(dr, m);
-    return '<div class="panel"><h2>' + svg('cal') + t('Daily reports - last') + ' ' + mx.days + ' ' + t('days') + '</h2>' +
+  /*
+   * ONE definition, two readings of the same grid.
+   *
+   * There were TWO functions of this name - the officer's and the office's -
+   * and being function declarations the second silently won for both call
+   * sites, so a BDO opening his own Daily Report was told he was looking at
+   * 'Daily reports - last 10 days' in management's words. `mine` decides.
+   *
+   * His own grid also carries the month's float: the 14-row table that used to
+   * sit above it existed only to show those numbers and said everything else
+   * the grid already says.
+   */
+  function reportDaysPanel(dr, m, mine) {
+    var mx = reportDaysMatrix(dr, m, mine);
+    var flo = 0;
+    (dr.reports || []).forEach(function (r) { flo += Number(r.float) || 0; });
+    return '<div class="panel"><h2>' + svg('cal') +
+      (mine ? t('My report days') + ' - ' + esc(m || '')
+            : t('Daily reports - last') + ' ' + mx.days + ' ' + t('days')) +
+      (mine && flo ? ' <span class="pill gold">' + t('float this month') + ': ' + fmt(flo) + '</span>' : '') + '</h2>' +
       '<p class="note"><span class="pill ok">OK</span> ' + t('on time') + ' &middot; <span class="pill gold">LATE</span> ' +
       t('after midnight') + ' &middot; <span class="pill bad">MISS</span> ' + t('working day without a report') + '</p>' +
       '<div class="tablewrap"><table><thead><tr>' + mx.head + '</tr></thead><tbody>' + mx.body + '</tbody></table></div></div>';
@@ -5158,7 +5155,9 @@
       .catch(function (e) { toast(e.message, 'err'); });
   }
   /* danger zone: show a BDO's filled data with per-report deletes + erase buttons */
-  function bdLoad() {
+  /* Settings & Data: load ONE officer's filed work so it can be inspected
+   * before anything is erased. Named apart from the Team screen's bdLoad. */
+  function bdInspectLoad() {
     var bdo = elById('bdSel') ? elById('bdSel').value : '';
     var box = elById('bdBox');
     if (!bdo) { toast('Pick a BDO first', 'warn'); return; }
@@ -5182,11 +5181,19 @@
     }).catch(function (e) { toast(e.message, 'err'); });
   }
   function wdSave() {
-    var per = {};
-    var bdo = elById('wdBdo') ? elById('wdBdo').value : '';
-    var days = elById('wdDays') ? elById('wdDays').value.trim() : '';
-    if (bdo && days) per[bdo] = days;
-    api('working_days_save', { body: { global: elById('wdGlobal').value.trim(), perBdo: per } })
+    var per = {}, glob = '';
+    Array.prototype.forEach.call(document.querySelectorAll('.wdRow'), function (r) {
+      var days = Array.prototype.slice.call(r.querySelectorAll('.wdD:checked'))
+        .map(function (c) { return c.value; }).join(',');
+      var who = r.getAttribute('data-bdo');
+      if (!who) { glob = days; return; }
+      /* An officer who works the office week keeps NO override, so next time the
+       * office week changes he changes with it. Only a genuine difference is
+       * written, and going back to the office week clears it again. */
+      per[who] = (days === glob) ? '' : days;
+    });
+    if (!glob) { toast(t('Pick at least one working day for the office'), 'warn'); return; }
+    api('working_days_save', { body: { global: glob, perBdo: per } })
       .then(function () { toast('Working days saved', 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
   }
@@ -5277,13 +5284,13 @@
       return '<h2 class="sec-head">' + svg('percent') + ' ' + t('THE SAME MONTH - FILE PLUS FIELD') + '</h2>' +
         '<p class="page-sub">' + t('The uploaded file PLUS the work your BDOs did in the field, added together and counted once.') + '</p>' +
 
-        '<div class="panel"><div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">' +
-        '<span class="note" style="flex:1 1 220px;min-width:180px">' + t('Same month and station as the section above.') + '</span>' +
+        '<div class="toolbar">' +
+        '<span class="note">' + t('Same month and station as the section above.') + '</span>' +
         '<button class="ghost" data-action="cbDownload">' + svg('download') + ' ' + t('Download Excel') + '</button>' +
         '</div>' +
-        '<p class="note" style="margin-top:8px">' + svg('check') + ' ' +
+        '<p class="page-sub">' + svg('check') + ' ' +
         t('No double counting: an agent can hold only ONE credit per KPI per month, so a KPI already in the file is never added again when a BDO also ticked it. "From field" is only the work the file does not contain.') +
-        (d.targetsFrom === 'office-fallback' ? ' <span class="pill gold">' + t('using office-wide targets') + '</span>' : '') + '</p></div>' +
+        (d.targetsFrom === 'office-fallback' ? ' <span class="pill gold">' + t('using office-wide targets') + '</span>' : '') + '</p>' +
 
         /* THE HEADLINE: one weighted score for this station, built from the
          * combined figures, beside the file-only score the dashboard shows. */
@@ -5292,9 +5299,7 @@
              (d.station ? ' - ' + d.station : ''),
              d.achievement == null ? '-' : d.achievement + '%',
              d.weighted ? t('weights total') + ' ' + d.weightTotal + '%' : t('no weights set - set them in Monthly Targets')) +
-        card('upload', t('Office score'), d.officeAchievement == null ? '-' : d.officeAchievement + '%',
-             d.fromUpload ? t('from the uploaded file - the dashboard number')
-                          : t('no file uploaded yet - the dashboard falls back to live marks')) +
+        /* the file-only score is the headline card at the top of this same screen */
         card('zap', t('Difference'),
              (d.achievement == null || d.officeAchievement == null) ? '-'
                : (d.achievement >= d.officeAchievement ? '+' : '') + (d.achievement - d.officeAchievement) + '%',
@@ -5462,7 +5467,7 @@
         greetingLine() +
         '<h1 class="page-title">' + t('BDOs') + '</h1>' +
         '<p class="page-sub">' + t('Every BDO\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.') + '</p>' +
-        '<div class="panel"><div class="row">' +
+        '<div class="toolbar">' +
         '<div class="field"><label>' + t('Month') + '</label><input id="bdMonth" type="month" value="' + esc(m) + '"></div>' +
         '<button class="btn" data-action="bdLoad">' + t('Load') + '</button>' +
         '<div class="spacer"></div>' +
@@ -5470,7 +5475,7 @@
         '<button class="ghost" data-action="heNotServed">' + svg('download') + ' ' + t('High earners NOT served') + '</button>' +
         '<button class="ghost" data-action="heXlsAll">' + svg('flame') + ' ' + t('High earners - Excel') + '</button>' +
         '<button class="ghost" data-action="heDocAll">' + svg('flame') + ' ' + t('High earners - Word') + '</button>' +
-        '</div></div>' +
+        '</div>' +
         '<div class="grid cards" style="margin-bottom:12px">' +
         card('users', t('Agents in all rounds'), fmt(T.base), fmt(T.served) + ' ' + t('served so far')) +
         card('flame', t('High earners in rounds'), fmt(T.he), fmt(T.heServed) + ' ' + t('served')) +
@@ -6103,9 +6108,9 @@
         greetingLine() +
         '<h1 class="page-title">' + t('Flags') + '</h1>' +
         '<p class="page-sub">' + t('Every BDO live mark cross-checked against the uploaded performance file. Matched = both agree, Mismatch = the file said NOT.') + '</p>' +
-        '<div class="panel"><div class="row"><div class="field"><label>' + t('Month') + '</label><input id="flMonth" type="month" value="' + esc(m) + '"></div>' +
+        '<div class="toolbar"><div class="field"><label>' + t('Month') + '</label><input id="flMonth" type="month" value="' + esc(m) + '"></div>' +
         '<button class="btn" data-action="flLoad">' + t('Load') + '</button>' +
-        '<button class="ghost" data-action="flDownload">' + svg('download') + ' ' + t('Download Excel - one sheet per BDO') + '</button></div></div>' +
+        '<button class="ghost" data-action="flDownload">' + svg('download') + ' ' + t('Download Excel - one sheet per BDO') + '</button></div>' +
         '<div class="panel"><h2>' + svg('percent') + t('Per BDO x KPI') + ' &mdash; ' + t('matched vs mismatch') + '</h2>' +
         '<p class="note">' + t('Green = matched, red = mismatch. Bigger red = more suspicious claims.') + '</p>' +
         '<div class="tablewrap"><table><thead><tr><th>BDO</th><th>Served</th><th>Visit</th><th>APK</th><th>Active</th><th>' + t('Matched') + '</th><th>' + t('Flagged') + '</th>' + (canClear ? '<th></th>' : '') + '</tr></thead><tbody>' + gridRows + '</tbody></table></div>' +
@@ -6244,38 +6249,60 @@
           (m2.from_user !== state.user.username ? '<button class="ghost tiny" data-action="msgReply" data-id="' + m2.id + '" data-from="' + esc(m2.from_user) + '" data-body="' + esc(m2.body) + '">' + t('Reply') + '</button>' : '') +
           '<button class="ghost tiny" data-action="msgDismiss" data-id="' + m2.id + '">' + t('Delete for me') + '</button></div></div>';
       }).join('') || '<div class="note">' + t('No messages yet.') + '</div>';
-      var fb = can('mybase', 'e')
-        ? '<div class="panel"><h2>' + svg('flame') + t('Market feedback - complaints, opinions, suggestions') + '</h2>' +
-          '<p class="note">' + t('What you face in the market goes straight to your team leader and the operational manager.') + '</p>' +
-          '<div class="row"><input id="fbBody" maxlength="500" style="flex:1;min-width:220px" placeholder="' + esc(t('e.g. agents in Kaloleni complain about float delays...')) + '">' +
-          '<button class="btn" data-action="fbSend">' + t('Send to management') + '</button></div></div>'
-        : '';
-      /* management composes here too, beside what it is answering */
-      var send = can('reports', 'e')
-        ? '<div class="panel"><h2>' + svg('mail') + t('Messages to members') + '</h2>' +
-          '<div class="row"><div class="field"><label>' + t('To') + '</label><select id="msgTo"><option value="">' + t('All members') + '</option></select></div>' +
-          '<div class="field" style="flex:1;min-width:220px"><label>' + t('Message') + '</label>' +
-          '<input id="msgBody" placeholder="' + esc(t('Type the announcement...')) + '" maxlength="500"></div>' +
-          '<button class="btn" data-action="msgSend">' + t('Send') + '</button></div>' +
-          '<div id="msgSent" style="margin-top:10px"></div></div>'
-        : '';
+      /*
+       * ONE PLACE TO WRITE, whoever you are.
+       *
+       * Management composing an announcement and an officer sending market
+       * feedback are the same act - they were two panels with two headings, and
+       * a team leader who may do both saw both stacked above his own box.
+       *
+       * A panel holding one thing is named after that thing (the same rule the
+       * navigation follows for a group holding one screen), so nobody is shown a
+       * vague heading with a single form under it.
+       */
+      var writeBits = [];
+      if (can('reports', 'e')) writeBits.push({
+        h: t('Announcement to members'),
+        b: '<div class="row"><div class="field"><label>' + t('To') + '</label><select id="msgTo"><option value="">' + t('All members') + '</option></select></div>' +
+           '<div class="field" style="flex:1;min-width:220px"><label>' + t('Message') + '</label>' +
+           '<input id="msgBody" placeholder="' + esc(t('Type the announcement...')) + '" maxlength="500"></div>' +
+           '<button class="btn" data-action="msgSend">' + t('Send') + '</button></div>' +
+           '<div id="msgSent" style="margin-top:10px"></div>'
+      });
+      if (can('mybase', 'e')) writeBits.push({
+        h: t('Market feedback to management'),
+        b: '<p class="note">' + t('What you face in the market goes straight to your team leader and the operational manager.') + '</p>' +
+           '<div class="row"><input id="fbBody" maxlength="500" style="flex:1;min-width:220px" placeholder="' + esc(t('e.g. agents in Kaloleni complain about float delays...')) + '">' +
+           '<button class="btn" data-action="fbSend">' + t('Send to management') + '</button></div>'
+      });
+      var compose = '';
+      if (writeBits.length === 1) {
+        compose = '<div class="panel"><h2>' + svg('mail') + writeBits[0].h + '</h2>' + writeBits[0].b + '</div>';
+      } else if (writeBits.length) {
+        compose = '<div class="panel"><h2>' + svg('mail') + t('Write a message') + '</h2>' +
+          writeBits.map(function (w, i) {
+            return '<div' + (i ? ' class="sec"' : '') + '><h3 class="sec-sub">' + w.h + '</h3>' + w.b + '</div>';
+          }).join('') + '</div>';
+      }
       v.innerHTML =
         greetingLine() +
         '<h1 class="page-title">' + t('Messages') + '</h1>' +
         '<p class="page-sub">' + t('Newest first. Reply to the sender, or delete a message from your own box once read.') + '</p>' +
-        send + fb +
+        compose +
         '<div class="panel"><h2>' + svg('mail') + t('Your box') + '</h2>' + rows + '</div>';
-      if (send) msgMgrLoad();
+      if (can('reports', 'e')) msgMgrLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
   /* ---------------- Data Manager (OM/superadmin) ---------------- */
   function viewData(v) {
     Promise.all([api('uploads_list'), api('members_list'),
-                 can('dashboard', 'e') ? api('dashboard') : Promise.resolve(null)]).then(function (rr) {
+                 can('dashboard', 'e') ? api('dashboard') : Promise.resolve(null),
+                 /* who works which days - the grid that decides what counts as MISS */
+                 api('daily_reports_get').catch(function () { return null; })]).then(function (rr) {
       var ups = rr[0].rows || [];
       var members = (rr[1] || []).filter(function (m) { return m.username !== state.user.username; });
-      var cfg = rr[2];
+      var cfg = rr[2], wd = rr[3];
       var upRows = ups.map(function (u) {
         return '<tr><td>' + esc((u.at || '').slice(0, 16)) + '</td><td>' + esc(u.month) + '</td><td>' + esc(u.week || '-') + '</td>' +
           '<td>' + esc(u.label) + '</td><td>' + esc(u.by_user) + '</td><td>' + fmt(u.rows_count) + '</td>' +
@@ -6306,7 +6333,8 @@
           '<div class="field"><label>' + t('Required APK version') + '</label><input id="apkReq" style="width:100px" value="' + esc(cfg.apkRequired) + '"></div>' +
           '<div class="field"><label>' + t('Serving receipt') + '</label><select id="srvRec"><option value="optional"' + (cfg.serveReceipt !== 'required' ? ' selected' : '') + '>' + t('Optional') + '</option><option value="required"' + (cfg.serveReceipt === 'required' ? ' selected' : '') + '>' + t('Compulsory') + '</option></select></div>' +
           '<div class="field"><label>' + t('Waking proof') + '</label><select id="wakeRec"><option value="photo"' + (cfg.wakeReceipt !== 'photo_or_note' ? ' selected' : '') + '>' + t('Photo only') + '</option><option value="photo_or_note"' + (cfg.wakeReceipt === 'photo_or_note' ? ' selected' : '') + '>' + t('Photo or typed note') + '</option></select></div>' +
-          '<button class="btn" data-action="dashSettingsSave">' + t('Save') + '</button></div></div>'
+          '<button class="btn" data-action="dashSettingsSave">' + t('Save') + '</button></div>' +
+          wdSection(wd) + '</div>'
         : '';
 
       v.innerHTML =
@@ -6321,19 +6349,32 @@
         '<div class="row" style="margin-top:10px"><button class="danger" data-action="exErase">Erase ALL Excel data</button>' +
         '<span class="note">removes every upload, all office numbers and file statuses - agents and BDO live work stay</span></div></div>' +
 
-        '<div class="panel"><h2>' + svg('users') + 'One BDO - inspect &amp; erase</h2>' +
-        '<p class="note">See what is attributed to him, delete single typed reports, or erase his month / everything - marks, base and file credits included, his performance returns to zero (type his username to confirm).</p>' +
+        /*
+         * ERASING IS ONE JOB, SO IT IS ONE PANEL.
+         *
+         * "One BDO - inspect & erase" and "Erase BDO data - tick members or take
+         * everyone" were two panels doing the same thing at two scales, each
+         * carrying its own paragraph of the same warning: everything attributed
+         * to him goes and his performance reads zero afterwards. It is said once
+         * now, with one officer above and several below it.
+         *
+         * The button that loaded one officer's data said data-action="bdLoad",
+         * which the Team screen's month picker also says. onClick answered the
+         * Team one first, looked for a #bdMonth field this screen does not have,
+         * and threw - so "Load his data" did nothing at all. It has its own name.
+         */
+        '<div class="panel"><h2>' + svg('alert') + 'Erasing a BDO&rsquo;s work</h2>' +
+        '<p class="note">Everything attributed to him goes: agent marks including the ones the uploaded file gave (and their proof photos), typed reports, won\'t-return marks, pipeline forms, shortages and his saved base. His performance reads ZERO afterwards. The office month totals stay until you erase the uploads above.</p>' +
+        '<div><h3 class="sec-sub">One officer &mdash; look before you erase</h3>' +
         '<div class="row"><div class="field"><label>BDO</label><select id="bdSel"><option value="">pick...</option>' +
         members.map(function (m) { return '<option value="' + esc(m.username) + '">' + esc(m.name) + ' (' + esc(m.username) + ')</option>'; }).join('') +
-        '</select></div><button class="ghost" data-action="bdLoad">Load his data</button></div>' +
+        '</select></div><button class="ghost" data-action="bdInspect">Load his data</button></div>' +
         '<div id="bdBox" style="margin-top:10px"></div></div>' +
-
-        '<div class="panel"><h2>' + svg('alert') + 'Erase BDO data - tick members or take everyone</h2>' +
-        '<p class="note">Removes EVERYTHING attributed to them: agent marks including the ones the uploaded file gave (+proof photos), typed reports, won\'t-return marks, pipeline forms, shortages and their saved base. Performance reads ZERO after. Office month totals stay until you erase uploads above.</p>' +
+        '<div class="sec"><h3 class="sec-sub">Several at once</h3>' +
         '<div class="row" style="margin-bottom:8px">' + (memChecks || '<span class="note">no members</span>') + '</div>' +
         '<div class="row"><div class="field"><label>Scope</label><select id="mScope"><option value="month">This month only</option><option value="all">Everything (all months)</option></select></div>' +
         '<button class="danger" data-action="mEraseSel">Erase ticked members</button>' +
-        '<button class="danger" data-action="mEraseAll">Erase ALL BDO data at once</button></div></div>';
+        '<button class="danger" data-action="mEraseAll">Erase ALL BDO data at once</button></div></div></div>';
       filingCheckLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -6380,6 +6421,44 @@
         '</div></div>';
     }).catch(function () { box.innerHTML = ''; });
   }
+  /*
+   * WORKING DAYS - and why this had to come back.
+   *
+   * working_days_save has been live on the server all along, and every MISS mark
+   * on every report-day grid is decided by it. The panel that used to set it was
+   * removed in an earlier release: the endpoint, the per-officer column and the
+   * office-wide setting all survived, but nothing rendered #wdGlobal or #wdBdo
+   * any more, so the office had been stuck on the Mon-Sat default with no way to
+   * say otherwise - and no error to show for it.
+   *
+   * It reads as a grid now rather than one officer at a time, because the real
+   * question is "who works Sundays", and that is a column, not a form.
+   */
+  var WD_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function wdSection(wd) {
+    if (!wd) return '';
+    var glob = String(wd.globalWorkingDays || '1,2,3,4,5,6').split(',');
+    function row(label, key, days, note) {
+      var tds = '';
+      for (var d = 1; d <= 7; d++) {
+        var on = days.indexOf(String(d)) >= 0;
+        tds += '<td><label class="tgl' + (on ? ' on' : '') + '" style="cursor:pointer">' +
+          '<input type="checkbox" class="wdD" value="' + d + '"' + (on ? ' checked' : '') + ' style="display:none">' +
+          WD_NAMES[d] + '</label></td>';
+      }
+      return '<tr class="wdRow" data-bdo="' + esc(key) + '"><td><b>' + esc(label) + '</b>' +
+        (note ? '<div class="note">' + note + '</div>' : '') + '</td>' + tds + '</tr>';
+    }
+    var rows = row(t('Everyone'), '', glob, t('the office week'));
+    (wd.bdos || []).forEach(function (b) {
+      rows += row(b.name, b.username, (b.workingDays || []).map(String), '');
+    });
+    return '<div class="sec"><h3 class="sec-sub">' + t('Working days') + '</h3>' +
+      '<p class="note">' + t('A working day with no report is a MISS on his report-day grid. An officer whose row matches the office week follows it - change the office week and he changes with it.') + '</p>' +
+      '<div class="tablewrap"><table><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn" data-action="wdSave">' + t('Save working days') + '</button></div></div>';
+  }
+
   /* one confirm pattern for every big eraser: type ERASE to proceed */
   function dmConfirm(title, note, action, attrs) {
     var extra = '';
@@ -6427,22 +6506,41 @@
         return '<tr><td>' + esc((a.at || '').slice(0, 16)) + '</td><td>' + esc(a.who || 'system') + '</td><td>' + esc(a.action) + '</td><td>' + esc(a.detail || '') + '</td></tr>';
       }).join('') || '<tr><td colspan="4" class="note">No activity yet.</td></tr>';
 
-      /* superadmin secures his own account with an authenticator app */
-      var twofaPanel = state.user.role === 'superadmin'
-        ? '<div class="panel"><h2>' + svg('lock') + 'Two-step verification (2FA)</h2>' +
-          (me.user.totp_on
-            ? '<p class="note">2FA is <span class="pill ok">ON</span> for <b>' + esc(state.user.username) + '</b> - signing in needs your password <b>plus</b> the 6-digit code from your authenticator app.</p>' +
-              '<div class="row"><div class="field"><label>Current 6-digit code</label><input id="tfOff" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>' +
-              '<button class="danger" data-action="totpDisable">Turn off 2FA</button></div>'
-            : '<p class="note">2FA is <span class="pill bad">OFF</span>. Protect this account: after enabling, signing in needs your password <b>plus</b> a 6-digit code from <b>Google Authenticator</b> (or any authenticator app). If you ever lose the phone, another super admin - or phpMyAdmin (clear <code>users.totp_secret</code>) - can rescue you.</p>' +
-              '<button class="btn" data-action="totpSetup">' + svg('lock') + ' Enable 2FA</button>') +
-          '</div>'
-        : '';
+      /*
+       * 2FA: LOUD WHEN IT IS OFF, A FOOTNOTE WHEN IT IS ON.
+       *
+       * Off, it is the most important thing on the screen and it stays a panel at
+       * the top. On, it is a settled fact that was taking a whole panel above the
+       * member list to say so - it drops to one line at the foot of the page, and
+       * the field for turning it off (which should be hard to reach by accident)
+       * opens on demand.
+       */
+      var twofaPanel = '', twofaFoot = '';
+      if (state.user.role === 'superadmin') {
+        if (me.user.totp_on) {
+          twofaFoot =
+            '<p class="note" style="margin-top:4px">' + svg('lock') +
+            ' Two-step verification is <span class="pill ok">ON</span> for <b>' + esc(state.user.username) +
+            '</b> - signing in needs your password plus the 6-digit code from your authenticator app. ' +
+            '<button class="ghost mini" data-action="reveal" data-target="tfOffBox">Turn it off</button></p>' +
+            '<div class="panel" id="tfOffBox" hidden>' +
+            '<div class="row"><div class="field"><label>Current 6-digit code</label><input id="tfOff" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></div>' +
+            '<button class="danger" data-action="totpDisable">Turn off 2FA</button></div></div>';
+        } else {
+          twofaPanel =
+            '<div class="panel" style="border-color:var(--bad)"><h2>' + svg('lock') + 'Two-step verification is OFF</h2>' +
+            '<p class="note">Protect this account: with 2FA on, signing in needs your password <b>plus</b> a 6-digit code from <b>Google Authenticator</b> (or any authenticator app). If you ever lose the phone, another super admin - or phpMyAdmin (clear <code>users.totp_secret</code>) - can rescue you.</p>' +
+            '<button class="btn" data-action="totpSetup">' + svg('lock') + ' Enable 2FA</button></div>';
+        }
+      }
       v.innerHTML =
         '<h1 class="page-title">Admin</h1><p class="page-sub">Members, roles, access control and activity.</p>' +
         twofaPanel +
-        '<div class="panel"><h2>' + svg('users') + 'Members</h2>' +
-        '<div class="row" style="margin-bottom:14px">' +
+        '<div class="panel"><h2>' + svg('users') + 'Members <span class="pill dim">' + users.length + '</span></h2>' +
+        /* five fields sat open above the table everyone comes here to read; a new
+         * member is added once in a while, so the form waits until it is asked for */
+        '<button class="ghost" id="nuOpen" data-action="reveal" data-target="nuForm">+ Add member</button>' +
+        '<div class="row" id="nuForm" hidden style="margin:10px 0 14px">' +
         '<div class="field"><label>Username</label><input id="nuUser" placeholder="e.g. amina"></div>' +
         '<div class="field"><label>Full name</label><input id="nuName" placeholder="Amina Said"></div>' +
         '<div class="field"><label>Role</label><select id="nuRole">' + roleOpts + '</select></div>' +
@@ -6456,7 +6554,8 @@
         '<div id="permRows"></div>' +
         '<div class="row" style="margin-top:14px"><button class="ghost" data-action="roleAdd">+ New role</button><div class="spacer"></div>' +
         '<button class="btn" data-action="permSave">Save permissions</button></div></div>' +
-        '<div class="panel"><h2>' + svg('cal') + 'Recent Activity</h2><div class="tablewrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>' + auditRows + '</tbody></table></div></div>';
+        '<div class="panel"><h2>' + svg('cal') + 'Recent Activity</h2><div class="tablewrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>' + auditRows + '</tbody></table></div></div>' +
+        twofaFoot;
       drawPermEditor();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -6558,7 +6657,7 @@
    * settles, so nobody taps twice wondering whether it registered. */
   var NO_SPIN = { tab: 1, closeModal: 1, toggleTheme: 1, themePick: 1, palSet: 1, toggleLang: 1,
                   togglePw: 1, backToLogin: 1, agentClear: 1, flClear: 1,
-                  baseBand: 1, kpiMark: 1 };
+                  baseBand: 1, kpiMark: 1, reveal: 1 };
   function spinWhileBusy(node) {
     if (!node || node.tagName !== 'BUTTON' || node.classList.contains('loading')) return;
     var before = netCount;
@@ -6603,6 +6702,18 @@
     if (a === 'moreNav') { moreNavSheet(); return; }
     if (a === 'upKind') { state._upKind = node.getAttribute('data-k'); renderTab(); return; }
     if (a === 'upClear') { var ur = elById('upResult'); if (ur) ur.innerHTML = ''; return; }
+    /* PROGRESSIVE DISCLOSURE, written once for the whole app: a button that
+     * reveals the form it belongs to and then gets out of the way. A five-field
+     * add form does not need to sit open above the table people came to read. */
+    if (a === 'reveal') {
+      var rTgt = elById(node.getAttribute('data-target'));
+      if (rTgt) {
+        rTgt.hidden = false;
+        var rF1 = rTgt.querySelector('input,select,textarea');
+        if (rF1) rF1.focus();
+      }
+      node.hidden = true; return;
+    }
     if (a === 'toggleTheme') { toggleTheme(); themePicker(); return; }
     if (a === 'themePick') { themePicker(); return; }
     if (a === 'palSet') { setPalette(node.getAttribute('data-p')); renderShell(); themePicker(); return; }
@@ -6667,8 +6778,6 @@
       state._baseServed = ''; state._baseLoc = ''; state._baseBranch = ''; state._baseField = '';
       renderTab(); return;
     }
-    if (a === 'heUpload') { heUpload(); return; }
-    if (a === 'heLoad') { heLoad(); return; }
     if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
     if (a === 'cbDownload') { cbDownload(); return; }
     if (a === 'brSave') { brSave(); return; }
@@ -6926,7 +7035,7 @@
         .catch(function (e2) { toast(e2.message, 'err'); });
       return;
     }
-    if (a === 'bdLoad') { bdLoad(); return; }
+    if (a === 'bdInspect') { bdInspectLoad(); return; }
     if (a === 'shortApprove') {
       api('shortage_approve', { body: { id: Number(node.getAttribute('data-id')) } })
         .then(function () { toast('Shortage approved - top management can now see it', 'ok'); renderTab(); })
@@ -7039,7 +7148,7 @@
     }
     if (a === 'bdDelReport') {
       api('daily_report_delete', { body: { id: Number(node.getAttribute('data-id')) } })
-        .then(function () { toast('Report deleted - the day reads as missed again', 'ok'); bdLoad(); })
+        .then(function () { toast('Report deleted - the day reads as missed again', 'ok'); bdInspectLoad(); })
         .catch(function (e2) { toast(e2.message, 'err'); });
       return;
     }
@@ -7062,7 +7171,7 @@
         .then(function (d) {
           closeModal();
           toast('Erased: ' + d.deleted.marks + ' marks, ' + d.deleted.reports + ' reports, ' + d.deleted.wontReturn + ' won\'t-return, ' + d.deleted.recruits + ' forms', 'ok');
-          bdLoad();
+          bdInspectLoad();
         })
         .catch(function (e2) { toast(e2.message, 'err'); });
       return;
