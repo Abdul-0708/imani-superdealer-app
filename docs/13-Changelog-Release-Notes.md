@@ -5,6 +5,71 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.79.0 — 2026-09-27 · The branch is the round, and nine numbers say where he is
+
+### His base is his branches — exactly
+
+`sync_branch_base()` already pushed every agent of his branches into his base, and pulled out any agent
+whose branch belonged to **another** officer. What it never pulled out: an agent with **no branch at
+all**, an agent in a branch **nobody holds**, and — added separately — **every agent he served this
+month** that had a location captured.
+
+So a round was "his branches **plus** strays", and the strays counted in his denominator: his coverage,
+his weekly serving target, the base he is measured on.
+
+Membership is now one thing: **the agent's branch is assigned to him.** Nothing else adds to it and
+nothing else takes away from it.
+
+- **Each agent keeps his own physical location.** Nothing here reads, writes or clears it. A branch agent
+  whose location nobody has captured is still his — he is a door to go and find, which is the whole point
+  of the list.
+- An officer who **holds no branch yet** keeps the old composition, or the screen would go blank on him
+  before the OM has assigned anything.
+- Only officers who **do** hold a branch have strays removed, for the same reason: with no branches
+  assigned anywhere, the strict rule would empty every round in the office.
+
+### A recruit can no longer walk out of his own round
+
+The branch decides whose round an agent is in — so an officer who typed a branch that was not his would
+add the man to the system and **never see him again**. Three field paths could do it: the direct recruit,
+the agent-recruit form and the pipeline form.
+
+All three go through one rule now: **blank means his own first branch, and a branch he does not hold is
+refused, naming the ones he does.** Where the app knows his branches it offers them as a list, so in the
+normal case there is nothing to type.
+
+### "New agents to claim" was promising something it can no longer do
+
+That list is agents no base row holds — which, now that every branch agent is in one, means **agents
+whose branch is assigned to nobody**. It used to say *"serve one and he joins your round"*. That is no
+longer true: the work still counts for whoever does it, but the agent only joins a round when the OM
+gives his branch to an officer. The list says that now, and is headed **Agents no branch holds**.
+
+### Nine numbers, on top of his dashboard
+
+*Priority / Total Base / My Served / Month* gave him two counts of the same round, his own tally, and a
+month already printed in the line above. Replaced with the five cards that carry nine numbers — each one
+**done and still to go**:
+
+| | |
+|---|---|
+| **My branch base** | the agents his branches hold, and which branches they are |
+| **Active** | and how many are inactive, as the last performance file read them |
+| **Served** | and how many are still to serve, with the share done |
+| **Visited** | and how many are still to visit, with the share done |
+| **Acceleration** | done, and how many of those in play are still short |
+
+**Served and visited count work by anybody** — him, a colleague, or the partner. What he needs from a
+counter is the work left on his streets, not his own tally: an agent the partner already served is not a
+door he needs to walk to. **His weighted score is unchanged** — that still counts only his own marks, in
+the panel directly underneath.
+
+**Acceleration counts only the agents the file gave a withdraw target.** It is all-or-nothing per agent,
+and an agent the file says nothing about is in neither number — otherwise the card would read *3 of 400*
+in a month where only twelve agents were ever asked for anything.
+
+---
+
 ## v1.78.0 — 2026-09-27 · The rest of the screens
 
 The same treatment as v1.77.0, applied outwards. Along the way the screens gave up four defects that no

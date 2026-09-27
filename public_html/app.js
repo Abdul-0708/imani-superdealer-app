@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.78.0';
+  var APP_VERSION = '1.79.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1461,6 +1461,9 @@
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null)];
     Promise.all(calls).then(function (rr) {
       var d = rr[0], live = rr[1], wrk = rr[2], sum = rr[3];
+      /* remembered for the recruit form, which asks for a branch and must not
+       * let him type one that is not his */
+      if (d.branches) state._myBranches = d.branches;
       /* HIS day so far - read-only motivation feed, updates as he works */
       var KL = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var liveFeed = (live.marks || []).slice(0, 12).map(function (m) {
@@ -1515,10 +1518,39 @@
           card('alert', t('Won\'t return'), fmt(sum.wontReturn)) +
           card('check', t('Forms submitted'), fmt(sum.formsSubmitted), t('became agents') + ': ' + fmt(sum.recruited));
       } else {
-        cards = card('flame', t('Priority'), fmt(d.counts.priority), t('served last month')) +
-          card('users', t('Total Base'), fmt(d.counts.total)) +
-          card('check', t('My Served'), fmt(d.counts.served)) +
-          card('cal', t('Month'), d.month + (d.monthStatus ? ' · ' + d.monthStatus : ''));
+        /*
+         * HOW FAR HE HAS GOT, AND WHAT IS STILL IN FRONT OF HIM.
+         *
+         * Priority / Total Base / My Served / Month said almost nothing he could
+         * act on: two counts of the same round, his own tally, and a month he can
+         * already read in the line above these cards. What he asks every morning
+         * is how much of his branch is still waiting - so every card now carries
+         * the number done AND the number left.
+         *
+         * Served and visited count work by ANYBODY: an agent the partner already
+         * served is not a door he needs to walk to. His weighted score is still
+         * his own marks only - that is the panel underneath.
+         */
+        var pg = d.progress || {};
+        var left = function (all, done) { var n = (all || 0) - (done || 0); return n > 0 ? n : 0; };
+        var share = function (done, all) {
+          return all > 0 ? ' - ' + Math.round((done || 0) / all * 100) + '% ' + t('done') : '';
+        };
+        cards =
+          card('users', t('My branch base'), fmt(pg.base || 0),
+               (d.branches || []).length ? (d.branches || []).join(', ') : t('no branch assigned to me yet')) +
+          card('zap', t('Active'), fmt(pg.active || 0),
+               fmt(pg.inactive || 0) + ' ' + t('inactive')) +
+          card('check', t('Served'), fmt(pg.served || 0),
+               fmt(left(pg.base, pg.served)) + ' ' + t('still to serve') + share(pg.served, pg.base)) +
+          card('target', t('Visited'), fmt(pg.visited || 0),
+               fmt(left(pg.base, pg.visited)) + ' ' + t('still to visit') + share(pg.visited, pg.base)) +
+          card('percent', t('Acceleration'), fmt(pg.accelDone || 0),
+               !pg.accelTarget
+                 ? t('no withdraw targets in the file yet')
+                 : left(pg.accelTarget, pg.accelDone) === 0
+                   ? t('all') + ' ' + fmt(pg.accelTarget) + ' ' + t('done')
+                   : fmt(left(pg.accelTarget, pg.accelDone)) + ' ' + t('of') + ' ' + fmt(pg.accelTarget) + ' ' + t('still short'));
       }
       /* HIS DASHBOARD IS HIS DAY. Nothing else belongs on it: no office totals,
        * no team feed, no month-long tables. Just his own counters and what he
@@ -2273,6 +2305,15 @@
     activenessLoad();
   }
   /* A NEW AGENT, straight into the main database and his round, in one step. */
+  /* A branch he does not hold would take the agent out of his own round the
+   * moment it is saved, so where we know his branches he picks one. */
+  function branchPicker(id) {
+    var mine = state._myBranches || [];
+    if (!mine.length) return '<input id="' + id + '" maxlength="128" placeholder="' + esc(t('e.g. HYDOM')) + '">';
+    return '<select id="' + id + '">' + mine.map(function (b) {
+      return '<option value="' + esc(b) + '">' + esc(b) + '</option>';
+    }).join('') + '</select>';
+  }
   function recruitFormHtml() {
     return '<div class="panel"><h2>' + svg('users') + t('Add an agent I have just recruited') + '</h2>' +
       '<p class="note">' + t('He is added to the main agent list, to your round, and to your activeness at once. The account number must be new - one already in the system, or recruited by anybody else, is refused.') + '</p>' +
@@ -2280,7 +2321,7 @@
       '<div class="field"><label>' + t('Account number') + ' *</label><input id="rdAcc" maxlength="64"></div>' +
       '<div class="field"><label>' + t('Agent name') + ' *</label><input id="rdName" maxlength="191"></div>' +
       '<div class="field"><label>' + t('Phone') + '</label><input id="rdPhone" maxlength="32" inputmode="tel"></div>' +
-      '<div class="field"><label>' + t('Branch') + '</label><input id="rdBranch" maxlength="128"></div>' +
+      '<div class="field"><label>' + t('Branch') + '</label>' + branchPicker('rdBranch') + '</div>' +
       '<div class="field" style="flex:1;min-width:200px"><label>' + t('Physical location') + ' *</label><input id="rdLoc" maxlength="255" placeholder="' + t('e.g. Sakina, opposite the market') + '"></div>' +
       '<button class="btn" data-action="actRecruit">' + t('Add him') + '</button>' +
       '</div></div>';
@@ -3283,6 +3324,7 @@
       var d = rr[0];
       state.month = d.month;
       if (d.activeKpis) state.activeKpis = d.activeKpis;
+      if (d.branches) state._myBranches = d.branches;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       /* NEW = agents the monthly database file brought in that nobody owns yet.
        * He serves one and it joins his round, so this is where his base grows. */
@@ -3367,25 +3409,30 @@
         '<h1 class="page-title">' + t('My Agent Base') + '</h1>' +
         '<p class="page-sub">' + esc(d.month) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
-        ' &middot; ' + t('Your round for this month - agents carried from last month plus anyone you serve now.') +
-        (d.counts.priority ? ' &middot; <span class="pill fire">' + d.counts.priority + ' ' + t('carried from last month') + '</span>' : '') + '</p>' +
+        /* it is the branch that makes the round now, so say so here */
+        ' &middot; ' + t('Every agent in your branch. The OM assigns the branch; the agents follow it.') +
+        ((d.branches || []).length ? ' &middot; <span class="pill fire">' + esc((d.branches || []).join(', ')) + '</span>' : '') + '</p>' +
         '<div class="grid cards" style="margin-bottom:16px">' +
         card('check', t('My agents'), fmt(all.length)) +
         card('flame', t('High earners'), fmt(all.length - byBand.F), t('LIST A-E')) +
-        card('users', t('Total Base'), fmt(d.counts.total)) +
+        card('users', t('My branch base'), fmt(d.counts.total)) +
         card('cal', t('Month'), d.month) +
         '</div>' +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
-        '<h2 style="margin:0">' + svg('phone') + (showNew ? t('New agents to claim') : t('My agents')) + ' (' + list.length + ')</h2>' +
+        '<h2 style="margin:0">' + svg('phone') + (showNew ? t('Agents no branch holds') : t('My agents')) + ' (' + list.length + ')</h2>' +
         '<div class="spacer"></div>' +
         '<button class="ghost mini' + (showNew ? '' : ' on') + '" data-action="baseScope" data-v="">' + t('My round') +
         ' <span class="pill dim">' + fmt((d.agents || []).length) + '</span></button>' +
-        '<button class="ghost mini' + (showNew ? ' on' : '') + '" data-action="baseScope" data-v="1">' + t('NEW - not yet mine') +
+        '<button class="ghost mini' + (showNew ? ' on' : '') + '" data-action="baseScope" data-v="1">' + t('NO BRANCH YET') +
         ' <span class="pill ' + (d.counts.unclaimed ? 'fire' : 'dim') + '">' + fmt(d.counts.unclaimed || 0) + '</span></button>' +
         '</div>' +
+        /* SERVING ONE NO LONGER MAKES HIM YOURS. The round is the branch now, so
+         * this list is the orphans - agents whose branch is not assigned to
+         * anybody. The work still counts for whoever does it; the agent only
+         * joins a round when the OM puts his branch under an officer. */
         (showNew ? '<p class="note" style="margin:0 0 8px">' +
-          t('Agents in the company database that no BDO owns this month. Serve one and he joins your round.') + ' ' +
-          t('Agents whose physical location nobody has captured are here too - go, find the place, serve him, and he becomes yours.') + '</p>' : '') +
+          t('Agents in the company database whose branch is not assigned to any BDO. Serving one still counts for you, but he joins your round only when the OM gives his branch to you.') + ' ' +
+          t('Agents whose physical location nobody has captured are here too - go, find the place and pin it.') + '</p>' : '') +
         '<div class="row filters" style="margin-bottom:6px">' +
         '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
         '<input id="baseSearch" placeholder="' + esc(t('name, acc, phone, branch, location...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
@@ -3455,7 +3502,7 @@
       '<p class="note">' + t('Fill the new agent\'s details - he joins your base as NEW + ACTIVE and counts in your Activeness.') + '</p>' +
       '<div class="field"><label>Acc name</label><input id="rcName" placeholder="agent full name"></div>' +
       '<div class="field"><label>Acc number</label><input id="rcAcc" placeholder="e.g. 01J7731842000"></div>' +
-      '<div class="field"><label>Branch</label><input id="rcBranch" placeholder="e.g. HYDOM"></div>' +
+      '<div class="field"><label>Branch</label>' + branchPicker('rcBranch') + '</div>' +
       '<div class="field"><label>Phone</label><input id="rcPhone" inputmode="tel" placeholder="e.g. 2557XXXXXXXX"></div>' +
       '<div class="field"><label>Physical location</label><input id="rcLoc" placeholder="e.g. Kaloleni, opposite NMB Bank"></div>' +
       '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
@@ -3501,6 +3548,7 @@
                  isSpecial() ? api('specialist_summary') : Promise.resolve(null),
                  api('route_plans_get'), api('places_get')]).then(function (rr) {
       var d = rr[0], base = rr[1], pipe = rr[2], sum = rr[3], rp = rr[4], places = rr[5];
+      if (base && base.branches) state._myBranches = base.branches;
 
       /* His saved places: tick as many as he plans to visit today and they are
        * joined into the route - no retyping the same spots every morning. */
@@ -6964,7 +7012,7 @@
       openModal('<h2>' + svg('users') + ' ' + t('New agent form (stage 1)') + '</h2>' +
         '<p class="note">' + t('The form is submitted at the branch and held by the BANK CHAMPION. It moves: audit -> approved -> paid & POS -> acc + location (becomes a real agent, counted in your Activeness).') + '</p>' +
         '<div class="field"><label>Agent name</label><input id="ppName"></div>' +
-        '<div class="field"><label>Branch</label><input id="ppBranch"></div>' +
+        '<div class="field"><label>Branch</label>' + branchPicker('ppBranch') + '</div>' +
         '<div class="field"><label>Bank champion (holds the form)</label><input id="ppChamp"></div>' +
         '<div class="field"><label>Phone (optional)</label><input id="ppPhone" inputmode="tel"></div>' +
         '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" data-action="closeModal">' + t('Cancel') + '</button>' +

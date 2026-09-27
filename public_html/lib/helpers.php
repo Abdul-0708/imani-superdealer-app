@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.78.0');
+define('APP_VERSION', '1.79.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -509,10 +509,23 @@ function branch_owner_of_agent($agentId) {
  */
 function sync_branch_base($month) {
   try {
+    /*
+     * EXACT MEMBERSHIP: his base is his branches and nothing else.
+     *
+     * The old delete only moved an agent whose branch belongs to SOMEBODY ELSE.
+     * An agent with no branch at all, or one in a branch nobody holds, stayed in
+     * whichever base an upload or a serving credit had put him in - so a round
+     * was "his branches PLUS strays", and the strays counted in his denominator.
+     *
+     * Only officers who actually hold a branch are touched. Before the OM has
+     * assigned any, this would otherwise empty every round in the office.
+     */
     $del = db()->prepare('DELETE b FROM base b
                           JOIN agents a ON a.id = b.agent_id
-                          JOIN bdo_branches bb ON bb.branch = a.branch
-                          WHERE b.month = ? AND bb.bdo <> b.bdo');
+                          WHERE b.month = ?
+                            AND EXISTS (SELECT 1 FROM bdo_branches x WHERE x.bdo = b.bdo)
+                            AND NOT EXISTS (SELECT 1 FROM bdo_branches bb
+                                            WHERE bb.bdo = b.bdo AND bb.branch = a.branch)');
     $del->execute(array($month));
     $moved = $del->rowCount();
     $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
@@ -521,6 +534,78 @@ function sync_branch_base($month) {
     $ins->execute(array($month));
     return array('added' => $ins->rowCount(), 'moved' => $moved);
   } catch (Exception $e) { return array('added' => 0, 'moved' => 0); }
+}
+
+/*
+ * HOW FAR HE HAS GOT, AND HOW MUCH IS STILL IN FRONT OF HIM.
+ *
+ * The nine numbers on his dashboard, all read off the agents in his round:
+ *
+ *   base                      how many agents his branches hold
+ *   active / inactive         as the last performance file read them
+ *   served / not served       served by ANYBODY this month - him, a colleague
+ *                             or the partner - because what he needs to see is
+ *                             the work left on his streets, not his own tally.
+ *                             His SCORE still counts only his own marks.
+ *   visited / not visited     same rule
+ *   accel done / still short  acceleration is all-or-nothing per agent, and
+ *                             only agents the file gave a withdraw target are
+ *                             in play at all. An agent the file says nothing
+ *                             about is in neither number - otherwise the
+ *                             counter reads 3 of 400 in a month where only 12
+ *                             agents were ever asked for anything.
+ */
+/*
+ * WHICH BRANCH A FIELD RECRUIT LANDS IN.
+ *
+ * The branch decides whose round an agent is in, so an officer who typed a
+ * branch that is not his would add the man to the system and never see him
+ * again. Blank means his own first branch. A branch he does not hold is
+ * refused, naming the ones he does. An officer holding no branch keeps
+ * whatever he typed - there is nothing yet to contradict him.
+ */
+function branch_for_recruit($user, $branch) {
+  $q = db()->prepare('SELECT branch FROM bdo_branches WHERE bdo = ?');
+  $q->execute(array(strtolower((string)$user['username'])));
+  $mine = array();
+  foreach ($q->fetchAll() as $r) $mine[] = $r['branch'];
+  if (!count($mine)) return $branch;
+  if ($branch === '') return $mine[0];
+  if (!in_array($branch, $mine, true)) {
+    fail('You hold ' . implode(', ', $mine) . ' - an agent you put in another branch would leave your round. Use one of yours.');
+  }
+  return $branch;
+}
+
+function base_progress($month, $ids) {
+  $out = array('base' => count($ids), 'active' => 0, 'inactive' => 0,
+               'served' => 0, 'visited' => 0, 'accelTarget' => 0, 'accelDone' => 0);
+  if (!count($ids)) return $out;
+  $in = implode(',', array_fill(0, count($ids), '?'));
+  try {
+    $q = db()->prepare("SELECT act_current c, COUNT(*) n FROM agents WHERE id IN ($in) GROUP BY act_current");
+    $q->execute($ids);
+    foreach ($q->fetchAll() as $r) {
+      if ($r['c'] === 'ACTIVE') $out['active'] = (int)$r['n'];
+      elseif ($r['c'] === 'INACTIVE') $out['inactive'] = (int)$r['n'];
+    }
+    $q = db()->prepare("SELECT kpi, COUNT(DISTINCT agent_id) n FROM agent_month_kpi
+                        WHERE month = ? AND kpi IN ('served','visit') AND agent_id IN ($in)
+                        GROUP BY kpi");
+    $q->execute(array_merge(array($month), $ids));
+    foreach ($q->fetchAll() as $r) {
+      if ($r['kpi'] === 'served') $out['served'] = (int)$r['n'];
+      elseif ($r['kpi'] === 'visit') $out['visited'] = (int)$r['n'];
+    }
+    $q = db()->prepare("SELECT COUNT(DISTINCT agent_id) t,
+                               COUNT(DISTINCT CASE WHEN wd_txn >= wd_target THEN agent_id END) d
+                        FROM service_history
+                        WHERE month = ? AND wd_target > 0 AND agent_id IN ($in)");
+    $q->execute(array_merge(array($month), $ids));
+    $r = $q->fetch();
+    if ($r) { $out['accelTarget'] = (int)$r['t']; $out['accelDone'] = (int)$r['d']; }
+  } catch (Exception $e) { /* a counter strip must never take his dashboard down */ }
+  return $out;
 }
 
 /*

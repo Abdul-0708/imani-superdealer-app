@@ -672,21 +672,53 @@ try {
        * rather than an empty page he has to rebuild from the Agents tab. The
        * KPI chips are month-scoped, so everyone still starts the month at zero.
        */
-      /* NO LOCATION, NOT HIS AGENT.
-       * The round is the list of doors he can walk to, so a served credit is
-       * not enough on its own - a file can credit a serve without anybody ever
-       * capturing where the man is. Such an agent is in nobody's round and
-       * shows up under "NEW - not yet mine" for whoever goes and finds him. */
-      $mineQ = db()->prepare('SELECT k.agent_id FROM agent_month_kpi k
-                              JOIN agents a ON a.id = k.agent_id
-                              WHERE k.month = ? AND k.bdo = ? AND k.kpi = "served"
-                                AND TRIM(a.physical_location) <> ""');
-      $mineQ->execute(array($month, $bdo));
+      /*
+       * HIS ROUND IS HIS BRANCHES - nothing else.
+       *
+       * The branch is the operating model now, so one thing decides membership:
+       * the agent's branch is assigned to him. What used to be added on top -
+       * every agent he served this month that had a location captured, plus
+       * whatever an upload had filed under him - put agents from other men's
+       * streets in his round and counted them in his denominator.
+       *
+       * The agents' own physical locations are untouched by any of this: each
+       * agent keeps the location captured for him, and a branch agent with no
+       * location yet is still his to go and find.
+       *
+       * An officer who holds NO branch keeps the old composition - otherwise the
+       * screen would go blank on him before the OM has assigned anything.
+       */
+      $brQ = db()->prepare('SELECT branch FROM bdo_branches WHERE bdo = ?');
+      $brQ->execute(array($bdo));
+      $myBranches = array();
+      foreach ($brQ->fetchAll() as $r) $myBranches[] = $r['branch'];
       $ids = array();
-      foreach ($mineQ->fetchAll() as $r) $ids[] = (int)$r['agent_id'];
-      foreach ($prio as $aid => $x) $ids[] = (int)$aid;
-      foreach ($uploaded as $aid => $x) $ids[] = (int)$aid;
+      if (count($myBranches)) {
+        $bin = implode(',', array_fill(0, count($myBranches), '?'));
+        $aq = db()->prepare("SELECT id FROM agents WHERE branch IN ($bin)");
+        $aq->execute($myBranches);
+        foreach ($aq->fetchAll() as $r) $ids[] = (int)$r['id'];
+      } else {
+        /* NO LOCATION, NOT HIS AGENT - the old rule, for an officer with no
+         * branch yet: a file can credit a serve without anybody ever capturing
+         * where the man is, and such an agent is in nobody's round. */
+        $mineQ = db()->prepare('SELECT k.agent_id FROM agent_month_kpi k
+                                JOIN agents a ON a.id = k.agent_id
+                                WHERE k.month = ? AND k.bdo = ? AND k.kpi = "served"
+                                  AND TRIM(a.physical_location) <> ""');
+        $mineQ->execute(array($month, $bdo));
+        foreach ($mineQ->fetchAll() as $r) $ids[] = (int)$r['agent_id'];
+        foreach ($prio as $aid => $x) $ids[] = (int)$aid;
+        foreach ($uploaded as $aid => $x) $ids[] = (int)$aid;
+      }
       $ids = array_values(array_unique($ids));
+      /* the NEW and carried-over badges are drawn from the base table, so they
+       * must not claim an agent the branch rule has just left out */
+      if (count($myBranches)) {
+        $idSet = array_flip($ids);
+        $prio = array_intersect_key($prio, $idSet);
+        $uploaded = array_intersect_key($uploaded, $idSet);
+      }
 
       $agents = array();
       if ($ids) {
@@ -873,6 +905,9 @@ try {
         'activeKpis' => kpi_marks_active($month),
         'counts' => array('priority' => count($prio), 'newAgents' => count(array_diff_key($uploaded, $prio)),
                           'total' => count($ids), 'served' => $servedNow, 'unclaimed' => count($uc)),
+        /* the nine numbers on his dashboard: where he is and what is left */
+        'progress' => base_progress($month, $ids),
+        'branches' => $myBranches,
         'agents' => $agents, 'unclaimed' => $uc,
         'performance' => $perf, 'performanceIfCleared' => $perfIfCleared, 'flagCount' => $myFlagCount,
         'standing' => array('base' => $myBase, 'served' => $myServed,
@@ -1311,6 +1346,7 @@ try {
       $phone = trim((string)bval('phone'));
       $branch = trim((string)bval('branch'));
       $loc = trim((string)bval('location'));
+      $branch = branch_for_recruit($u, $branch);
       if ($name === '' || $acc === '' || $phone === '' || $branch === '' || $loc === '') {
         fail('Fill everything: acc name, acc number, branch, phone and physical location');
       }
@@ -1346,6 +1382,9 @@ try {
       $branch = trim((string)bval('branch'));
       $champ = trim((string)bval('champion'));
       $phone = trim((string)bval('phone'));
+      /* this is the branch the agent will land in when the form is finished, so
+       * it has to be one of his from the start */
+      $branch = branch_for_recruit($u, $branch);
       if ($name === '' || $branch === '' || $champ === '') fail('Fill agent name, branch and the bank champion holding the form');
       db()->prepare('INSERT INTO recruits (bdo, name, branch, champion, phone) VALUES (?,?,?,?,?)')
           ->execute(array($u['username'], $name, $branch, $champ, $phone));
@@ -1449,6 +1488,7 @@ try {
       if (strlen($acc) > 64 || !preg_match('/^[A-Za-z0-9\-\/]+$/', $acc)) fail('Account number: letters and digits only');
       /* a round is a list of doors; an agent with no place is not one yet */
       if ($loc === '') fail('Give his physical location - an agent nobody can find is not in anybody\'s round');
+      $branch = branch_for_recruit($u, $branch);
       $ck = db()->prepare('SELECT name FROM agents WHERE acc = ?');
       $ck->execute(array($acc));
       if ($ex = $ck->fetch()) {
