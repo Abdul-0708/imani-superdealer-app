@@ -5,6 +5,53 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.75.0 — 2026-09-27 · The prepared reports, and the week counts what is left
+
+### The weekly serving target counts what is left, not the whole round
+
+The serving KPI was a share of his round, and the round did not start again on Monday — but the
+denominator did. A man who served 100 of his 300 agents in week one was asked for a share of 300
+again in week two, which is partly asking him to serve people he has already served. Worse, it made
+the target harder every week: the men still unserved are the ones he could not reach the first time.
+
+The denominator is now **the agents in his round still unserved when the week opened**. Served means
+served by anybody this month — a second call on an agent already served is not the work the target is
+asking for. The screens say so plainly now: *left to serve*, not *round*.
+
+### The prepared reports
+
+Built to the shape of the workbook the office was assembling by hand — **Database Upload → Prepared
+reports**, where the performance file goes in:
+
+- **Overall (all BDOs)** — grouped by officer, with VACANT for branches nobody holds and UNALLOCATED
+  for agents with no branch on record.
+- **That officer** — one officer, grouped by his branches.
+- **Every officer, one file each** — fetched one after another, about a second apart, so a shared host
+  is not hit with six heavy reports at once.
+
+Each file carries the header block (agents, served, visited, active, with the fractions formatted as
+percentages), how those sit **against the whole network**, the breakdown by branch or by officer, the
+PRIORITY line, and then every agent: `No. | Agent Acc | Agent Name | Phone | Branch | Serving |
+Visiting | Activeness`.
+
+### Ordered by commission, with no commission in it
+
+The agent list is sorted **highest commission first**. The order is the instruction — an officer works
+down a list — but what each agent earns the company is **not printed anywhere in the file**. Printing
+it would turn a work list into a ranking of who is worth calling. The **No.** column carries the
+priority instead.
+
+### One honest difference from your sample
+
+Your sample stacks two lines inside a single cell (*"96 served · 43.0%"* above *"127 not served"*).
+The free SheetJS build writes number formats but not wrap-text, and a stacked cell without wrap shows
+only its first line in Excel — which would silently drop half the summary. Those became **two rows**
+instead: same numbers, same columns, nothing lost. If you want the stacked look exactly, say so and I
+will generate it as a styled HTML workbook, which Excel opens natively and which can carry wrap and
+colour.
+
+---
+
 ## v1.74.0 — 2026-09-27 · The branch is the round (schema v30)
 
 **The business change:** officers are assigned to branches. Everything follows from that — who is in a

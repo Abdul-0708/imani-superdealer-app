@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.74.0';
+  var APP_VERSION = '1.75.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1261,7 +1261,7 @@
     else if (state.tab === 'bdos') viewBdos(v);
     /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
     else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
-    else if (state.tab === 'upload') viewUpload(v);
+    else if (state.tab === 'upload') { viewUpload(v); if (isManager()) setTimeout(reportBdosLoad, 0); }
     else if (state.tab === 'targets') viewTargets(v);
     else if (state.tab === 'commission') viewCommission(v);
     else if (state.tab === 'admin') viewAdmin(v);
@@ -2897,7 +2897,7 @@
            live ? t('still moving - the week is not over') : t('final for this week')) +
       '</div>' +
       '<p class="note">' + t('70% or more = FULL fuel. 40% to 69% = HALF. Below 40% = NOTHING.') + '</p>' +
-      bar('Percentage of base served (round of ' + (r.baseCount || 0) + ')', k.serving, true) +
+      bar('Percentage served (of ' + (r.baseCount || 0) + ' still unserved this week)', k.serving, true) +
       bar('Unique serving', k.unique, false) +
       bar('Agent Visits', k.visits, false) +
       bar('Activeness', k.activeness, false);
@@ -3827,6 +3827,128 @@
       hint: 'Ranks agents by commission into LIST A-E so every BDO chases the valuable ones first. Uploading REPLACES the previous list.',
       cols: 'Agent Account, Agent Name, SA Commission, SA Station.' }
   ];
+  /*
+   * ===================== THE PREPARED AGENT REPORT =====================
+   *
+   * The workbook the office used to assemble by hand: the header block with
+   * the totals and how they sit against the whole network, the breakdown by
+   * branch (or by officer on the overall copy), the priority line, then every
+   * agent with his serving, visiting and activeness.
+   *
+   * ORDERED BY COMMISSION, HIGHEST FIRST, WITH NO COMMISSION COLUMN. The order
+   * is the instruction - an officer works down a list - but what each agent
+   * earns the company is not his to know, and printing it would turn a work
+   * list into a ranking of who is worth calling. The No. column carries the
+   * priority instead.
+   *
+   * Stacked cells in the sample became two rows here: the free SheetJS build
+   * writes number formats but not wrap-text, and a stacked cell without wrap
+   * shows only its first line - which would silently drop half the summary.
+   */
+  function agentReportDownload(bdo) {
+    if (!xlsxReady()) return;
+    var m = state._repMonth || state.openMonth || curMonth();
+    toast(t('Building the report...'), 'ok');
+    api('agent_report', { qs: '&month=' + encodeURIComponent(m) + (bdo ? '&bdo=' + encodeURIComponent(bdo) : '') })
+      .then(function (d) {
+        if (!xlsxReady()) return;
+        if (!(d.rows || []).length) { toast(t('No agents in that scope.'), 'warn'); return; }
+        var pc = function (f) { return Math.round((f || 0) * 1000) / 10 + '%'; };
+        var aoa = [];
+        var scopeLine = d.scope === 'overall'
+          ? (d.branchCount + ' ' + t('branches'))
+          : String(d.sub || '').replace(/^Branch:\s*/, '').split(', ').join(' + ');
+        var netLine = d.scope === 'overall'
+          ? (d.bdoCount + ' BDOs  \u00b7  ' + d.vacantCount + ' ' + t('vacant branches'))
+          : ('Network: ' + fmt(d.network.agents) + ' ' + t('agents'));
+        aoa.push([d.title, 'AGENT PERFORMANCE', '', '', '', '', '', '']);
+        aoa.push([String(d.sub || '') + '   |   Data as at ' + d.generated +
+                  '   |   Hardware Supermarkets, CRDB Super Agent', '', '', '', '', '', '', '']);
+        aoa.push(['', '', '', '', '', '', '', '']);
+        aoa.push(['AGENTS', '', 'SERVED', 'VISITED', '', 'ACTIVE', '', '']);
+        aoa.push([d.totals.agents, '', d.totals.served, d.totals.visited, '', d.totals.active, '', '']);
+        aoa.push([scopeLine, '', d.totals.servedFrac, d.totals.visitedFrac, '', d.totals.activeFrac, '', '']);
+        var fracRow = aoa.length;            /* 1-based row of the fractions */
+        aoa.push([netLine, '', d.totals.notServed + ' not served', d.totals.notVisited + ' not visited', '',
+                  d.totals.inactive + ' inactive', '', '']);
+        if (d.scope !== 'overall') {
+          aoa.push(['', '', 'Network: ' + pc(d.network.servedFrac), 'Network: ' + pc(d.network.visitedFrac), '',
+                    'Network: ' + pc(d.network.activeFrac), '', '']);
+        }
+        aoa.push(['', '', '', '', '', '', '', '']);
+        aoa.push([' ' + d.groupLabel, '', '', '', '', '', '', '']);
+        (d.groups || []).forEach(function (g) {
+          aoa.push([g.name + (g.sub ? '  -  ' + g.sub : ''), '',
+                    g.served + ' served  \u00b7  ' + pc(g.servedFrac),
+                    g.visited + ' visited  \u00b7  ' + pc(g.visitedFrac), '',
+                    g.active + ' active  \u00b7  ' + pc(g.activeFrac), '', '']);
+          aoa.push([g.agents + ' agents', '', g.notServed + ' not served', g.notVisited + ' not visited', '',
+                    g.inactive + ' inactive', '', '']);
+        });
+        aoa.push(['', '', '', '', '', '', '', '']);
+        aoa.push(['PRIORITY:  ' + d.priority + ' ' +
+                  t('inactive agents have not been visited. Filter Activeness = INACTIVE and Visiting = NO.'),
+                  '', '', '', '', '', '', '']);
+        aoa.push(['Activeness = ' + d.monthName + ' status. INACTIVE includes agents with no transaction recorded this year.',
+                  '', '', '', '', '', '', '']);
+        aoa.push(['', '', '', '', '', '', '', '']);
+        aoa.push(['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch', 'Serving', 'Visiting', 'Activeness']);
+        d.rows.forEach(function (r, i) {
+          aoa.push([i + 1, r.acc, r.name, r.phone, r.branch, r.serving, r.visiting, r.activeness]);
+        });
+        var ws = XLSX.utils.aoa_to_sheet(aoa);
+        /* the three fractions print as percentages, as they do in the sample */
+        ['C', 'D', 'F'].forEach(function (col) {
+          var c = ws[col + fracRow];
+          if (c) c.z = '0.0%';
+        });
+        ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 34 }, { wch: 15 }, { wch: 18 },
+                       { wch: 13 }, { wch: 10 }, { wch: 12 }];
+        ws['!merges'] = [{ s: { r: 1, c: 0 }, e: { r: 1, c: 7 } }];
+        var wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, String(d.title).slice(0, 28) || 'Report');
+        var stamp = String(d.generated || '').replace(/\s+/g, '');
+        XLSX.writeFile(wb, (d.scope === 'overall' ? 'OVERALL_OM_Agents_' : (d.bdo + '_Agents_')) + stamp + '.xlsx');
+        toast(fmt(d.rows.length) + ' ' + t('agents in the report'), 'ok');
+      })
+      .catch(function (e) { toast(e.message, 'err'); });
+  }
+  function reportPanelHtml() {
+    var m = state._repMonth || state.openMonth || curMonth();
+    return '<div class="panel"><h2>' + svg('download') + t('Prepared reports') + '</h2>' +
+      '<p class="note">' + t('The agent workbook, ready to send: totals against the network, the breakdown by branch, and every agent with his serving, visiting and activeness. Ordered by priority - the highest-earning agents first - without printing what any of them earns.') + '</p>' +
+      '<div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">' +
+      '<div class="field"><label>' + t('Month') + '</label><input id="repMonth" type="month" value="' + esc(m) + '"></div>' +
+      '<button class="btn" data-action="repOverall">' + svg('download') + ' ' + t('Overall (all BDOs)') + '</button>' +
+      '<div class="field"><label>' + t('One officer') + '</label><select id="repBdo"></select></div>' +
+      '<button class="ghost" data-action="repOne">' + svg('download') + ' ' + t('That officer') + '</button>' +
+      '<button class="ghost" data-action="repAll">' + svg('download') + ' ' + t('Every officer, one file each') + '</button>' +
+      '</div></div>';
+  }
+  function reportBdosLoad() {
+    var sel = elById('repBdo'); if (!sel) return;
+    api('bdos', { qs: '&month=' + (state._repMonth || state.openMonth || curMonth()), silent: true })
+      .then(function (d) {
+        var list = (d.rows || d.bdos || []);
+        sel.innerHTML = list.map(function (b) {
+          return '<option value="' + esc(b.bdo || b.username) + '">' + esc(b.name || b.bdo) + '</option>';
+        }).join('');
+      }, function () {});
+  }
+  /* one file per officer, fetched one after another so a slow host is not hit
+   * with six heavy reports at once */
+  function reportAll() {
+    var sel = elById('repBdo');
+    var list = sel ? Array.prototype.slice.call(sel.options).map(function (o) { return o.value; }) : [];
+    if (!list.length) { toast(t('No officers to report on'), 'warn'); return; }
+    var i = 0;
+    (function next() {
+      if (i >= list.length) { toast(list.length + ' ' + t('reports downloaded'), 'ok'); return; }
+      agentReportDownload(list[i++]);
+      setTimeout(next, 1200);
+    })();
+  }
+
   function viewUpload(v) {
     var sel = state._upKind || 'performance';
     var def = UPLOAD_KINDS.filter(function (x) { return x.k === sel; })[0] || UPLOAD_KINDS[0];
@@ -3839,6 +3961,7 @@
     }).join('');
 
     v.innerHTML =
+      (isManager() ? reportPanelHtml() : '') +
       '<h1 class="page-title">' + t('Database Upload') + '</h1>' +
       '<p class="page-sub">' + t('Every office file comes in here. Pick what kind it is - only the performance file scores anybody or raises a flag.') + '</p>' +
 
@@ -4178,7 +4301,7 @@
   /* 'serving' stays the storage key for the percentage - weeks already saved
    * carry it - and 'unique' is the count of different agents served. */
   var WEEK_DEFS = [
-    { key: 'serving', label: 'Percentage of base served', icon: 'percent', unit: '%', hint: 'percent OF HIS OWN ROUND served in the week' },
+    { key: 'serving', label: 'Percentage of base served', icon: 'percent', unit: '%', hint: 'percent of the agents STILL UNSERVED when the week opens' },
     { key: 'unique', label: 'Unique serving', icon: 'users', unit: '', hint: 'different agents served in the week' },
     { key: 'visits', label: 'Agent Visits', icon: 'target', unit: '', hint: 'visits marked in the week' },
     { key: 'activeness', label: 'Activeness', icon: 'zap', unit: '', hint: 'agents waked in the week' }
@@ -4259,7 +4382,7 @@
       if (k === 'serving') {
         /* the percentage means nothing without the round it is a percentage OF */
         var n = tv != null ? Math.round(Number(tv) / 100 * round) : 0;
-        hint = 'percent of his round of ' + round + (tv ? ' - about ' + n + ' agents' : '');
+        hint = 'percent of the ' + round + ' still unserved when this week opens' + (tv ? ' - about ' + n + ' agents' : '');
       }
       return '<div class="tg-row"><span class="tg-ic">' + svg(wd.icon) + '</span>' +
         '<span class="tg-name">' + esc(wd.label) + '</span>' +
@@ -4297,7 +4420,7 @@
         return '<span class="pill ' + cls + '">' + x.pct + '%</span>' +
           '<div class="note">' + x.actual + (x.kind === 'pct' ? '%' : '') + ' / ' + x.target + (x.kind === 'pct' ? '%' : '') + '</div>';
       }
-      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + t('round') + ': ' + fmt(r.baseCount || 0) + '</div></td>' +
+      return '<tr><td class="c-name">' + esc(r.name) + '<div class="note">' + t('left to serve') + ': ' + fmt(r.baseCount || 0) + '</div></td>' +
         '<td>' + cell(k.serving) + '</td><td>' + cell(k.unique) + '</td><td>' + cell(k.visits) + '</td><td>' + cell(k.activeness) + '</td>' +
         '<td><b>' + (r.score == null ? '-' : r.score + '%') + '</b></td>' +
         '<td>' + fuelAwardPill(r) + '</td></tr>';
@@ -6422,6 +6545,9 @@
       if (hmx) hmx.value = node.getAttribute('data-max') || '';
       return;
     }
+    if (a === 'repOverall') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; agentReportDownload(''); return; }
+    if (a === 'repOne') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; agentReportDownload(elById('repBdo') ? elById('repBdo').value : ''); return; }
+    if (a === 'repAll') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; reportAll(); return; }
     if (a === 'brLoad') { branchLoad(); return; }
     if (a === 'baseDiag') { baseDiagLoad(); return; }
     if (a === 'heXlsAll') { heReport('', 'excel'); return; }

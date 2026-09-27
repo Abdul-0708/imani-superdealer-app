@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.74.0');
+define('APP_VERSION', '1.75.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -1415,6 +1415,30 @@ function accel_count($month, $bdo) {
                       WHERE s.month = ? AND s.bdo = ? AND s.source <> 'bdo'
                         AND s.wd_target > 0 AND s.wd_txn >= s.wd_target");
   $q->execute(array($month, $bdo));
+  $r = $q->fetch();
+  return $r ? (int)$r['c'] : 0;
+}
+/*
+ * WHAT IS LEFT TO SERVE WHEN THE WEEK OPENS.
+ *
+ * The weekly serving target is a share of his round - but the round does not
+ * start again on Monday. A man who served 100 of his 300 agents in week one
+ * opens week two with 200 in front of him, and asking for 'a quarter of your
+ * round' out of 300 again is asking him to serve people he has already
+ * served. Worse, it makes the target harder every week: the men left are the
+ * ones he could not reach the first time.
+ *
+ * So the denominator is the agents in his round still unserved when the week
+ * opened. Served means served by anybody this month - a second visit to an
+ * agent already served is not the work the target is asking for.
+ */
+function week_base_remaining($month, $bdo, $weekFrom) {
+  $q = db()->prepare("SELECT COUNT(*) c FROM base b
+                      WHERE b.month = ? AND b.bdo = ?
+                        AND NOT EXISTS (SELECT 1 FROM agent_month_kpi k
+                                        WHERE k.month = b.month AND k.agent_id = b.agent_id
+                                          AND k.kpi = 'served' AND DATE(k.at) < ?)");
+  $q->execute(array($month, $bdo, $weekFrom));
   $r = $q->fetch();
   return $r ? (int)$r['c'] : 0;
 }

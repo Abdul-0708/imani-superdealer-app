@@ -3156,7 +3156,7 @@ try {
       /* his round is the denominator of the serving percentage, so it is shown
        * next to the target - '25% of 280' is a number the OM can weigh */
       $rounds = array();
-      foreach ($bdos as $b) $rounds[$b['username']] = bdo_base_count($week['month'], $b['username']);
+      foreach ($bdos as $b) $rounds[$b['username']] = week_base_remaining($week['month'], $b['username'], $week['date_from']);
       respond(array('week' => $week, 'targets' => $tq->fetchAll(), 'bdos' => $bdos, 'rounds' => $rounds));
     }
 
@@ -3258,7 +3258,7 @@ try {
       $tg = $tq->fetch();
       if (!$tg) respond(array('week' => $week, 'hasTargets' => false, 'today' => $today));
       $sc = week_score(week_actuals($week['date_from'], $week['date_to'], $u['username']), $tg,
-                       bdo_base_count($week['month'], $u['username']));
+                       week_base_remaining($week['month'], $u['username'], $week['date_from']));
       $daysLeft = max(0, (int)floor((strtotime($week['date_to']) - strtotime($today)) / 86400));
       respond(array('week' => $week, 'hasTargets' => true, 'today' => $today, 'daysLeft' => $daysLeft) + $sc);
     }
@@ -3286,7 +3286,7 @@ try {
           $tg = $wt->fetch();
           if (!$tg) { $rows[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => false); continue; }
           $sc = week_score(week_actuals($w['date_from'], $w['date_to'], $b['username']), $tg,
-                           bdo_base_count($w['month'], $b['username']));
+                           week_base_remaining($w['month'], $b['username'], $w['date_from']));
           $rows[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => true,
                           'score' => $sc['score'], 'award' => $sc['award'], 'awardLabel' => $sc['awardLabel'],
                           'kpis' => $sc['kpis']);
@@ -3338,7 +3338,7 @@ try {
           continue;
         }
         $sc = week_score(week_actuals($week['date_from'], $week['date_to'], $b['username']), $t,
-                         bdo_base_count($week['month'], $b['username']));
+                         week_base_remaining($week['month'], $b['username'], $week['date_from']));
         $out[] = array('bdo' => $b['username'], 'name' => $b['name'], 'hasTargets' => true,
                        'score' => $sc['score'], 'fuelPct' => $sc['fuelPct'], 'kpis' => $sc['kpis'],
                        'baseCount' => $sc['baseCount'], 'servedPct' => $sc['servedPct'],
@@ -4383,6 +4383,147 @@ try {
       audit($u['id'], 'branch_assign', $branch . ' -> ' . ($bdo !== '' ? $bdo : 'nobody') .
                                        ' (moved ' . $sync['moved'] . ', added ' . $sync['added'] . ')');
       respond(array('ok' => true, 'branch' => $branch, 'bdo' => $bdo, 'sync' => $sync));
+    }
+
+    /*
+     * THE PREPARED AGENT REPORT - the document the office already hands out.
+     *
+     * Built to the shape of the workbook the OM was making by hand: a header
+     * block with the totals and how they compare with the whole network, a
+     * breakdown by branch (or by officer, on the overall copy), the priority
+     * line, and then every agent with his serving, visiting and activeness.
+     *
+     * THE AGENT LIST IS ORDERED BY COMMISSION, HIGHEST FIRST, AND THE
+     * COMMISSION IS NOT IN IT. An officer works down a list, so the order is
+     * the instruction - but the amount each agent earns the company is not his
+     * to know, and printing it would turn a work list into a rank of who is
+     * worth calling. The No. column carries the priority instead.
+     */
+    case 'agent_report': {
+      $u = require_auth();
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $who = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      $isMgr = is_manager($u);
+      /* an officer may pull his own copy and nobody else's */
+      if (!$isMgr) {
+        if (!can($u, 'mybase', 'v')) fail('No access', 403);
+        $who = $u['username'];
+      }
+
+      $q = db()->prepare("SELECT a.acc, a.name, a.phone, TRIM(a.branch) branch, a.act_current,
+                                 COALESCE(h.commission, 0) commission,
+                                 EXISTS(SELECT 1 FROM agent_month_kpi k
+                                        WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served') srv,
+                                 EXISTS(SELECT 1 FROM agent_month_kpi k2
+                                        WHERE k2.month = ? AND k2.agent_id = a.id AND k2.kpi = 'visit') vis
+                          FROM agents a LEFT JOIN high_earners h ON h.acc = a.acc
+                          ORDER BY COALESCE(h.commission, 0) DESC, a.name");
+      $q->execute(array($month, $month));
+      $all = $q->fetchAll();
+
+      $own = branch_owner_map();
+      $names = array();
+      foreach (db()->query("SELECT username, name FROM users WHERE role = 'bdo'")->fetchAll() as $r) {
+        $names[$r['username']] = $r['name'] !== '' ? $r['name'] : $r['username'];
+      }
+      $mine = array();
+      if ($who !== '') {
+        $bq = db()->prepare('SELECT branch FROM bdo_branches WHERE bdo = ? ORDER BY branch');
+        $bq->execute(array($who));
+        foreach ($bq->fetchAll() as $r) $mine[strtolower(trim((string)$r['branch']))] = $r['branch'];
+      }
+
+      /* the network is always every agent - it is the yardstick the officer's
+       * own numbers are read against, so it never narrows with the scope */
+      $net = array('agents' => 0, 'served' => 0, 'visited' => 0, 'active' => 0);
+      $tot = array('agents' => 0, 'served' => 0, 'visited' => 0, 'active' => 0);
+      $groups = array(); $rows = array(); $priority = 0;
+      $branchesSeen = array(); $vacant = array();
+
+      foreach ($all as $a) {
+        $bk = strtolower(trim((string)$a['branch']));
+        $srv = (int)$a['srv'] === 1; $vis = (int)$a['vis'] === 1;
+        $act = strtoupper(trim((string)$a['act_current'])) === 'ACTIVE';
+        $net['agents']++; if ($srv) $net['served']++; if ($vis) $net['visited']++; if ($act) $net['active']++;
+        if ($bk !== '') { $branchesSeen[$bk] = $a['branch']; if (!isset($own[$bk])) $vacant[$bk] = true; }
+
+        if ($who !== '') { if (!isset($mine[$bk])) continue; }
+
+        $tot['agents']++; if ($srv) $tot['served']++; if ($vis) $tot['visited']++; if ($act) $tot['active']++;
+        if (!$act && !$vis) $priority++;
+
+        /* per-officer report groups by branch; the office copy groups by the
+         * officer who holds it, with the unheld ones named plainly */
+        if ($who !== '') {
+          $gk = $bk !== '' ? $bk : '(no branch)';
+          $gname = $bk !== '' ? $a['branch'] : 'NO BRANCH';
+          $gsub = '';
+        } elseif ($bk === '') {
+          $gk = '~unallocated'; $gname = 'UNALLOCATED'; $gsub = 'agents with no branch on record';
+        } elseif (isset($own[$bk])) {
+          $gk = $own[$bk]; $gname = strtoupper(isset($names[$gk]) ? $names[$gk] : $gk); $gsub = '';
+        } else {
+          $gk = '~vacant'; $gname = 'VACANT'; $gsub = '';
+        }
+        if (!isset($groups[$gk])) {
+          $groups[$gk] = array('key' => $gk, 'name' => $gname, 'sub' => $gsub, 'branches' => array(),
+                               'agents' => 0, 'served' => 0, 'visited' => 0, 'active' => 0);
+        }
+        if ($bk !== '') $groups[$gk]['branches'][$bk] = $a['branch'];
+        $groups[$gk]['agents']++;
+        if ($srv) $groups[$gk]['served']++;
+        if ($vis) $groups[$gk]['visited']++;
+        if ($act) $groups[$gk]['active']++;
+
+        $rows[] = array('acc' => $a['acc'], 'name' => $a['name'], 'phone' => (string)$a['phone'],
+                        'branch' => $a['branch'],
+                        'serving' => $srv ? 'SERVED' : 'NOT SERVED',
+                        'visiting' => $vis ? 'YES' : 'NO',
+                        'activeness' => $act ? 'ACTIVE' : 'INACTIVE');
+      }
+
+      $out = array();
+      foreach ($groups as $g) {
+        $g['sub'] = $g['sub'] !== '' ? $g['sub'] : implode(', ', array_values($g['branches']));
+        unset($g['branches']);
+        $g['notServed'] = $g['agents'] - $g['served'];
+        $g['notVisited'] = $g['agents'] - $g['visited'];
+        $g['inactive'] = $g['agents'] - $g['active'];
+        $g['servedFrac'] = $g['agents'] ? $g['served'] / $g['agents'] : 0;
+        $g['visitedFrac'] = $g['agents'] ? $g['visited'] / $g['agents'] : 0;
+        $g['activeFrac'] = $g['agents'] ? $g['active'] / $g['agents'] : 0;
+        $out[] = $g;
+      }
+      usort($out, function ($x, $y) { return $y['agents'] - $x['agents']; });
+
+      $title = $who !== '' ? strtoupper(isset($names[$who]) ? $names[$who] : $who) : 'OVERALL';
+      $sub = $who !== ''
+        ? ('Branch: ' . (count($mine) ? implode(', ', array_values($mine)) : 'none assigned'))
+        : 'All BDOs and branches';
+      $held = array();
+      foreach ($branchesSeen as $k => $v) if (isset($own[$k])) $held[$own[$k]] = true;
+
+      respond(array(
+        'month' => $month, 'scope' => $who !== '' ? 'bdo' : 'overall', 'bdo' => $who,
+        'title' => $title, 'sub' => $sub,
+        'generated' => date('j F Y'), 'monthName' => date('F', strtotime($month . '-01')),
+        'totals' => array('agents' => $tot['agents'], 'served' => $tot['served'],
+                          'visited' => $tot['visited'], 'active' => $tot['active'],
+                          'notServed' => $tot['agents'] - $tot['served'],
+                          'notVisited' => $tot['agents'] - $tot['visited'],
+                          'inactive' => $tot['agents'] - $tot['active'],
+                          'servedFrac' => $tot['agents'] ? $tot['served'] / $tot['agents'] : 0,
+                          'visitedFrac' => $tot['agents'] ? $tot['visited'] / $tot['agents'] : 0,
+                          'activeFrac' => $tot['agents'] ? $tot['active'] / $tot['agents'] : 0),
+        'network' => array('agents' => $net['agents'],
+                           'servedFrac' => $net['agents'] ? $net['served'] / $net['agents'] : 0,
+                           'visitedFrac' => $net['agents'] ? $net['visited'] / $net['agents'] : 0,
+                           'activeFrac' => $net['agents'] ? $net['active'] / $net['agents'] : 0),
+        'branchCount' => count($branchesSeen), 'bdoCount' => count($held), 'vacantCount' => count($vacant),
+        'groupLabel' => $who !== '' ? 'BY BRANCH' : 'BY BDO',
+        'groups' => $out, 'priority' => $priority, 'rows' => $rows,
+        'bdos' => $isMgr ? db()->query("SELECT username, name FROM users WHERE role = 'bdo' AND active = 1 ORDER BY name")->fetchAll() : array()
+      ));
     }
 
     case 'base_diagnosis': {
