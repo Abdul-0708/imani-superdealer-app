@@ -5,6 +5,57 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.76.0 — 2026-09-27 · Six tabs
+
+Thirteen tabs was a filing cabinet, not a tool. Half were one screen each, and a man looking for Flags
+had to remember whether it lived beside Targets or beside Messages.
+
+Seven nav entries exist; **no role sees more than six**, and nothing was removed — screens that belong
+to one job now sit together behind sub-tabs.
+
+| | Sees |
+|---|---|
+| **OM** | Dashboard · Agents · Performance · Reports · Team · Settings |
+| **BDO** | Dashboard · My Branch · Agents · Flags · Messages |
+| **MD** | Dashboard · Agent List · Monthly Targets · Commission & Months · Team · Messages |
+
+- **My Branch** — his agents, daily report
+- **Agents** — the agent list, activeness
+- **Performance** — fuel & weights, monthly targets, flags
+- **Reports** — upload, commission & months
+- **Settings** — settings & data, messages, admin
+
+**Activeness sits with the agent list**, not in My Branch: waking an agent is work on the agent
+database, and putting it in My Branch would have forced a "My Branch" tab onto the OM, for whom it
+means nothing.
+
+### A group with one screen is named after that screen
+
+An officer who may see nothing under Performance but Flags is shown a tab that says **Flags**. A tab
+called *Performance* that turns out to hold one unrelated-sounding page is how people decide an app is
+confusing. The OM, with three screens under it, still sees *Performance*. Same rule gives the BDO a
+**Messages** tab rather than a *Settings* tab containing only his inbox.
+
+### Three things that would have broken quietly
+
+**The permissions matrix was drawn from the navigation.** Folding tabs together would have removed
+Daily Report, Upload, Targets, Commission, Flags, Messages, Data and Admin from the only screen where
+their permissions are set — while the server went on enforcing rules the OM could no longer see or
+change. The matrix now draws the **server's** module list, which has not changed; a nav group is not
+something you can grant.
+
+**The unread-message and flag badges were keyed to tabs that no longer exist.** They now sit on the
+group — and on the sub-tab chip inside it, so a count is never hidden one level down.
+
+**Deep links pointed at removed tabs.** *Work on my flags*, *Set this month's targets*, *Go to Weekly
+Upload* and *Open the Flags panel* now name the group **and** the screen inside it, so they land where
+they always did rather than on whatever that group was last showing.
+
+The super admin still lands on Admin — which means naming both the group and the screen, or he would
+open Settings & Data every morning.
+
+---
+
 ## v1.75.0 — 2026-09-27 · The prepared reports, and the week counts what is left
 
 ### The weekly serving target counts what is left, not the whole round

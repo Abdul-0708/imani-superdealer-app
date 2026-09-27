@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.75.0';
+  var APP_VERSION = '1.76.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -867,26 +867,83 @@
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || ICON.grid) + '</svg>';
   }
 
+  /*
+   * ===================== THE NAVIGATION =====================
+   *
+   * Thirteen tabs was a filing cabinet, not a tool: half of them were one
+   * screen each, and a man looking for Flags had to remember whether it lived
+   * beside Targets or beside Messages.
+   *
+   * Seven entries, and no role sees more than six of them - an officer gets
+   * four. Screens that belong to one job sit together behind sub-tabs rather
+   * than each claiming a place in the sidebar, so nothing was removed and
+   * nothing has to be hunted for.
+   *
+   * These keys are NAVIGATION, not permissions. The server's module list is
+   * PERM_MODULES below and it has not changed - a nav group is not something
+   * you can grant.
+   */
   var MODULES = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'grid' },
-    { key: 'mybase', label: 'My Agent Base', icon: 'phone' },
-    { key: 'daily', label: 'Daily Report', icon: 'cal' },
-    { key: 'agents', label: 'Agents', icon: 'users' },
-    /* Waking agents was spread over four screens and therefore lived on none
-     * of them. It is one job, so it gets one tab. */
-    { key: 'activeness', label: 'Activeness', icon: 'zap', noPerm: true },
-    /* The OM's screen for what he pays on: fuel by the week, the score by the
-     * month. noPerm - like Activeness, who sees it is decided by role, so it has
-     * no row in the permissions matrix, where a toggle would save nothing. */
-    { key: 'fuel', label: 'Fuel & Performance', icon: 'flame', noPerm: true },
-    { key: 'bdos', label: 'BDOs', icon: 'users' },
-    { key: 'upload', label: 'Database Upload', icon: 'upload' },
-    { key: 'targets', label: 'Monthly Targets', icon: 'target' },
+    { key: 'dashboard',   label: 'Dashboard',   icon: 'grid' },
+    { key: 'mybase',      label: 'My Branch',   icon: 'phone' },
+    { key: 'agents',      label: 'Agents',      icon: 'users' },
+    { key: 'performance', label: 'Performance', icon: 'percent' },
+    { key: 'reports',     label: 'Reports',     icon: 'upload' },
+    { key: 'bdos',        label: 'Team',        icon: 'users' },
+    { key: 'settings',    label: 'Settings',    icon: 'lock' }
+  ];
+  /*
+   * What a nav entry opens. The first one a user is allowed to see is the one
+   * that opens, so the sub-tabs are ordered by what that role does most.
+   */
+  var TAB_SUBS = {
+    mybase:      [['mybase', 'My Agents'], ['daily', 'Daily Report']],
+    /* Activeness sits with the agent list, not in My Branch: waking an agent
+     * is work on the agent database, and the OM needs it without being given a
+     * 'My Branch' tab that means nothing to him. */
+    agents:      [['agents', 'Agent List'], ['activeness', 'Activeness']],
+    performance: [['fuel', 'Fuel & Weights'], ['targets', 'Monthly Targets'], ['flags', 'Flags']],
+    reports:     [['upload', 'Upload'], ['commission', 'Commission & Months']],
+    settings:    [['data', 'Settings & Data'], ['inbox', 'Messages'], ['admin', 'Admin']]
+  };
+  /* One screen's own rule, exactly as it was when each had its own tab. */
+  function subAllowed(key) {
+    if (key === 'agents') return can('agents', 'v') || can('mybase', 'v');
+    if (key === 'mybase') return !isOfficeRole() && can('mybase', 'v');
+    if (key === 'daily') return !isOfficeRole() && can('mybase', 'e');
+    if (key === 'activeness') return isManager() || can('mybase', 'v');
+    if (key === 'fuel') return isManager();
+    if (key === 'targets') return can('targets', 'v');
+    if (key === 'flags') return isManager() || can('mybase', 'v');
+    if (key === 'upload') return can('upload', 'v');
+    if (key === 'commission') return can('commission', 'v');
+    if (key === 'data') return isManager();
+    if (key === 'inbox') return true;
+    if (key === 'admin') return can('admin', 'v');
+    return false;
+  }
+  /*
+   * THE PERMISSIONS MATRIX IS THE SERVER'S LIST, NOT THE SIDEBAR.
+   *
+   * The screen used to be drawn from the navigation, so folding tabs together
+   * would have quietly removed Daily Report, Upload, Targets, Commission,
+   * Flags, Messages, Data and Admin from the place their permissions are set -
+   * and the server would have gone on enforcing rules the OM could no longer
+   * see or change.
+   */
+  var PERM_MODULES = [
+    { key: 'dashboard',  label: 'Dashboard',           icon: 'grid' },
+    { key: 'mybase',     label: 'My Agent Base',       icon: 'phone' },
+    { key: 'daily',      label: 'Daily Report',        icon: 'cal' },
+    { key: 'agents',     label: 'Agents',              icon: 'users' },
+    { key: 'bdos',       label: 'BDOs',                icon: 'users' },
+    { key: 'upload',     label: 'Database Upload',     icon: 'upload' },
+    { key: 'targets',    label: 'Monthly Targets',     icon: 'target' },
     { key: 'commission', label: 'Commission & Months', icon: 'dollar' },
-    { key: 'flags', label: 'Flags', icon: 'alert' },
-    { key: 'inbox', label: 'Messages', icon: 'mail' },
-    { key: 'data', label: 'Settings & Data', icon: 'lock' },
-    { key: 'admin', label: 'Admin', icon: 'lock' }
+    { key: 'flags',      label: 'Flags',               icon: 'alert' },
+    { key: 'inbox',      label: 'Messages',            icon: 'mail' },
+    { key: 'data',       label: 'Settings & Data',     icon: 'lock' },
+    { key: 'admin',      label: 'Admin',               icon: 'lock' }
   ];
   /* The five KPIs both the office and each officer are measured on. */
   var CORE_DEFS = [
@@ -934,7 +991,13 @@
       .catch(function () { state.user = null; render(); });
   }
   function defaultTab() {
-    if (state.user && state.user.role === 'superadmin') return 'admin';
+    /* Admin is a screen inside Settings now, so landing there means naming
+     * both - otherwise the super admin opens Settings & Data every morning. */
+    if (state.user && state.user.role === 'superadmin') {
+      state._sub = state._sub || {};
+      state._sub.settings = 'admin';
+      return 'settings';
+    }
     var tabs = visibleModules();
     return tabs.length ? tabs[0].key : 'dashboard';
   }
@@ -979,7 +1042,10 @@
   }
   function paintBadges() {
     if (!state.user) return;
-    var counts = [['inbox', state.unreadMsgs || 0, ''], ['flags', isFieldUser() ? (state.pendingFlags || 0) : 0, ' bad']];
+    /* Messages lives under Settings now and Flags under Performance, so the
+     * badge belongs on the group - a count on a tab that no longer exists is
+     * a count nobody ever sees. */
+    var counts = [['settings', state.unreadMsgs || 0, ''], ['performance', isFieldUser() ? (state.pendingFlags || 0) : 0, ' bad']];
     counts.forEach(function (x) {
       var item = document.querySelector('.nav-item[data-tab="' + x[0] + '"]');
       if (!item) return;
@@ -1065,28 +1131,37 @@
   }
   /* Which tabs the user sees. BDOs get the Agents tab too (restricted columns,
    * enforced by the server) so the uploaded list is visible to everyone. */
+  /*
+   * WHICH ENTRIES THIS USER GETS - and what each one should be called.
+   *
+   * A group with only one screen open to this user is NAMED AFTER THAT SCREEN.
+   * An officer who may see nothing under Performance but Flags should be shown
+   * a tab that says Flags; a tab called 'Performance' that turns out to hold
+   * one unrelated-sounding page is how people decide an app is confusing. The
+   * OM, who has three screens under it, still sees 'Performance'.
+   */
   function visibleModules() {
-    return MODULES.filter(function (m) {
-      if (m.key === 'mybase' || m.key === 'daily') {
-        if (isOfficeRole()) return false;      /* he manages the round, he does not walk it */
-        return can('mybase', m.key === 'daily' ? 'e' : 'v');
+    var iconFor = {};
+    PERM_MODULES.forEach(function (m) { iconFor[m.key] = m.icon; });
+    var out = [];
+    MODULES.forEach(function (m) {
+      var subs = TAB_SUBS[m.key];
+      if (subs) {
+        var ok = subs.filter(function (x) { return subAllowed(x[0]); });
+        if (!ok.length) return;
+        if (ok.length === 1) {
+          out.push({ key: m.key, label: ok[0][1], icon: iconFor[ok[0][0]] || m.icon });
+        } else {
+          out.push(m);
+        }
+        return;
       }
-      /* The officer works this screen; the OM reads it. Nobody else needs it. */
-      if (m.key === 'activeness') return isManager() || can('mybase', 'v');
-      if (m.key === 'fuel') return isManager();
-      if (m.key === 'data') return isManager(); // OM/superadmin data manager ONLY
-      if (m.key === 'inbox') return true; // everyone has a message box
-      /* Flags: the OM sees EVERY BDO's flags, a field user sees only his own
-       * (viewFlags branches on the role). Both need the tab. */
-      if (m.key === 'flags') return isManager() || can('mybase', 'v');
-      /* The officer window IS the old Reports screen now, so everyone who
-       * could read Reports still reaches it - the team leader above all, since
-       * approving route plans and float shortages is his job. */
-      if (m.key === 'bdos') return isManager() || (!isFieldUser() && can('reports', 'v'));
-      if (m.key === 'dashboard') return can('dashboard', 'v') || can('mybase', 'v'); // BDOs get a PERSONAL dashboard
-      if (can(m.key, 'v')) return true;
-      return m.key === 'agents' && can('mybase', 'v');
+      if (m.key === 'dashboard' && (can('dashboard', 'v') || can('mybase', 'v'))) out.push(m);
+      /* the officer window - the team leader above all, since approving route
+       * plans and float shortages is his job */
+      if (m.key === 'bdos' && (isManager() || (!isFieldUser() && can('reports', 'v')))) out.push(m);
     });
+    return out;
   }
   function renderShell() {
     var tabs = visibleModules();
@@ -1142,8 +1217,8 @@
   };
   function botLabel(m) { return t(BOTNAV_SHORT[m.key] || m.label); }
   function botBadge(key) {
-    if (key === 'inbox') return state.unreadMsgs || 0;
-    if (key === 'flags') return isFieldUser() ? (state.pendingFlags || 0) : 0;
+    if (key === 'settings') return state.unreadMsgs || 0;
+    if (key === 'performance') return isFieldUser() ? (state.pendingFlags || 0) : 0;
     return 0;
   }
   function bottomNavHtml(tabs) {
@@ -1238,33 +1313,56 @@
 
   function renderTab() {
     var v = elById('view'); if (!v) return;
-    /* THE VIEW IS BEING REBUILT, SO ANY OPEN DIALOG IS STALE BY DEFINITION.
-     * Saves that rebuilt the page but forgot to shut their own box left it
-     * hanging over the fresh screen, and the only way out was Close or tapping
-     * outside. Closing here fixes the whole class at once instead of chasing
-     * each save. (Flows that mean to keep a dialog - the theme picker - reopen
-     * it after the redraw, so they are unaffected.) */
+    /* THE VIEW IS BEING REBUILT, SO ANY OPEN DIALOG IS STALE BY DEFINITION. */
     closeModal();
     v.innerHTML = skeletonHtml();
     /* Re-read on every screen change, so what a man is told about his fuel
      * and about the office is never older than the last thing he tapped. */
     fuelAlarmLoad();
     refreshBadges();
-    if (state.tab === 'dashboard') viewDashboard(v);
-    else if (state.tab === 'agents') viewAgents(v);
-    else if (state.tab === 'activeness') viewActiveness(v);
-    else if (state.tab === 'fuel') viewFuel(v);
-    else if (state.tab === 'mybase') viewMyBase(v);
-    else if (state.tab === 'daily') viewDaily(v);
-    else if (state.tab === 'data') viewData(v);
-    else if (state.tab === 'inbox') viewInbox(v);
-    else if (state.tab === 'bdos') viewBdos(v);
+    var subs = TAB_SUBS[state.tab];
+    if (!subs) { renderOne(state.tab, v); return; }
+    var allowed = subs.filter(function (x) { return subAllowed(x[0]); });
+    if (!allowed.length) { v.innerHTML = '<p class="note">' + t('Nothing here for your role.') + '</p>'; return; }
+    state._sub = state._sub || {};
+    var cur = state._sub[state.tab];
+    if (!cur || !allowed.some(function (x) { return x[0] === cur; })) cur = allowed[0][0];
+    state._sub[state.tab] = cur;
+    /* one screen behind a group needs no chips - a single chip is furniture */
+    var chips = allowed.length > 1
+      ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
+        allowed.map(function (x) {
+          return '<button class="role-chip' + (x[0] === cur ? ' active' : '') +
+            '" data-action="subTab" data-s="' + x[0] + '">' + t(x[1]) +
+            (subBadge(x[0]) ? ' <span class="pill bad">' + subBadge(x[0]) + '</span>' : '') + '</button>';
+        }).join('') + '</div>'
+      : '';
+    v.innerHTML = chips + '<div id="subview"></div>';
+    renderOne(cur, elById('subview'));
+  }
+  /* the count that used to sit on a tab now sits on its chip */
+  function subBadge(key) {
+    if (key === 'inbox') return state.unreadMsgs || 0;
+    if (key === 'flags') return isFieldUser() ? (state.pendingFlags || 0) : 0;
+    return 0;
+  }
+  function renderOne(key, v) {
+    if (!v) return;
+    if (key === 'dashboard') viewDashboard(v);
+    else if (key === 'agents') viewAgents(v);
+    else if (key === 'activeness') viewActiveness(v);
+    else if (key === 'fuel') viewFuel(v);
+    else if (key === 'mybase') viewMyBase(v);
+    else if (key === 'daily') viewDaily(v);
+    else if (key === 'data') viewData(v);
+    else if (key === 'inbox') viewInbox(v);
+    else if (key === 'bdos') viewBdos(v);
     /* same tab, two pages: the OM audits everyone, a BDO answers for himself */
-    else if (state.tab === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
-    else if (state.tab === 'upload') { viewUpload(v); if (isManager()) setTimeout(reportBdosLoad, 0); }
-    else if (state.tab === 'targets') viewTargets(v);
-    else if (state.tab === 'commission') viewCommission(v);
-    else if (state.tab === 'admin') viewAdmin(v);
+    else if (key === 'flags') { if (isManager()) viewFlags(v); else viewMyFlags(v); }
+    else if (key === 'upload') { viewUpload(v); if (isManager()) setTimeout(reportBdosLoad, 0); }
+    else if (key === 'targets') viewTargets(v);
+    else if (key === 'commission') viewCommission(v);
+    else if (key === 'admin') viewAdmin(v);
   }
 
   /* ---------------- auth actions ---------------- */
@@ -1469,7 +1567,7 @@
               '<span class="pill ' + (gap >= 10 ? 'bad' : 'fire') + '">-' + (gap > 0 ? gap : 0) + '%</span>' +
               '<b>' + t('is what your flags cost you') + '</b></div>' +
               '<div class="note" style="margin:6px 0 8px">' + t('Answer them on the Flags panel - a claim you can prove is a claim the OM can clear.') + '</div>' +
-              '<button class="btn mini" data-action="tab" data-tab="flags">' + t('Work on my flags') + '</button></div>'
+              '<button class="btn mini" data-action="tab" data-tab="performance" data-sub="flags">' + t('Work on my flags') + '</button></div>'
             : '<div class="note">' + t('Clean month - nothing is being questioned. Both numbers are the same.') + '</div>') +
           '<div style="margin-top:10px">' + perfBars(withF.kpis) + '</div>' +
           '</div>';
@@ -1651,7 +1749,7 @@
         '<span class="pill bad">' + f.length + '</span>' +
         (answered ? '<span class="pill gold">' + answered + ' ' + t('answered by BDOs') + '</span>' : '') +
         '<div class="spacer"></div>' +
-        '<button class="btn" data-action="tab" data-tab="flags">' + t('Open Flags') + '</button></div>' +
+        '<button class="btn" data-action="tab" data-tab="performance" data-sub="flags">' + t('Open Flags') + '</button></div>' +
         '<div class="row">' + chips + '</div></div>';
     }).catch(function () { box.innerHTML = ''; });
   }
@@ -1919,7 +2017,7 @@
           ? '<span class="note">' + t('Everything below reads') + ' <b>' + esc(d.station) + '</b> ' + t('only') +
             (d.targetsFrom === 'office-fallback'
               ? ' &middot; <span class="pill gold">' + t('using office-wide targets') + '</span> ' +
-                '<button class="ghost tiny" data-action="tab" data-tab="targets">' + t('Set targets for') + ' ' + esc(d.station) + '</button>'
+                '<button class="ghost tiny" data-action="tab" data-tab="performance" data-sub="targets">' + t('Set targets for') + ' ' + esc(d.station) + '</button>'
               : d.targetsFrom === 'none'
                 ? ' &middot; <span class="pill dim">' + t('no targets set') + '</span>'
                 : '') + '</span>'
@@ -1937,7 +2035,7 @@
             '<div class="note" style="margin-top:4px">' +
             t('The team\'s work IS being recorded - every serve, visit and wake is counted. But a weighted average needs a target to measure against, so it cannot be worked out until you set one.') +
             '</div><div class="row" style="margin-top:8px">' +
-            '<button class="btn mini" data-action="tab" data-tab="targets">' + t('Set this month\'s targets') + '</button>' +
+            '<button class="btn mini" data-action="tab" data-tab="performance" data-sub="targets">' + t('Set this month\'s targets') + '</button>' +
             '</div></div></div></div>'
           : '') +
         /* The calendar opened this month by itself. Anything it rolled past is
@@ -1948,7 +2046,7 @@
             '<b>' + svg('upload') + ' ' + t('Waiting for the final performance file') + '</b>' +
             (d.awaiting).map(function (mm) { return ' <span class="pill fire">' + esc(mm) + '</span>'; }).join('') +
             '<span class="note">' + t('These months ended and the new one opened automatically. Upload their final file to settle the achievement and commission.') + '</span>' +
-            '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="upload">' + t('Go to Weekly Upload') + '</button>' +
+            '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="reports" data-sub="upload">' + t('Go to Weekly Upload') + '</button>' +
             '</div></div>'
           : '') +
         '<div id="flagAlert"></div>' +
@@ -5446,7 +5544,7 @@
           ? '<div class="panel"><h2>' + svg('alert') + t('Flags against him') +
             ' <span class="pill bad">' + fmt(flagTotal) + '</span></h2>' +
             '<p class="note">' + Object.keys(d.flags).map(function (k) { return k + ': ' + d.flags[k]; }).join(' · ') + '</p>' +
-            '<button class="ghost mini" data-action="tab" data-tab="flags">' + t('Open the Flags panel') + '</button></div>'
+            '<button class="ghost mini" data-action="tab" data-tab="performance" data-sub="flags">' + t('Open the Flags panel') + '</button></div>'
           : '') +
         '<div class="panel"><h2>' + svg('users') + t('His whole round') +
           ' <span class="pill dim">' + fmt(d.baseCount) + '</span>' +
@@ -6337,7 +6435,7 @@
     /* Tabs whose visibility is decided by role have no cell on the server - the
      * save skips modules it does not know - so a toggle for them would look
      * saved and change nothing. They are left out. */
-    rowsEl.innerHTML = MODULES.filter(function (mod) { return !mod.noPerm; }).map(function (mod) {
+    rowsEl.innerHTML = PERM_MODULES.map(function (mod) {
       var p = m[mod.key] || { v: false, e: false, d: false };
       function tgl(lvl, label, extra) {
         return '<button class="tgl' + (p[lvl] ? ' on' : '') + (extra || '') + '" data-action="permTgl" data-mod="' + mod.key + '" data-lvl="' + lvl + '">' + label + '</button>';
@@ -6453,7 +6551,18 @@
         state._fserved = state._fvisit = state._fapk = state._factive = state._fband = '';
       }
       closeModal();   /* harmless if none is open; shuts the More sheet */
+      /* a link may aim at a screen inside a group - 'Work on my flags' means
+       * Performance opened on Flags, not Performance opened on whatever was
+       * last used */
+      var toSub = node.getAttribute('data-sub');
+      if (toSub) { state._sub = state._sub || {}; state._sub[toTab] = toSub; }
       state.tab = toTab; renderShell(); return;
+    }
+    if (a === 'subTab') {
+      state._sub = state._sub || {};
+      state._sub[state.tab] = node.getAttribute('data-s');
+      renderTab();
+      return;
     }
     if (a === 'moreNav') { moreNavSheet(); return; }
     if (a === 'upKind') { state._upKind = node.getAttribute('data-k'); renderTab(); return; }
