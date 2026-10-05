@@ -5,6 +5,32 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.80.0 — 2026-10-05 · His branch agents are his, whoever served them
+
+A BDO's base is every agent in the branches assigned to him. It does not matter who served the
+agent, and it does not matter whether a physical location has been captured.
+
+### The gap this closes
+
+His agent list already read his branches directly, but the stored `base` table did not always agree.
+That table allows one owner per agent per month. If last month's carry or a serving credit had left an
+Arusha agent under another BDO (one holding no branch, or the partners/unassigned rows),
+`sync_branch_base()` did not remove that row, so its `INSERT IGNORE` could not give the agent to the
+Arusha officer. He saw the agent on his list, but his weekly serving target, base count, coverage
+ranking and the team reports did not count him, and the other BDO's numbers did.
+
+- `sync_branch_base()` now also removes any row where the agent's branch has an officer and the row
+  belongs to someone else. Agents in unassigned branches are untouched, as before.
+- `base_start_default()` (the base-growth floor) no longer drops agents with no location for an
+  officer who holds a branch, so it counts the same way his base does. Officers with no branch keep
+  the old rule.
+- A month that was already open when this shipped is re-synced once, on the first request after
+  deploy, so the fix does not wait for the next upload or branch assignment.
+
+APP_VERSION 1.80.0, assets bumped to v97.
+
+---
+
 ## v1.79.0 — 2026-09-27 · The branch is the round, and nine numbers say where he is
 
 ### His base is his branches — exactly

@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.79.0');
+define('APP_VERSION', '1.80.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -519,13 +519,26 @@ function sync_branch_base($month) {
      *
      * Only officers who actually hold a branch are touched. Before the OM has
      * assigned any, this would otherwise empty every round in the office.
+     *
+     * AND HIS BRANCH AGENTS ARE HIS, WHOEVER SERVED THEM.
+     *
+     * The second half of the WHERE: an agent whose branch has an officer is
+     * taken out of anybody else's round - including an officer who holds no
+     * branch, and the partners/unassigned rows. The base allows one owner per
+     * agent per month, so while a serving credit or last month's carry kept
+     * an Arusha agent under somebody else, the INSERT IGNORE below could not
+     * give him to the Arusha officer: his list showed the agent (it reads the
+     * branch directly) but his weekly target, base count and ranking - which
+     * read this table - did not count him.
      */
     $del = db()->prepare('DELETE b FROM base b
                           JOIN agents a ON a.id = b.agent_id
                           WHERE b.month = ?
-                            AND EXISTS (SELECT 1 FROM bdo_branches x WHERE x.bdo = b.bdo)
-                            AND NOT EXISTS (SELECT 1 FROM bdo_branches bb
-                                            WHERE bb.bdo = b.bdo AND bb.branch = a.branch)');
+                            AND ((EXISTS (SELECT 1 FROM bdo_branches x WHERE x.bdo = b.bdo)
+                                  AND NOT EXISTS (SELECT 1 FROM bdo_branches bb
+                                                  WHERE bb.bdo = b.bdo AND bb.branch = a.branch))
+                                 OR EXISTS (SELECT 1 FROM bdo_branches o
+                                            WHERE o.branch = a.branch AND o.bdo <> b.bdo))');
     $del->execute(array($month));
     $moved = $del->rowCount();
     $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
@@ -836,7 +849,16 @@ function maybe_roll_month() {
   $r = db()->query("SELECT month FROM months WHERE status='OPEN' ORDER BY month DESC LIMIT 1")->fetch();
   /* Already on this month - but it may have been opened by an older build that
    * did not carry the bases, so make sure that has happened before leaving. */
-  if (!$r || $r['month'] >= $cur) { repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_base_join($cur); ensure_targets_carry($cur); return; }
+  if (!$r || $r['month'] >= $cur) {
+    repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_base_join($cur); ensure_targets_carry($cur);
+    /* v1.80.0 hands branch agents held by somebody else back to the branch's
+     * officer. A month already open when that shipped is re-synced once, so
+     * the fix does not wait for the next upload or assignment. */
+    $once = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
+    $once->execute(array('branchsync180_' . $cur, date('Y-m-d H:i:s')));
+    if ($once->rowCount() === 1) sync_branch_base($cur);
+    return;
+  }
   $ended = $r['month'];
 
   $lock = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
@@ -1549,6 +1571,12 @@ function bdo_base_count($month, $bdo) {
  * is then exactly the agents he added since - and nothing he already had.
  */
 function base_start_default($month, $bdo) {
+  /* An officer who holds a branch has a round of his branch agents, location
+   * or not - so his floor counts them the same way, or every uncaptured shop
+   * in his branch would read as growth he did not make. */
+  $hb = db()->prepare('SELECT 1 FROM bdo_branches WHERE bdo = ? LIMIT 1');
+  $hb->execute(array($bdo));
+  $locRule = $hb->fetch() ? '' : " AND TRIM(a.physical_location) <> ''";
   $q = db()->prepare("SELECT COUNT(*) c
                       FROM base b
                       JOIN (SELECT agent_id, MAX(month) m FROM base
@@ -1557,8 +1585,7 @@ function base_start_default($month, $bdo) {
                       JOIN agents a ON a.id = b.agent_id
                       LEFT JOIN wont_return w ON w.agent_id = b.agent_id
                       /* exactly the join's own rules, so floor and round agree */
-                      WHERE b.bdo = ? AND w.agent_id IS NULL
-                        AND TRIM(a.physical_location) <> ''");
+                      WHERE b.bdo = ? AND w.agent_id IS NULL" . $locRule);
   $q->execute(array($month, $bdo));
   $r = $q->fetch();
   return $r ? (int)$r['c'] : 0;
