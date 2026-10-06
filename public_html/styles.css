@@ -985,3 +985,14 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted
  * table anyone came to read. [hidden] is honoured even against display
  * rules that would otherwise win. */
 [hidden]{display:none !important}
+
+/* TRANSACTION ACCELERATION ACHIEVED - the whole agent row goes green, on the
+   table and on the phone card alike (v1.81.0) */
+tr.accel-done td{background:rgba(143,209,79,.10)}
+tr.accel-done td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+body.light tr.accel-done td{background:rgba(63,143,67,.12)}
+@media (max-width:640px){
+  .cardable tbody tr.accel-done,.cardable tbody tr.accel-done:hover{background:rgba(143,209,79,.12);border-color:var(--ok);box-shadow:inset 4px 0 0 var(--ok)}
+  .cardable tbody tr.accel-done td{background:transparent;box-shadow:none}
+  body.light .cardable tbody tr.accel-done{background:rgba(63,143,67,.12)}
+}

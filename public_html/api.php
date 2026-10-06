@@ -580,11 +580,26 @@ try {
         $conds[] = 'NOT EXISTS (SELECT 1 FROM high_earners h WHERE h.acc = agents.acc)';
       }
 
+      /* TRANSACTION ACCELERATION: what is left of his Withdraw Target this
+       * month - the same reading accel_map() gives, as one SQL expression so
+       * the list can filter and sort on it across pages. NULL = no target.
+       * $month comes from open_month(), always YYYY-MM, so quoting is safe. */
+      $qm = db()->quote($month);
+      $accelLeft = "COALESCE((SELECT GREATEST(MAX(s.wd_target) - MAX(s.wd_txn), 0) FROM service_history s
+                              WHERE s.agent_id = agents.id AND s.month = $qm AND s.source <> 'bdo'
+                              HAVING MAX(s.wd_target) > 0),
+                             IF(agents.wd_target_month = $qm AND agents.wd_target_base > 0, agents.wd_target_base, NULL))";
+      $order = 'name';
+      $fac = (string)($_GET['faccel'] ?? '');
+      if ($fac === 'short') { $conds[] = "$accelLeft > 0"; $order = "$accelLeft ASC, name"; }
+      elseif ($fac === 'done') { $conds[] = "$accelLeft = 0"; }
+      elseif ($fac === 'target') { $conds[] = "$accelLeft IS NOT NULL"; $order = "$accelLeft = 0, $accelLeft ASC, name"; }
+
       $where = count($conds) ? 'WHERE ' . implode(' AND ', $conds) : '';
       $tot = db()->prepare("SELECT COUNT(*) c FROM agents $where");
       $tot->execute($vals);
       $total = (int)$tot->fetch()['c'];
-      $st = db()->prepare("SELECT * FROM agents $where ORDER BY name LIMIT $limit OFFSET $off");
+      $st = db()->prepare("SELECT * FROM agents $where ORDER BY $order LIMIT $limit OFFSET $off");
       $st->execute($vals);
       $rows = $st->fetchAll();
 
@@ -622,11 +637,13 @@ try {
         $wq->execute($ids);
         foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
       }
+      $accel = $rows ? accel_map($month, $ids) : array();
 
       $items = array();
       foreach ($rows as $r) {
         $id = (int)$r['id'];
         $base = array(
+          'accel' => isset($accel[$id]) ? $accel[$id] : null,
           'id' => $id, 'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
           'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
@@ -776,8 +793,11 @@ try {
         foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
       }
 
+      /* transaction acceleration: target, done, left - per agent */
+      $accel = accel_map($month, $ids);
       foreach ($agents as &$a) {
         $id = (int)$a['id'];
+        $a['accel'] = isset($accel[$id]) ? $accel[$id] : null;
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
         $a['actStatus'] = strtoupper((string)$a['act_current']);
@@ -2358,6 +2378,7 @@ try {
       /* only the base file writes this - see PASS 2 */
       $setBase = db()->prepare('UPDATE agents SET act_base = ?, act_base_month = ? WHERE id = ?');
       $updApk = db()->prepare('UPDATE agents SET apk_version = ?, apk_month = ? WHERE id = ?');
+      $updWdBase = db()->prepare('UPDATE agents SET wd_target_base = ?, wd_target_month = ? WHERE id = ?');
       $flagged = 0; $newAgents = 0;
       /* Flags are recomputed once, after every row is written, by comparing the
        * BDO's live claims with the month's ENTIRE office record - see the
@@ -2585,6 +2606,12 @@ try {
          * required version. */
         if ($mode === 'fixed' && trim((string)$r['apk_raw']) !== '') {
           $updApk->execute(array(trim((string)$r['apk_raw']), $month, $id));
+        }
+        /* ...and his Withdraw Target. This file writes no service history, so
+         * without this the target is gone until the first performance file -
+         * and the officer cannot see what each agent is being asked to do. */
+        if ($mode === 'fixed' && $r['wd_target'] > 0) {
+          try { $updWdBase->execute(array($r['wd_target'], $month, $id)); } catch (Exception $e) { /* v31 not applied yet */ }
         }
 
         $agents++;

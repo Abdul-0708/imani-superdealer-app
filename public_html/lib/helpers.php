@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.80.0');
+define('APP_VERSION', '1.81.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -590,6 +590,49 @@ function branch_for_recruit($user, $branch) {
   return $branch;
 }
 
+/*
+ * TRANSACTION ACCELERATION, PER AGENT: what he is asked to do, what he has
+ * done, and what is left - for the agents in $ids, this month.
+ *
+ * The performance file is the authority: its Withdraw Target and Withdraw
+ * transactions, highest reading of the month (the same "any file this month
+ * shows it done" rule the counters already used). Until a performance file
+ * has given him a target, the fixed (monthly database) file's target stands
+ * with nothing done against it - that file does not report transactions.
+ *
+ * Only agents with a target are returned. An agent nobody asked for anything
+ * is not short of anything.
+ */
+function accel_map($month, $ids) {
+  $out = array();
+  if (!count($ids)) return $out;
+  $in = implode(',', array_fill(0, count($ids), '?'));
+  try {
+    $q = db()->prepare("SELECT agent_id, MAX(wd_target) t, MAX(wd_txn) x FROM service_history
+                        WHERE month = ? AND source <> 'bdo' AND agent_id IN ($in)
+                        GROUP BY agent_id");
+    $q->execute(array_merge(array($month), $ids));
+    foreach ($q->fetchAll() as $r) {
+      if ((int)$r['t'] > 0) $out[(int)$r['agent_id']] = array('t' => (int)$r['t'], 'x' => (int)$r['x'], 'src' => 'performance');
+    }
+  } catch (Exception $e) { /* no history yet */ }
+  try {
+    $q = db()->prepare("SELECT id, wd_target_base t FROM agents
+                        WHERE wd_target_month = ? AND wd_target_base > 0 AND id IN ($in)");
+    $q->execute(array_merge(array($month), $ids));
+    foreach ($q->fetchAll() as $r) {
+      $id = (int)$r['id'];
+      if (!isset($out[$id])) $out[$id] = array('t' => (int)$r['t'], 'x' => 0, 'src' => 'fixed');
+    }
+  } catch (Exception $e) { /* v31 not applied yet */ }
+  foreach ($out as $id => $a) {
+    $out[$id] = array('target' => $a['t'], 'txn' => $a['x'],
+                      'left' => max(0, $a['t'] - $a['x']), 'done' => $a['x'] >= $a['t'],
+                      'source' => $a['src']);
+  }
+  return $out;
+}
+
 function base_progress($month, $ids) {
   $out = array('base' => count($ids), 'active' => 0, 'inactive' => 0,
                'served' => 0, 'visited' => 0, 'accelTarget' => 0, 'accelDone' => 0);
@@ -610,13 +653,11 @@ function base_progress($month, $ids) {
       if ($r['kpi'] === 'served') $out['served'] = (int)$r['n'];
       elseif ($r['kpi'] === 'visit') $out['visited'] = (int)$r['n'];
     }
-    $q = db()->prepare("SELECT COUNT(DISTINCT agent_id) t,
-                               COUNT(DISTINCT CASE WHEN wd_txn >= wd_target THEN agent_id END) d
-                        FROM service_history
-                        WHERE month = ? AND wd_target > 0 AND agent_id IN ($in)");
-    $q->execute(array_merge(array($month), $ids));
-    $r = $q->fetch();
-    if ($r) { $out['accelTarget'] = (int)$r['t']; $out['accelDone'] = (int)$r['d']; }
+    /* same per-agent reading the list shows, so card and list agree */
+    foreach (accel_map($month, $ids) as $a) {
+      $out['accelTarget']++;
+      if ($a['done']) $out['accelDone']++;
+    }
   } catch (Exception $e) { /* a counter strip must never take his dashboard down */ }
   return $out;
 }

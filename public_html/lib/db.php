@@ -474,6 +474,26 @@ function upgrade_schema($pdo) {
     schema_v30_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "30" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 31) {
+    schema_v31_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "31" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v31: THE BASE FILE'S WITHDRAW TARGET.
+ *
+ * The fixed (monthly database) file carries each agent's Withdraw Target, but
+ * that file writes no service history, so the target was read and thrown
+ * away. Until the first performance file of the month lands, the officer had
+ * no way to see what each agent is being asked to do. Kept on the agent, with
+ * the month it belongs to, like act_base.
+ */
+function schema_v31_apply($pdo) {
+  foreach (array('ALTER TABLE agents ADD COLUMN wd_target_base BIGINT NOT NULL DEFAULT 0',
+                 'ALTER TABLE agents ADD COLUMN wd_target_month CHAR(7) NOT NULL DEFAULT ""') as $sql) {
+    try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ }
+  }
 }
 
 /*

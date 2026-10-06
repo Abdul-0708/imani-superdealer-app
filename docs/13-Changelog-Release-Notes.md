@@ -5,6 +5,30 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.81.0 — 2026-10-06 · Transaction acceleration on every agent (schema v31)
+
+Every agent with a Withdraw Target now shows, on **My Agent Base** and on **All Agents**, what he is
+asked to do, what he has done, and what is left: `Withdraw Target − Withdraw transactions`.
+
+- **Where the numbers come from.** The performance file is the authority: its Withdraw Target and
+  Withdraw transactions, highest reading of the month. Until a performance file has given an agent a
+  target, the **fixed (monthly database) file's** target is shown with nothing done against it, so
+  the whole target reads as left. That file was already reading the target and throwing it away;
+  schema v31 keeps it on the agent (`wd_target_base`, `wd_target_month`).
+- **The chip.** Red `12 left · 23/35` while short; green `Accel achieved · 35/35` once done.
+- **Green row.** An agent who has achieved his full target has his whole row (or card, on a phone)
+  marked green.
+- **Least left first.** My Agent Base gets an *Acceleration* filter (still short / achieved / has a
+  target) and a sort *Acceleration – least left first*: still-short agents ascending by what is left,
+  then the achieved ones, then those with no target. Picking the filter switches to that sort. All
+  Agents gets the same filter; *Still short* comes back least left first across all pages.
+- **One reading everywhere.** The dashboard's Acceleration card now counts from the same per-agent
+  figures as the list (`accel_map()`), so it includes targets from the fixed file too.
+
+APP_VERSION 1.81.0, assets bumped to v98.
+
+---
+
 ## v1.80.0 — 2026-10-05 · His branch agents are his, whoever served them
 
 A BDO's base is every agent in the branches assigned to him. It does not matter who served the

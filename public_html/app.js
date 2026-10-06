@@ -496,6 +496,16 @@
     'Sort by': 'Panga kwa',
     'High-earner list': 'Orodha ya wanaolipa zaidi',
     'Most still to do': 'Waliobaki zaidi',
+    'Acceleration': 'Kuongeza miamala',
+    'Still short': 'Bado hawajafikia',
+    'Still short - least left first': 'Bado hawajafikia - waliobaki kidogo kwanza',
+    'Acceleration - least left first': 'Kuongeza miamala - waliobaki kidogo kwanza',
+    'Target achieved': 'Lengo limefikiwa',
+    'Has a target': 'Wana lengo',
+    'Accel achieved': 'Lengo limefikiwa',
+    'Withdraw Target': 'Lengo la kutoa',
+    'Withdraw transactions': 'Miamala ya kutoa',
+    'target from the database file; no performance file yet': 'lengo kutoka faili la database; bado hakuna faili la utendaji',
     'name, acc, phone, branch, location...': 'jina, acc, simu, tawi, mahali...',
     'carried from last month': 'wamebebwa kutoka mwezi uliopita',
     'No agent matches these filters - clear them to see your whole round.':
@@ -2200,6 +2210,20 @@
     var cls = (b === 'A' || b === 'B') ? 'fire' : (b === 'C' || b === 'D') ? 'gold' : (b === 'E' ? 'ok' : 'dim');
     return '<span class="pill ' + cls + '" title="' + esc(t('High-earner list')) + ' ' + b + '">' + t('LIST') + ' ' + b + '</span>';
   }
+  /* TRANSACTION ACCELERATION on one agent: his Withdraw Target, what he has
+   * done against it, and what is left. Green once he has done all of it. A
+   * target that only the fixed (database) file has given so far has nothing
+   * done against it yet - that file carries no transactions. */
+  function accelChip(a) {
+    var x = a && a.accel; if (!x) return '';
+    var tip = esc(t('Withdraw Target') + ' ' + fmt(x.target) + ' - ' + t('Withdraw transactions') + ' ' + fmt(x.txn) +
+      (x.source === 'fixed' ? ' (' + t('target from the database file; no performance file yet') + ')' : ''));
+    if (x.done) return '<span class="kchip done" title="' + tip + '">' + svg('zap') + ' ' + t('Accel achieved') +
+      ' <small>' + fmt(x.txn) + '/' + fmt(x.target) + '</small></span>';
+    return '<span class="kchip bad-off" title="' + tip + '">' + svg('zap') + ' ' + fmt(x.left) + ' ' + t('left') +
+      ' <small>' + fmt(x.txn) + '/' + fmt(x.target) + '</small></span>';
+  }
+  function accelRowCls(a) { return a && a.accel && a.accel.done ? ' class="accel-done"' : ''; }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     /* The pill states the FACT and stops there. Who may act on it is no longer
@@ -2215,11 +2239,11 @@
     var name = esc(a.name) + (partnerServed
       ? ' <span class="pill fire" title="' + esc(t('The file credits the PARTNER with serving this agent')) + '">PARTNER</span>' + award
       : '');
-    return '<tr data-agent="' + a.id + '"><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td>' +
+    return '<tr data-agent="' + a.id + '"' + accelRowCls(a) + '><td class="c-meta" data-l="acc">' + esc(a.acc) + '</td>' +
       '<td class="c-name">' + name + ' ' + bandPill(a.band) + actInfoHtml(a) + '</td>' +
       '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
       '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-      '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td>' +
+      '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + '</div></td>' +
       '</tr>';
   }
   function agentsBodyLoad() {
@@ -2232,7 +2256,8 @@
       (state._fvisit ? '&fvisit=' + state._fvisit : '') +
       (state._fapk ? '&fapk=' + state._fapk : '') +
       (state._factive ? '&factive=' + state._factive : '') +
-      (state._fband ? '&fband=' + state._fband : '');
+      (state._fband ? '&fband=' + state._fband : '') +
+      (state._faccel ? '&faccel=' + state._faccel : '');
     api('agents', { qs: qs }).then(function (d) {
       if (seq !== state._agentSeq) return; // stale response - a newer search is in flight
       state._agentsMeta = d;
@@ -2725,6 +2750,13 @@
       '<option value="">' + t('Any') + '</option>' +
       ['A', 'B', 'C', 'D', 'E', 'F'].map(function (b) {
         return '<option value="' + b + '"' + (state._fband === b ? ' selected' : '') + '>' + t('LIST') + ' ' + b + '</option>';
+      }).join('') + '</select></div>' +
+      /* transaction acceleration: "still short" comes back least-left first,
+       * so the agents nearest their full target are at the top of the list */
+      '<div class="field"><label>' + t('Acceleration') + '</label><select data-change="faccel">' +
+      [['', t('Any')], ['short', t('Still short - least left first')], ['done', t('Target achieved')],
+       ['target', t('Has a target')]].map(function (o) {
+        return '<option value="' + o[0] + '"' + ((state._faccel || '') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
       }).join('') + '</select></div>' +
       '<div class="field"><label>' + t('Show') + '</label><select id="agentPer">' + perOpts + '</select></div>' +
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
@@ -3344,7 +3376,8 @@
       var fl = state._baseLoc || '';           /* '' | 'has' | 'missing'       */
       var fbr = state._baseBranch || '';       /* branch name                  */
       var fld = state._baseField || '';        /* which column the text hits   */
-      var so = state._baseSort || 'band';      /* band | name | branch | todo  */
+      var fac = state._baseAccel || '';        /* '' | 'short' | 'done' | 'target' */
+      var so = state._baseSort || (fac ? 'accel' : 'band'); /* band | name | branch | todo | accel */
 
       function fieldText(a) {
         if (fld === 'name') return a.name || '';
@@ -3366,6 +3399,9 @@
         if (fl === 'missing' && (a.physical_location || '').trim() !== '') return false;
         if (fl === 'has' && (a.physical_location || '').trim() === '') return false;
         if (fbr && (a.branch || '') !== fbr) return false;
+        if (fac === 'target' && !a.accel) return false;
+        if (fac === 'short' && !(a.accel && !a.accel.done)) return false;
+        if (fac === 'done' && !(a.accel && a.accel.done)) return false;
         if (fk) {
           var parts = fk.split(':');           /* e.g. "visit:no" */
           var want = parts[1] === 'yes';
@@ -3375,19 +3411,30 @@
         return fieldText(a).toLowerCase().indexOf(q) >= 0;
       });
       var BANDORD = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5 };
+      /* ACCELERATION ORDER: still short first, least left at the top - the
+       * agents closest to their full target are the quickest wins - then the
+       * ones who achieved it, then the ones with no target at all */
+      function accelKey(a) {
+        if (!a.accel) return [2, 0];
+        return a.accel.done ? [1, 0] : [0, a.accel.left];
+      }
       list.sort(function (x, y) {
+        if (so === 'accel') {
+          var kx = accelKey(x), ky = accelKey(y);
+          return (kx[0] - ky[0]) || (kx[1] - ky[1]) || (x.name || '').localeCompare(y.name || '');
+        }
         if (so === 'name') return (x.name || '').localeCompare(y.name || '');
         if (so === 'branch') return (x.branch || '').localeCompare(y.branch || '') || (x.name || '').localeCompare(y.name || '');
         if (so === 'todo') return todoCount(y) - todoCount(x) || (x.name || '').localeCompare(y.name || '');
         return (BANDORD[x.band || 'F'] - BANDORD[y.band || 'F']) || (x.name || '').localeCompare(y.name || '');
       });
       var rows = list.map(function (a) {
-        return '<tr><td class="c-level">' + bandPill(a.band) + '</td>' +
+        return '<tr' + accelRowCls(a) + '><td class="c-level">' + bandPill(a.band) + '</td>' +
           '<td class="c-name">' + esc(a.name) + '<div class="note">' + esc(a.acc) + '</div>' + actInfoHtml(a) + '</td>' +
           '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
           '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
           '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-          '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + '</div></td></tr>';
+          '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + '</div></td></tr>';
       }).join('') || '<tr><td colspan="6">' + emptyState('phone', t('Nothing here yet'),
         all.length ? t('No agent matches these filters - clear them to see your whole round.')
                    : t('Agents join this list the moment you serve them on the Agents tab.')) + '</td></tr>';
@@ -3459,11 +3506,16 @@
         ['<option value="">' + t('All') + '</option>'].concat(branches.map(function (b) {
           return '<option value="' + esc(b) + '"' + (fbr === b ? ' selected' : '') + '>' + esc(b) + '</option>';
         })).join('') + '</select></div>' +
+        '<div class="field"><label>' + t('Acceleration') + '</label><select data-change="baseAccel">' +
+        [['', t('Any')], ['short', t('Still short')], ['done', t('Target achieved')], ['target', t('Has a target')]].map(function (o) {
+          return '<option value="' + o[0] + '"' + (fac === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+        }).join('') + '</select></div>' +
         '<div class="field"><label>' + t('Sort by') + '</label><select data-change="baseSort">' +
-        [['band', t('High-earner list')], ['name', t('Agent')], ['branch', t('Branch')], ['todo', t('Most still to do')]].map(function (o) {
+        [['band', t('High-earner list')], ['name', t('Agent')], ['branch', t('Branch')], ['todo', t('Most still to do')],
+         ['accel', t('Acceleration - least left first')]].map(function (o) {
           return '<option value="' + o[0] + '"' + (so === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         }).join('') + '</select></div>' +
-        (fk || fb || q || fs || fl || fbr || fld ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
+        (fk || fb || q || fs || fl || fbr || fld || fac ? '<button class="ghost mini" data-action="baseClear">' + t('Clear') + '</button>' : '') +
         '</div>' +
         (bandChips ? '<div class="row" style="margin-bottom:10px">' + bandChips + '</div>' : '') +
         '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>List</th><th>Agent</th><th>Phone</th><th>Location</th><th>Branch</th><th>KPIs (Served / Visit / APK / Active)</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
@@ -6731,7 +6783,7 @@
        * in the box after navigating away confused people */
       if (toTab !== state.tab) {
         state._agentSearch = ''; state._agentField = ''; state.agentPage = 1;
-        state._fserved = state._fvisit = state._fapk = state._factive = state._fband = '';
+        state._fserved = state._fvisit = state._fapk = state._factive = state._fband = state._faccel = '';
       }
       closeModal();   /* harmless if none is open; shuts the More sheet */
       /* a link may aim at a screen inside a group - 'Work on my flags' means
@@ -6824,6 +6876,7 @@
     if (a === 'baseClear') {
       state._baseBand = ''; state._baseKpi = ''; state._baseSearch = '';
       state._baseServed = ''; state._baseLoc = ''; state._baseBranch = ''; state._baseField = '';
+      state._baseAccel = '';
       renderTab(); return;
     }
     if (a === 'myFlagTab') { state._myFlagKpi = node.getAttribute('data-kpi'); renderTab(); return; }
@@ -7327,7 +7380,8 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseBranch') { state._baseBranch = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseField') { state._baseField = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseSort') { state._baseSort = n.value; renderTab(); return; }
-    if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband'].indexOf(n.getAttribute('data-change')) >= 0) {
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'baseAccel') { state._baseAccel = n.value; renderTab(); return; }
+    if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband','faccel'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
       state.agentPage = 1; agentsBodyLoad(); return;
     }
