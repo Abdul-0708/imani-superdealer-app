@@ -650,7 +650,8 @@ try {
           'actStatus' => strtoupper((string)$r['act_current']),
           'actPrev' => strtoupper((string)$r['act_prev']),
           /* false = the status is carried from last month, no file has spoken yet */
-          'actFromFile' => isset($inFile[$id]),
+          /* this month's base file counts too - its status is not carried */
+          'actFromFile' => isset($inFile[$id]) || (string)$r['act_base_month'] === $month,
           'lastTx' => isset($lastTx[$id]) ? $lastTx[$id] : '',
           'wontReturn' => isset($wr[$id]),
           'band' => he_band($r['acc']), /* LIST A..E, or F when not on the list */
@@ -744,7 +745,7 @@ try {
          * so the list decides what gets done - highest commission first, and
          * the ones carrying nothing at the bottom. */
         $q = db()->prepare("SELECT a.id, a.acc, a.name, a.phone, a.branch, a.station, a.physical_location,
-                                   a.act_current, a.act_prev, a.act_month,
+                                   a.act_current, a.act_prev, a.act_month, a.act_base_month,
                                    COALESCE(h.commission, 0) commission"
                            . " FROM agents a LEFT JOIN high_earners h ON h.acc = a.acc
                                WHERE a.id IN ($in)
@@ -802,11 +803,12 @@ try {
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
         $a['actStatus'] = strtoupper((string)$a['act_current']);
         $a['actPrev'] = strtoupper((string)$a['act_prev']);
-        $a['actFromFile'] = isset($inFile[$id]);
+        /* this month's base file counts too - its status is not carried */
+        $a['actFromFile'] = isset($inFile[$id]) || (string)$a['act_base_month'] === $month;
         $a['lastTx'] = isset($lastTx[$id]) ? $lastTx[$id] : '';
         $a['wontReturn'] = isset($wr[$id]);
         $a['band'] = he_band($a['acc']); /* LIST A..E, or F */
-        unset($a['act_current'], $a['act_month'], $a['act_prev']);
+        unset($a['act_current'], $a['act_month'], $a['act_prev'], $a['act_base_month']);
       }
       unset($a);
       /* highest-value agents first, then alphabetical */
@@ -1286,6 +1288,9 @@ try {
                            LIMIT 600");
       $sq->execute();
       $sleeping = $sq->fetchAll();
+      /* the list stops at 600; the count must not, or the tab reads 600 in a
+       * month the file says 1,400 are asleep */
+      $sleepingTotal = (int)db()->query("SELECT COUNT(*) c FROM agents WHERE act_current = 'INACTIVE'")->fetch()['c'];
 
       /* WAKED this month. hasProof only - the photo itself is management's. */
       $wsql = "SELECT k.agent_id, k.bdo, k.at, k.proof <> '' hasProof, k.source,
@@ -1304,7 +1309,8 @@ try {
       $rq->execute($all ? array() : array($me));
 
       respond(array('month' => $month, 'all' => $all, 'me' => $me,
-                    'sleeping' => $sleeping, 'waked' => $wq->fetchAll(), 'recruits' => $rq->fetchAll(),
+                    'sleeping' => $sleeping, 'sleepingTotal' => $sleepingTotal,
+                    'waked' => $wq->fetchAll(), 'recruits' => $rq->fetchAll(),
                     'canEdit' => can($u, 'mybase', 'e'),
                     'serveReceipt' => receipt_rule_for($me, 'wake')));
     }
@@ -2374,7 +2380,11 @@ try {
       $insUser = db()->prepare('INSERT INTO users (username, role, name, password_hash, active) VALUES (?, "bdo", ?, ?, 0)');
       $insKpi = db()->prepare("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, upload_id) VALUES (?,?,?,?, 'upload', ?)");
       $insFlag = db()->prepare('INSERT IGNORE INTO flags (month, agent_id, bdo, kpi, detail) VALUES (?,?,?,?,?)');
-      $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = ?, act_month = ? WHERE id = ?');
+      /* act_prev is only replaced when the file HAS a previous-month column. A
+       * file carrying just this month's status used to blank it for every
+       * agent, wiping the "was active" reading the month roll had put there -
+       * and with it every slept/lost count. */
+      $updAct = db()->prepare('UPDATE agents SET act_current = ?, act_prev = IF(? = "", act_prev, ?), act_month = ? WHERE id = ?');
       /* only the base file writes this - see PASS 2 */
       $setBase = db()->prepare('UPDATE agents SET act_base = ?, act_base_month = ? WHERE id = ?');
       $updApk = db()->prepare('UPDATE agents SET apk_version = ?, apk_month = ? WHERE id = ?');
@@ -2511,6 +2521,15 @@ try {
       foreach ($byStation as $k => $s) $byStation[$k]['net_active'] = $s['waked'] - $s['lost'];
       $stats['_stations'] = $byStation; /* rides inside the snapshot json */
 
+      /* Does this base file carry the month's activeness at all? Only then is
+       * it the authority on it - a base file without the column must not wipe
+       * every agent's status. */
+      $actAuthority = false;
+      if ($mode === 'fixed') {
+        foreach ($parsed as $p0) { if ($p0['act_cur'] !== '') { $actAuthority = true; break; } }
+      }
+      $actInFile = array(); $actUnread = array(); $actCleared = 0;
+
       /* Register this upload: dated, labelled, and every row/credit it writes
        * carries its id - so it can be renamed or ERASED as one unit later. */
       $upLabel = trim((string)bval('label'));
@@ -2584,7 +2603,18 @@ try {
          * reconciliation below raises the flag for the OM to judge. */
         $actCur = $r['act_cur'];
         if ($actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
-        if ($actCur !== '' || $r['act_prev'] !== '') $updAct->execute(array($actCur, $r['act_prev'], $month, $id));
+        /* THE BASE FILE IS THIS MONTH'S STATUS. It is written as the file has
+         * it - blank included - so the status carried over from last month
+         * never survives a base file that says something else. */
+        if ($actAuthority) {
+          $updAct->execute(array($actCur, $r['act_prev'], $r['act_prev'], $month, $id));
+          $actInFile[$id] = $actCur;
+          if ($actCur === '' && trim((string)$r['activeness']) !== '' && count($actUnread) < 5) {
+            $actUnread[trim((string)$r['activeness'])] = true;
+          }
+        } elseif ($actCur !== '' || $r['act_prev'] !== '') {
+          $updAct->execute(array($actCur, $r['act_prev'], $r['act_prev'], $month, $id));
+        }
         /*
          * THE BASE FILE SETS THE BASELINE, and only the base file.
          *
@@ -2808,6 +2838,49 @@ try {
        * A priority seed never writes it. */
       if (!$priorityMode) setting_set('month_stats_' . $month, json_encode($stats));
 
+      /*
+       * NO CARRIED STATUS SURVIVES THE BASE FILE.
+       *
+       * When the month rolls, each agent keeps last month's status so the
+       * officers have something to work from until the base file lands. Once
+       * it has landed, an agent the file does not list keeps nothing: his
+       * status was last month's, and counting it made the app's active and
+       * inactive totals disagree with the file.
+       *
+       * Left alone: agents created this month (a field recruit is not in a
+       * file cut before he joined), agents a BDO woke this month, and agents a
+       * performance file has already read this month - those are newer than
+       * the base file, not older.
+       */
+      $actSummary = null;
+      if ($actAuthority) {
+        $first = $month . '-01';
+        $cq = db()->prepare("SELECT a.id FROM agents a
+                             WHERE a.act_current <> ''
+                               AND a.created_at < ?
+                               AND NOT EXISTS (SELECT 1 FROM agent_month_kpi k
+                                               WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'active')
+                               AND NOT EXISTS (SELECT 1 FROM service_history s
+                                               WHERE s.month = ? AND s.agent_id = a.id AND s.source <> 'bdo')");
+        $cq->execute(array($first, $month, $month));
+        $stale = array();
+        foreach ($cq->fetchAll() as $c0) { if (!isset($actInFile[(int)$c0['id']])) $stale[] = (int)$c0['id']; }
+        foreach (array_chunk($stale, 500) as $chunk) {
+          $in0 = implode(',', array_fill(0, count($chunk), '?'));
+          $clr = db()->prepare("UPDATE agents SET act_current = '', act_month = ? WHERE id IN ($in0)");
+          $clr->execute(array_merge(array($month), $chunk));
+          $actCleared += $clr->rowCount();
+        }
+        /* what the file said, per agent - and what the app now holds, so the
+         * OM can lay the two numbers side by side straight away */
+        $fa = array('ACTIVE' => 0, 'INACTIVE' => 0, 'blank' => 0);
+        foreach ($actInFile as $v0) { if ($v0 === '') $fa['blank']++; else $fa[$v0]++; }
+        $sa0 = db()->query("SELECT SUM(act_current = 'ACTIVE') a, SUM(act_current = 'INACTIVE') i FROM agents")->fetch();
+        $actSummary = array('file' => $fa, 'fileRows' => count($parsed), 'fileAgents' => count($actInFile),
+                            'cleared' => $actCleared, 'unread' => array_keys($actUnread),
+                            'appActive' => (int)$sa0['a'], 'appInactive' => (int)$sa0['i']);
+      }
+
       /* new agents arrived, so the branches must own them before anything
        * counts a round size */
       $branchSync = sync_branch_base($month);
@@ -2825,7 +2898,8 @@ try {
                     /* which standard the wakes were judged against, so an OM who
                      * uploads performance before the base file is told at once */
                     'baselineUsed' => $baselineUsed, 'baselineAgents' => $baselineFrom,
-                    'blankStation' => $blankStation, 'homeStation' => $homeStation));
+                    'blankStation' => $blankStation, 'homeStation' => $homeStation,
+                    'activeness' => $actSummary));
     }
 
     /* ================= TARGETS (typed by OM) ================= */

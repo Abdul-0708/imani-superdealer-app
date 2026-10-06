@@ -363,7 +363,7 @@
     'These months ended and the new one opened automatically. Upload their final file to settle the achievement and commission.':
       'Miezi hii imeisha na mwezi mpya umefunguliwa wenyewe. Pakia faili lao la mwisho ili kukamilisha ufikiaji na kamisheni.',
     'Go to Weekly Upload': 'Nenda Kupakia Wiki',
-    'Active - confirmed by this month\'s performance file': 'Hai - imethibitishwa na faili la utendaji la mwezi huu',
+    'Active - confirmed by this month\'s file': 'Hai - imethibitishwa na faili la mwezi huu',
     'Active - carried from last month; no file has covered him yet this month':
       'Hai - imebebwa kutoka mwezi uliopita; hakuna faili lililomgusa mwezi huu bado',
     'carried': 'imebebwa',
@@ -2376,7 +2376,8 @@
   function activenessHtml(d) {
     var tab = state._actTab || 'sleeping';
     var counts = {
-      sleeping: (d.sleeping || []).length,
+      /* the true total - the list itself stops at 600 */
+      sleeping: d.sleepingTotal != null ? d.sleepingTotal : (d.sleeping || []).length,
       waked: (d.waked || []).length,
       recruits: (d.recruits || []).length
     };
@@ -2388,7 +2389,10 @@
       }).join('') + '</div>';
     if (tab === 'waked') return '<div class="panel">' + head + wakedHtml(d) + '</div>';
     if (tab === 'recruits') return '<div class="panel">' + head + recruitsHtml(d) + '</div>';
-    return '<div class="panel">' + head + sleepingHtml(d) + '</div>';
+    var shown = (d.sleeping || []).length;
+    var more = counts.sleeping > shown
+      ? '<p class="note">' + t('Showing the first') + ' ' + fmt(shown) + ' ' + t('of') + ' ' + fmt(counts.sleeping) + '.</p>' : '';
+    return '<div class="panel">' + head + more + sleepingHtml(d) + '</div>';
   }
 
   /*
@@ -3327,7 +3331,7 @@
        * so" are different facts and the OM should not have to guess. */
       if (a.actStatus === 'ACTIVE') {
         return '<span class="kchip done" title="' + esc(a.actFromFile
-          ? t('Active - confirmed by this month\'s performance file')
+          ? t('Active - confirmed by this month\'s file')
           : t('Active - carried from last month; no file has covered him yet this month')) + '">Active &#10003;' +
           (a.actFromFile ? '' : ' <small class="ksrc">' + t('carried') + '</small>') + '</span>';
       }
@@ -4303,6 +4307,24 @@
      * works but lets the file being judged supply its own standard. Say so
      * at the moment it happens, while the OM can still fix it.
      */
+    /* THE BASE FILE'S ACTIVENESS, beside what the app now holds - the two
+     * numbers the OM compares, on one line, the moment the upload finishes */
+    var ac = d.activeness;
+    if (ac && ac.file) {
+      s += '<div class="note" style="margin-top:6px"><b>' + t('Activeness in this file') + ':</b> ' +
+        '<span class="pill ok">' + fmt(ac.file.ACTIVE) + ' ' + t('active') + '</span> ' +
+        '<span class="pill bad">' + fmt(ac.file.INACTIVE) + ' ' + t('inactive') + '</span>' +
+        (ac.file.blank ? ' <span class="pill gold">' + fmt(ac.file.blank) + ' ' + t('blank or unreadable') + '</span>' : '') +
+        ' &middot; <b>' + t('In the app now') + ':</b> ' + fmt(ac.appActive) + ' ' + t('active') + ', ' +
+        fmt(ac.appInactive) + ' ' + t('inactive') + '.';
+      if (ac.cleared) s += ' ' + fmt(ac.cleared) + ' ' + t('agents not in this file no longer carry last month\'s status.');
+      if (ac.fileRows > ac.fileAgents) s += ' ' + fmt(ac.fileRows - ac.fileAgents) + ' ' + t('rows repeat an account already in the file - counted once.');
+      if (ac.unread && ac.unread.length) s += ' ' + t('Status values not understood') + ': <b>' + ac.unread.map(esc).join(', ') + '</b>.';
+      if (ac.appActive !== ac.file.ACTIVE || ac.appInactive !== ac.file.INACTIVE) {
+        s += ' ' + t('Any difference left is agents created this month, woken by a BDO this month, or already read by a performance file this month.');
+      }
+      s += '</div>';
+    }
     if (d.scoring && d.baselineUsed === 'file-column') {
       s += '<div class="note" style="margin-top:6px"><span class="pill gold">' +
         t('No base file for this month yet') + '</span> ' +

@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.81.0');
+define('APP_VERSION', '1.82.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -1132,9 +1132,12 @@ function apk_is_yes($raw, $requiredVersion) {
 
 /* Normalize an activeness cell: ' Active ' -> ACTIVE, 'Inactive' -> INACTIVE. */
 function act_norm($s) {
-  $s = strtolower(trim((string)$s));
+  /* letters only, so "In-active", "Not Active" and "NON_ACTIVE" read the same
+   * as "Inactive" - any of them used to come back blank */
+  $s = preg_replace('/[^a-z]/', '', strtolower(trim((string)$s)));
   if ($s === '') return '';
-  if (strpos($s, 'inact') === 0 || strpos($s, 'dormant') === 0) return 'INACTIVE';
+  if (strpos($s, 'inact') === 0 || strpos($s, 'dormant') === 0 ||
+      strpos($s, 'notact') === 0 || strpos($s, 'nonact') === 0) return 'INACTIVE';
   if (strpos($s, 'activ') === 0) return 'ACTIVE';
   return '';
 }

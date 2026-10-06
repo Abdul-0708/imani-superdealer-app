@@ -5,6 +5,42 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.82.0 — 2026-10-06 · The base file is the month's activeness — nothing carried survives it
+
+The October base file was uploaded and the app's active/inactive numbers did not match the file's.
+
+### Why they differed
+
+1. **Carried statuses stayed.** When the month rolls, every agent keeps last month's status until a
+   file says otherwise. The base file only overwrote agents it listed, so any agent the app knew who
+   was not in the file still counted with September's status.
+2. **Blank or unrecognised cells kept the carried status.** A row whose status was empty, or written
+   as *Not Active* / *Non-active* / *In-active*, was read as blank and left last month's value in place.
+3. **The *Still asleep* count stopped at 600**, because it counted the list and the list is capped.
+4. **A file with only this month's column blanked last month's status** (`act_prev`) for every agent.
+   That hid the *was active* tags and the slept/lost counts.
+
+### What changes
+
+- **A base file with an activeness column is the authority on it.** Every agent in the file gets
+  exactly the file's status, including blank. Every agent **not** in the file has the carried status
+  cleared. Left alone: agents created this month, agents a BDO woke this month, and agents a
+  performance file already read this month, because their information is newer than the base file.
+  A base file with no activeness column changes nothing about activeness.
+- `act_norm()` reads letters only, and also understands *not active*, *non active* and *in-active*
+  as INACTIVE.
+- `act_prev` is replaced only when the file has a previous-month column.
+- The upload result shows the file's active / inactive / blank counts beside the app's totals, how
+  many carried statuses were cleared, repeated account rows, and any status values it could not read.
+- *Still asleep* shows the true total, with "showing the first 600 of N" when the list is cut.
+- A status from this month's base file no longer carries the *carried* tag.
+
+**To apply to October: re-upload the October base file after deploying.**
+
+APP_VERSION 1.82.0, assets bumped to v99.
+
+---
+
 ## v1.81.0 — 2026-10-06 · Transaction acceleration on every agent (schema v31)
 
 Every agent with a Withdraw Target now shows, on **My Agent Base** and on **All Agents**, what he is
