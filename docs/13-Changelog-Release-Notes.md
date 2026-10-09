@@ -5,6 +5,97 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.83.0 — 2026-10-09 · Measured by branch: the scorecard, scores, fixed targets, and no Manyara
+
+Four changes that belong together, because all four follow from the same rule — **every BDO is measured
+on his branches.** The scoring and target rules start in **October 2026** (`PERF_RULES_FROM`), so
+September and earlier keep the numbers they were scored with.
+
+### 1. Manyara is not read for performance
+
+Stations listed in the `excluded_stations` setting (default `MANYARA`) are left out of everything that
+counts:
+
+- **Uploads:** their rows are skipped entirely — no office totals, no credits, no flags, no activeness,
+  no service history. The upload result says how many were skipped.
+- **Office totals:** "all stations" is rebuilt from the per-station breakdown without them. The ledger
+  fallback and the BDO, high-earner and combined reports leave them out too.
+- **Rounds:** no BDO's round holds them. The branch list for assignment, *Agents no branch holds*, *Still
+  asleep* and the sleeping-agent sweep leave them out. October's rounds are re-synced once on the first
+  request after deploy.
+
+### 2. A BDO's score counts every agent in his branches, whoever ticked it
+
+For an officer who holds branches, `bdo_actuals()` and `bdo_actuals_unflagged()` now read off his
+branches (`branch_actuals()`): served, visits, APK and wakes count every agent in his branches with that
+KPI done this month — by the performance file, by him, by a colleague or by the partner. Float is the
+file float of his branch agents plus his own typed daily reports. Acceleration counts his branch agents
+who reached their Withdraw Target. A claim under an open flag still does not count. An officer with no
+branch keeps the old personal-credit rule.
+
+### 3. Targets come from the base file; the OM sets the weights
+
+When the month's base (fixed) file is uploaded, `fix_bdo_targets_from_base()` sets each branch-holding
+BDO's targets from his branch list at that moment, and they stay the same for the month:
+
+| Target | Set to |
+|---|---|
+| Serving | every agent in his branches |
+| Visits | every agent in his branches |
+| Activeness | agents the base file has INACTIVE (to wake) |
+| APK | agents not on the required APK version |
+| Acceleration | agents the base file gave a Withdraw Target |
+| Base growth counts from | the size of his list |
+
+On the Targets screen those five show read-only, labelled with where they came from. The OM sets the
+weights, plus float and the base-growth ceiling, which are amounts rather than agent counts. Saving one
+BDO, or "Apply to ALL BDOs", never overwrites the fixed counts. The upload result lists what each BDO
+was given.
+
+### 4. The branch scorecard (PNG + Excel)
+
+**Reports → Database Upload → Prepared reports → Branch scorecard (PNG + Excel)**, for the month chosen there.
+
+**The picture** (`BDO_branch_scorecard_YYYY-MM.png`) is 2400 px wide with large bold type, so it can be
+read across a room or in a WhatsApp group. It has one row per BDO, **highest weighted score first**, then
+an **ALL BDOs** total (its score is the average of the officers'), then a grey **UNALLOCATED BRANCHES**
+row for every branch no BDO holds.
+
+| Column | What it counts |
+|---|---|
+| Agents | every agent in his branches |
+| Unique served | agents served this month (by anybody), with % and how many are left |
+| Float served | file float for his branch agents + his typed daily reports (TZS, shortened) |
+| Visits | agents visited, with % and how many are left |
+| Txn acceleration | achieved / agents with a Withdraw Target, with % |
+| Inactive → Active | wake credits this month — the same count his score uses |
+| Active → Inactive | ACTIVE at the start of the month (base file, else last month), INACTIVE now |
+| Net active | woken − lost |
+| Weighted score | his score from the same function as his own dashboard |
+
+Served, visits, acceleration and score are tinted green (80%+), amber (50–79%) or red (under 50%). A
+claim under an open flag is not counted. The picture also appears on the page.
+
+**The workbook** (`BDO_branch_scorecard_YYYY-MM.xlsx`):
+
+- **Summary:** the same table with full numbers and the weighted score. Float is split into from-files
+  and typed. It also has APK updated, active now, inactive now, and the Unallocated branches row.
+- **One sheet per BDO:** his score, then how it is made (each KPI's target, done, weight and % achieved),
+  then every agent in his branches. Each agent row has served (YES / NO / FLAGGED and by whom), visited,
+  APK, float, activeness at start / now / change, withdraw target, transactions, left, and achieved/short.
+  The heading row has a filter.
+- **Unallocated branches:** every agent whose branch no BDO holds.
+
+New endpoint `branch_scorecard` (management only, rate-limited). `accel_map()` accepts `null` for every
+agent.
+
+**To apply to October: deploy, then upload the October base (fixed) file again** — that sets the
+targets — and set the weights on the Targets screen.
+
+APP_VERSION 1.83.0, assets bumped to v100.
+
+---
+
 ## v1.82.0 — 2026-10-06 · The base file is the month's activeness — nothing carried survives it
 
 The October base file was uploaded and the app's active/inactive numbers did not match the file's.

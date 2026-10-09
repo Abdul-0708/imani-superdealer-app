@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.82.0');
+define('APP_VERSION', '1.83.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -492,6 +492,172 @@ function branch_owner_of_agent($agentId) {
 }
 
 /*
+ * ===================== WHAT PERFORMANCE COUNTS, FROM OCTOBER 2026 =====================
+ *
+ * Three rules arrived together and share one start month, so September and
+ * everything before it keeps the numbers it was scored with:
+ *
+ *   - Stations the office no longer works (MANYARA) are not read at all: not
+ *     uploaded, not in anybody's round, not in any office or officer total.
+ *   - An officer who holds branches is scored on every agent in them - a KPI
+ *     done on his branch agent counts for him whoever ticked it.
+ *   - His targets are fixed from his branch agent list when the month's base
+ *     file is uploaded; the OM sets the weights.
+ */
+define('PERF_RULES_FROM', '2026-10');
+function perf_rules_on($month) { return (string)$month >= PERF_RULES_FROM; }
+
+/* Stations not read for performance in $month. Upper case, as uploads store
+ * them. A setting rather than code, so another station can be added later. */
+function perf_excluded_stations($month) {
+  if (!perf_rules_on($month)) return array();
+  $out = array();
+  foreach (explode(',', setting_get('excluded_stations', 'MANYARA')) as $s) {
+    $s = strtoupper(trim($s));
+    if ($s !== '') $out[] = $s;
+  }
+  return $out;
+}
+/* " AND <alias>.station is not an excluded one" - inline literals, so no extra
+ * placeholders to thread through. NULL passes: a LEFT JOIN that found no agent
+ * has no station to exclude. */
+function perf_station_sql($alias, $month) {
+  $ex = perf_excluded_stations($month);
+  if (!count($ex)) return '';
+  $q = array();
+  foreach ($ex as $s) $q[] = db()->quote($s);
+  return " AND ($alias.station IS NULL OR UPPER(TRIM($alias.station)) NOT IN (" . implode(',', $q) . "))";
+}
+
+function bdo_branch_list($bdo) {
+  static $cache = array();
+  if (isset($cache[$bdo])) return $cache[$bdo];
+  $out = array();
+  try {
+    $q = db()->prepare('SELECT branch FROM bdo_branches WHERE bdo = ? ORDER BY branch');
+    $q->execute(array($bdo));
+    foreach ($q->fetchAll() as $r) $out[] = $r['branch'];
+  } catch (Exception $e) { /* not migrated */ }
+  $cache[$bdo] = $out;
+  return $out;
+}
+
+/*
+ * AN OFFICER'S ACTUALS, READ OFF HIS BRANCHES.
+ *
+ * Every agent in the branches he holds counts, whoever did the work: a KPI the
+ * performance file credits to his branch agent, a colleague's tick, the
+ * partner's serve - it is all done on his streets, and his streets are what he
+ * is measured on. A claim under an open flag is left out when $unflagged, as
+ * the personal-credit rule always did.
+ *
+ * Returns null for an officer who holds no branch (he keeps the old rule) or a
+ * month before PERF_RULES_FROM.
+ */
+function branch_actuals($month, $bdo, $unflagged) {
+  if (!perf_rules_on($month)) return null;
+  if (!count(bdo_branch_list($bdo))) return null;
+  $ex = perf_station_sql('a', $month);
+  $fl = $unflagged ? ' AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.month = k.month AND f.agent_id = k.agent_id
+                                         AND f.bdo = k.bdo AND f.kpi = k.kpi)' : '';
+  $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+  $q = db()->prepare("SELECT k.kpi, COUNT(DISTINCT k.agent_id) n
+                      FROM agent_month_kpi k
+                      JOIN agents a ON a.id = k.agent_id
+                      JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
+                      WHERE k.month = ?$ex$fl
+                      GROUP BY k.kpi");
+  $q->execute(array($bdo, $month));
+  foreach ($q->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
+
+  /* typed daily reports carry no agent: they stay his own, as before */
+  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(apk),0) a
+                      FROM daily_reports WHERE month = ? AND bdo = ?');
+  $d->execute(array($month, $bdo));
+  $dr = $d->fetch();
+  $k['apk'] = max($k['apk'], (int)$dr['a']);
+
+  $f = db()->prepare("SELECT COALESCE(SUM(s.float_served),0) f
+                      FROM service_history s
+                      JOIN agents a ON a.id = s.agent_id
+                      JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
+                      WHERE s.month = ?$ex");
+  $f->execute(array($bdo, $month));
+  $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
+
+  $iq = db()->prepare("SELECT a.id FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
+                       WHERE 1$ex");
+  $iq->execute(array($bdo));
+  $ids = array();
+  foreach ($iq->fetchAll() as $r) $ids[] = (int)$r['id'];
+  $k['accel'] = 0;
+  foreach (accel_map($month, $ids) as $x) { if ($x['done']) $k['accel']++; }
+  $k['base'] = count($ids);
+  return $k;
+}
+
+/*
+ * HIS TARGETS ARE HIS BRANCH LIST AT THE START OF THE MONTH.
+ *
+ * Run when the month's base (fixed) file is uploaded. For every officer who
+ * holds a branch, the targets are counted off the agents in his branches at
+ * that moment and then stay put for the month - an agent who joins later does
+ * not move the line he is measured against. The OM no longer types how many
+ * he must serve; he sets how much each KPI weighs.
+ *
+ *   serving, visits   every agent in his branches
+ *   activeness        the ones the base file has INACTIVE - those to wake
+ *   apk               the ones not on the required APK version
+ *   accel             the ones the file gave a Withdraw Target
+ *   base_start        the size of his list - growth counts from here
+ *
+ * Float and the base-growth ceiling are amounts, not agents, so the OM still
+ * types those. Weights are never touched here.
+ */
+function fix_bdo_targets_from_base($month) {
+  if (!perf_rules_on($month)) return null;
+  $ex = perf_station_sql('a', $month);
+  $req = setting_get('apk_required_version', '2.0');
+  $q = db()->prepare("SELECT bb.bdo, a.act_current, a.apk_version, a.apk_month, a.wd_target_base, a.wd_target_month
+                      FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch
+                      WHERE 1$ex");
+  $q->execute();
+  $per = array();
+  foreach (db()->query('SELECT DISTINCT bdo FROM bdo_branches')->fetchAll() as $r) {
+    $per[$r['bdo']] = array('n' => 0, 'inactive' => 0, 'apk' => 0, 'accel' => 0);
+  }
+  foreach ($q->fetchAll() as $r) {
+    $p = &$per[$r['bdo']];
+    $p['n']++;
+    if (strtoupper((string)$r['act_current']) === 'INACTIVE') $p['inactive']++;
+    $ver = (string)$r['apk_month'] === $month ? (string)$r['apk_version'] : '';
+    if (!apk_is_yes($ver, $req)) $p['apk']++;
+    if ((string)$r['wd_target_month'] === $month && (int)$r['wd_target_base'] > 0) $p['accel']++;
+    unset($p);
+  }
+  $up = db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, visits_target, activeness_target, apk_target,
+                         accel_target, base_start)
+                       VALUES (?,?,?,?,?,?,?,?)
+                       ON DUPLICATE KEY UPDATE serving_target=VALUES(serving_target), visits_target=VALUES(visits_target),
+                         activeness_target=VALUES(activeness_target), apk_target=VALUES(apk_target),
+                         accel_target=VALUES(accel_target), base_start=VALUES(base_start)');
+  foreach ($per as $bdo => $p) {
+    $up->execute(array($month, $bdo, $p['n'], $p['n'], $p['inactive'], $p['apk'], $p['accel'], $p['n']));
+  }
+  setting_set('tgfixed_' . $month, json_encode(array('at' => date('j M Y, H:i'), 'bdos' => count($per))));
+  return $per;
+}
+/* The targets the base file sets - counted off his agents, never typed. */
+function auto_target_cols() { return array('serving', 'visits', 'activeness', 'apk', 'accel'); }
+/* When this month's targets were fixed from the base file, or null. */
+function targets_fixed_info($month) {
+  $v = setting_get('tgfixed_' . $month, '');
+  if ($v === '') return null;
+  $j = json_decode($v, true);
+  return is_array($j) ? $j : null;
+}
+
+/*
  * MAKE THE MONTH'S ROUNDS MATCH THE BRANCHES.
  *
  * Two statements, in this order. The DELETE removes a row only where the
@@ -531,6 +697,10 @@ function sync_branch_base($month) {
      * branch directly) but his weekly target, base count and ranking - which
      * read this table - did not count him.
      */
+    /* ...and nobody's round holds an agent of a station no longer worked */
+    $exQ = array();
+    foreach (perf_excluded_stations($month) as $xs) $exQ[] = db()->quote($xs);
+    $exDel = count($exQ) ? ' OR UPPER(TRIM(a.station)) IN (' . implode(',', $exQ) . ')' : '';
     $del = db()->prepare('DELETE b FROM base b
                           JOIN agents a ON a.id = b.agent_id
                           WHERE b.month = ?
@@ -538,12 +708,13 @@ function sync_branch_base($month) {
                                   AND NOT EXISTS (SELECT 1 FROM bdo_branches bb
                                                   WHERE bb.bdo = b.bdo AND bb.branch = a.branch))
                                  OR EXISTS (SELECT 1 FROM bdo_branches o
-                                            WHERE o.branch = a.branch AND o.bdo <> b.bdo))');
+                                            WHERE o.branch = a.branch AND o.bdo <> b.bdo)' . $exDel . ')');
     $del->execute(array($month));
     $moved = $del->rowCount();
     $ins = db()->prepare("INSERT IGNORE INTO base (month, bdo, agent_id, kind)
                           SELECT ?, bb.bdo, a.id, 'priority'
-                          FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch");
+                          FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch
+                          WHERE 1" . perf_station_sql('a', $month));
     $ins->execute(array($month));
     return array('added' => $ins->rowCount(), 'moved' => $moved);
   } catch (Exception $e) { return array('added' => 0, 'moved' => 0); }
@@ -605,11 +776,16 @@ function branch_for_recruit($user, $branch) {
  */
 function accel_map($month, $ids) {
   $out = array();
-  if (!count($ids)) return $out;
-  $in = implode(',', array_fill(0, count($ids), '?'));
+  /* $ids === null means every agent - a whole-office report would otherwise
+   * send thousands of placeholders */
+  $all = ($ids === null);
+  if (!$all && !count($ids)) return $out;
+  $ids = $all ? array() : array_values($ids);
+  $in = $all ? '' : ' AND agent_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
+  $inA = $all ? '' : ' AND id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
   try {
     $q = db()->prepare("SELECT agent_id, MAX(wd_target) t, MAX(wd_txn) x FROM service_history
-                        WHERE month = ? AND source <> 'bdo' AND agent_id IN ($in)
+                        WHERE month = ? AND source <> 'bdo'$in
                         GROUP BY agent_id");
     $q->execute(array_merge(array($month), $ids));
     foreach ($q->fetchAll() as $r) {
@@ -618,7 +794,7 @@ function accel_map($month, $ids) {
   } catch (Exception $e) { /* no history yet */ }
   try {
     $q = db()->prepare("SELECT id, wd_target_base t FROM agents
-                        WHERE wd_target_month = ? AND wd_target_base > 0 AND id IN ($in)");
+                        WHERE wd_target_month = ? AND wd_target_base > 0$inA");
     $q->execute(array_merge(array($month), $ids));
     foreach ($q->fetchAll() as $r) {
       $id = (int)$r['id'];
@@ -892,11 +1068,12 @@ function maybe_roll_month() {
    * did not carry the bases, so make sure that has happened before leaving. */
   if (!$r || $r['month'] >= $cur) {
     repair_misfiled_marks($cur); ensure_base_carry($cur); ensure_base_join($cur); ensure_targets_carry($cur);
-    /* v1.80.0 hands branch agents held by somebody else back to the branch's
-     * officer. A month already open when that shipped is re-synced once, so
-     * the fix does not wait for the next upload or assignment. */
+    /* A month already open when a rule about rounds ships is re-synced once,
+     * so the fix does not wait for the next upload or assignment: v1.80.0
+     * handed branch agents back to the branch's officer, v1.83.0 takes the
+     * stations no longer worked out of every round. */
     $once = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
-    $once->execute(array('branchsync180_' . $cur, date('Y-m-d H:i:s')));
+    $once->execute(array('branchsync183_' . $cur, date('Y-m-d H:i:s')));
     if ($once->rowCount() === 1) sync_branch_base($cur);
     return;
   }
@@ -1226,9 +1403,25 @@ function month_actuals($month, $station = '') {
   if ($snap !== '') {
     $s = json_decode($snap, true);
     if (is_array($s)) {
+      $per = isset($s['_stations']) && is_array($s['_stations']) ? $s['_stations'] : array();
       if ($station !== '') {
-        $per = isset($s['_stations']) && is_array($s['_stations']) ? $s['_stations'] : array();
         $s = isset($per[$station]) ? $per[$station] : array();
+      } elseif (count(perf_excluded_stations($month)) && count($per)) {
+        /* "all stations" means every station still worked: rebuild the total
+         * from the per-station breakdown, leaving the excluded ones out */
+        $ex = perf_excluded_stations($month);
+        $sum = array('custom' => array());
+        foreach ($per as $stName => $vals) {
+          if (in_array(strtoupper((string)$stName), $ex, true) || !is_array($vals)) continue;
+          foreach ($vals as $kk => $vv) {
+            if ($kk === 'custom' && is_array($vv)) {
+              foreach ($vv as $ck => $cv) $sum['custom'][$ck] = (isset($sum['custom'][$ck]) ? $sum['custom'][$ck] : 0) + $cv;
+            } elseif (is_numeric($vv)) {
+              $sum[$kk] = (isset($sum[$kk]) ? $sum[$kk] : 0) + $vv;
+            }
+          }
+        }
+        $s = $sum;
       }
       $custom = (isset($s['custom']) && is_array($s['custom'])) ? $s['custom'] : array();
       return array(
@@ -1249,7 +1442,7 @@ function month_actuals($month, $station = '') {
    * station filter rides on the AGENT record, which is where the region lives
    * before any snapshot exists. Typed daily reports carry no agent, so they
    * only join the office-wide roll-up. */
-  $stFilter = $station !== '' ? ' AND a.station = ?' : '';
+  $stFilter = $station !== '' ? ' AND a.station = ?' : perf_station_sql('a', $month);
   $stVals = $station !== '' ? array($station) : array();
   $st = db()->prepare('SELECT k.kpi, COUNT(*) n FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
                        WHERE k.month = ?' . $stFilter . ' GROUP BY k.kpi');
@@ -1635,6 +1828,9 @@ function base_start_default($month, $bdo) {
   return $r ? (int)$r['c'] : 0;
 }
 function bdo_actuals($month, $bdo) {
+  /* from October 2026 an officer who holds branches is read off them */
+  $br = branch_actuals($month, $bdo, false);
+  if ($br !== null) return $br;
   $st = db()->prepare('SELECT kpi, COUNT(*) n FROM agent_month_kpi WHERE month = ? AND bdo = ? GROUP BY kpi');
   $st->execute(array($month, $bdo));
   $k = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
@@ -1668,6 +1864,8 @@ function bdo_actuals($month, $bdo) {
  * motivator than a red number he cannot interpret.
  */
 function bdo_actuals_unflagged($month, $bdo) {
+  $br = branch_actuals($month, $bdo, true);
+  if ($br !== null) return $br;
   $st = db()->prepare("SELECT k.kpi, COUNT(*) n
                        FROM agent_month_kpi k
                        WHERE k.month = ? AND k.bdo = ?

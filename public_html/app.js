@@ -4137,6 +4137,294 @@
       })
       .catch(function (e) { toast(e.message, 'err'); });
   }
+  /*
+   * ===================== THE BRANCH SCORECARD =====================
+   *
+   * One picture for the wall and one workbook behind it. The picture is drawn
+   * straight onto a canvas, 2400 px wide with big bold type and colour on
+   * every number that matters, so it can be read across a room or on a phone
+   * in a WhatsApp group. The workbook carries the same summary, then one sheet
+   * per BDO with every agent in his branches and his status on every KPI.
+   */
+  function scCompact(n) {
+    n = Number(n) || 0;
+    var a = Math.abs(n);
+    if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 1 : 2).replace(/\.?0+$/, '') + 'B';
+    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return Math.round(n / 1e3) + 'K';
+    return fmt(n);
+  }
+  function scPct(n, d) { return d ? Math.round(n / d * 100) : 0; }
+  /* green / amber / red, as fill + ink - a document, so fixed colours, not the theme */
+  function scBand(p) {
+    if (p >= 80) return ['#dcf5d3', '#1d6b1f'];
+    if (p >= 50) return ['#fff1c7', '#8a5a00'];
+    return ['#ffdcd6', '#a3271b'];
+  }
+  function scorecardPng(d) {
+    var W = 2400, M = 60, HEAD = 250, TH = 120, RH = 140, FOOT = 190;
+    var offs = d.officers || [];
+    /* branches nobody holds are one line of their own, under the office total */
+    var vac = d.vacant && d.vacant.agents ? d.vacant : null;
+    var H = HEAD + TH + RH * (offs.length + 1 + (vac ? 1 : 0)) + FOOT;
+    var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var g = cv.getContext('2d');
+    var F = '"Segoe UI", Roboto, Arial, sans-serif';
+    function font(px, w) { g.font = (w || 700) + ' ' + px + 'px ' + F; }
+    /* shrink until it fits - a long name must never run into the next column -
+     * but never below minPx: past that it is cut short with an ellipsis, so a
+     * long name stays readable from across the room */
+    function text(s, x, y, maxW, px, colour, align, w, minPx) {
+      s = String(s); var size = px, floor = minPx || 14;
+      font(size, w);
+      while (size > floor && g.measureText(s).width > maxW) { size -= 2; font(size, w); }
+      if (g.measureText(s).width > maxW) {
+        while (s.length > 1 && g.measureText(s + '\u2026').width > maxW) s = s.slice(0, -1);
+        s = s.replace(/\s+$/, '') + '\u2026';
+      }
+      g.fillStyle = colour; g.textAlign = align || 'left'; g.textBaseline = 'middle';
+      g.fillText(s, x, y);
+    }
+    var cols = [
+      { k: 'bdo', label: ['BDO  /  BRANCH'], w: 450 },
+      { k: 'agents', label: ['AGENTS'], w: 190 },
+      { k: 'served', label: ['UNIQUE', 'SERVED'], w: 240 },
+      { k: 'float', label: ['FLOAT', 'SERVED'], w: 220 },
+      { k: 'visit', label: ['VISITS'], w: 230 },
+      { k: 'accel', label: ['TXN', 'ACCELERATION'], w: 240 },
+      { k: 'woken', label: ['INACTIVE', '→ ACTIVE'], w: 180 },
+      { k: 'lost', label: ['ACTIVE', '→ INACTIVE'], w: 180 },
+      { k: 'net', label: ['NET', 'ACTIVE'], w: 160 },
+      /* his weighted score: every KPI's attainment, by the weights the OM set */
+      { k: 'score', label: ['WEIGHTED', 'SCORE'], w: 190 }
+    ];
+    var x0 = M; cols.forEach(function (c) { c.x = x0; x0 += c.w; });
+
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    /* header band */
+    g.fillStyle = '#14213d'; g.fillRect(0, 0, W, HEAD);
+    g.fillStyle = '#f57c00'; g.fillRect(0, HEAD - 12, W, 12);
+    text('BDO PERFORMANCE BY BRANCH', M, 92, W - 2 * M, 76, '#ffffff');
+    text(d.monthName + '   ·   data as at ' + d.generated + '   ·   Hardware Supermarkets – CRDB Super Agent',
+         M, 178, W - 2 * M, 38, '#c9d3e6', 'left', 600);
+
+    /* column headings */
+    var y = HEAD;
+    g.fillStyle = '#e8ecf4'; g.fillRect(0, y, W, TH);
+    cols.forEach(function (c) {
+      var cx = c.k === 'bdo' ? c.x + 16 : c.x + c.w / 2;
+      var al = c.k === 'bdo' ? 'left' : 'center';
+      c.label.forEach(function (line, i) {
+        var off = c.label.length > 1 ? (i ? 20 : -20) : 0;
+        text(line, cx, y + TH / 2 + off, c.w - 16, 30, '#14213d', al, 800);
+      });
+    });
+    y += TH;
+
+    /* one cell: a big number, a small line under it, an optional tint */
+    function cell(c, yy, big, small, fill, ink) {
+      if (fill) { g.fillStyle = fill; g.fillRect(c.x + 6, yy + 8, c.w - 12, RH - 16); }
+      text(big, c.x + c.w / 2, yy + RH / 2 - (small ? 16 : 0), c.w - 20, 58, ink || '#111111', 'center', 800);
+      if (small) text(small, c.x + c.w / 2, yy + RH / 2 + 38, c.w - 20, 28, ink || '#555555', 'center', 600);
+    }
+    function rowOf(o, yy, isTotal, isVacant) {
+      var sp = scPct(o.served, o.agents), vp = scPct(o.visited, o.agents), ap = scPct(o.accelDone, o.accelTarget);
+      var net = o.woken - o.lost;
+      var c = cols;
+      if (isTotal) {
+        text('ALL BDOs', c[0].x + 16, yy + RH / 2 - 18, c[0].w - 24, 50, '#ffffff', 'left', 800);
+        text(offs.length + ' officers', c[0].x + 16, yy + RH / 2 + 32, c[0].w - 24, 28, '#c9d3e6', 'left', 600);
+      } else if (isVacant) {
+        text('UNALLOCATED BRANCHES', c[0].x + 16, yy + RH / 2 - 18, c[0].w - 24, 40, '#444444', 'left', 800, 26);
+        text((o.branches || []).join(', ') || 'no branch on record', c[0].x + 16, yy + RH / 2 + 32, c[0].w - 24, 28, '#666666', 'left', 600, 22);
+      } else {
+        text(String(o.name).toUpperCase(), c[0].x + 16, yy + RH / 2 - 18, c[0].w - 24, 48, '#14213d', 'left', 800, 38);
+        text((o.branches || []).join(', ') || '-', c[0].x + 16, yy + RH / 2 + 32, c[0].w - 24, 30, '#555555', 'left', 600, 24);
+      }
+      var ink = isTotal ? '#ffffff' : null;
+      cell(c[1], yy, fmt(o.agents), 'in branch', null, ink);
+      var sb = scBand(sp);
+      cell(c[2], yy, fmt(o.served), sp + '%  ·  ' + fmt(o.agents - o.served) + ' left', isTotal ? null : sb[0], isTotal ? ink : sb[1]);
+      cell(c[3], yy, scCompact(o.float), 'TZS', null, ink);
+      var vb = scBand(vp);
+      cell(c[4], yy, fmt(o.visited), vp + '%  ·  ' + fmt(o.agents - o.visited) + ' left', isTotal ? null : vb[0], isTotal ? ink : vb[1]);
+      var ab = scBand(ap);
+      cell(c[5], yy, o.accelTarget ? fmt(o.accelDone) + ' / ' + fmt(o.accelTarget) : '-',
+           o.accelTarget ? ap + '% achieved' : 'no targets', isTotal || !o.accelTarget ? null : ab[0],
+           isTotal ? ink : (o.accelTarget ? ab[1] : '#777777'));
+      cell(c[6], yy, (o.woken ? '+' : '') + fmt(o.woken), 'woken', null, isTotal ? '#9be27a' : (o.woken ? '#1d6b1f' : '#444444'));
+      cell(c[7], yy, (o.lost ? '−' : '') + fmt(o.lost), 'lost', null, isTotal ? '#ff9d92' : (o.lost ? '#a3271b' : '#444444'));
+      var nb = net > 0 ? ['#dcf5d3', '#1d6b1f'] : net < 0 ? ['#ffdcd6', '#a3271b'] : ['#eeeeee', '#444444'];
+      cell(c[8], yy, (net > 0 ? '+' : net < 0 ? '−' : '') + fmt(Math.abs(net)), 'net', isTotal ? null : nb[0],
+           isTotal ? (net >= 0 ? '#9be27a' : '#ff9d92') : nb[1]);
+      /* nobody holds these branches, so nobody is scored on them */
+      if (isVacant) { cell(c[9], yy, '-', 'no BDO', null, '#777777'); return; }
+      var has = o.score !== null && o.score !== undefined;
+      var scb = scBand(has ? o.score : 0);
+      cell(c[9], yy, has ? o.score + '%' : '-', isTotal ? 'average' : (has ? 'weighted' : 'no weights set'),
+           isTotal || !has ? null : scb[0], isTotal ? ink : (has ? scb[1] : '#777777'));
+    }
+    offs.forEach(function (o, i) {
+      g.fillStyle = i % 2 ? '#f6f8fb' : '#ffffff'; g.fillRect(0, y, W, RH);
+      rowOf(o, y, false);
+      g.fillStyle = '#d5dbe6'; g.fillRect(M, y + RH - 2, W - 2 * M, 2);
+      y += RH;
+    });
+    g.fillStyle = '#14213d'; g.fillRect(0, y, W, RH);
+    rowOf(d.totals, y, true);
+    y += RH;
+    if (vac) {
+      g.fillStyle = '#eceff3'; g.fillRect(0, y, W, RH);
+      rowOf(vac, y, false, true);
+      y += RH;
+    }
+
+    /* what the numbers mean - short, and big enough to read */
+    var exS = (d.excludedStations || []).join(', ');
+    text('Each BDO is counted on every agent in the branches assigned to him, whoever did the work. Green 80%+, amber 50-79%, red under 50%.',
+         M, y + 44, W - 2 * M, 30, '#333333', 'left', 600);
+    text('Woken = wake credits this month; lost = ACTIVE at the start of the month, INACTIVE now. Float includes the BDO\'s typed daily reports.' +
+         (exS ? '   ' + exS + ' is not counted.' : ''),
+         M, y + 94, W - 2 * M, 30, '#333333', 'left', 600);
+    text('Agent-by-agent detail: the Excel workbook sent with this picture.', M, y + 144, W - 2 * M, 30, '#777777', 'left', 600);
+    return cv;
+  }
+  function scorecardXlsx(d) {
+    var wb = XLSX.utils.book_new();
+    var used = {};
+    function sheetName(s) {
+      var n = String(s).replace(/[\[\]:*?\/\\]/g, ' ').trim().slice(0, 28) || 'Sheet';
+      var b = n, i = 2;
+      while (used[n.toLowerCase()]) n = b.slice(0, 25) + ' ' + (i++);
+      used[n.toLowerCase()] = true;
+      return n;
+    }
+    function sumRow(name, branches, o) {
+      return [name, branches,
+        o.score === null || o.score === undefined ? '' : o.score / 100,
+        o.agents,
+        o.served, o.agents ? o.served / o.agents : 0, o.agents - o.served,
+        o.visited, o.agents ? o.visited / o.agents : 0, o.apk,
+        o.floatFile, o.floatDaily || 0, o.float,
+        o.accelTarget, o.accelDone, o.accelTarget ? o.accelDone / o.accelTarget : 0, o.accelTarget - o.accelDone,
+        o.woken, o.lost, o.woken - o.lost, o.activeNow, o.inactiveNow];
+    }
+    var aoa = [
+      ['BDO PERFORMANCE BY BRANCH - ' + d.monthName],
+      ['Data as at ' + d.generated + '  |  Hardware Supermarkets, CRDB Super Agent  |  each BDO counted on every agent in his branches, whoever did the work'],
+      [],
+      ['BDO', 'Branches', 'Weighted score', 'Agents', 'Unique served', 'Served %', 'Not served', 'Visited', 'Visited %', 'APK updated',
+       'Float from files', 'Float typed (daily reports)', 'Float served total',
+       'Accel targets', 'Accel achieved', 'Accel achieved %', 'Accel still short',
+       'Inactive -> Active', 'Active -> Inactive', 'Net active', 'Active now', 'Inactive now']
+    ];
+    (d.officers || []).forEach(function (o) { aoa.push(sumRow(o.name, (o.branches || []).join(', '), o)); });
+    aoa.push(sumRow('ALL BDOs (average score)', (d.officers || []).length + ' officers', d.totals));
+    if (d.vacant && d.vacant.agents) {
+      aoa.push(sumRow('UNALLOCATED BRANCHES', (d.vacant.branches || []).join(', ') || 'no branch on record',
+                      Object.assign({}, d.vacant, { score: null })));
+    }
+    if ((d.excludedStations || []).length) {
+      aoa.push([]);
+      aoa.push([(d.excludedStations || []).join(', ') + ' is not counted anywhere in this report.']);
+    }
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    for (var r = 4; r < aoa.length; r++) {
+      [2, 5, 8, 15].forEach(function (c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (ws[a] && typeof ws[a].v === 'number') ws[a].z = '0.0%'; });
+      [10, 11, 12].forEach(function (c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (ws[a]) ws[a].z = '#,##0'; });
+    }
+    ws['!cols'] = [{ wch: 24 }, { wch: 30 }].concat(aoa[3].slice(2).map(function (h) { return { wch: Math.max(11, h.length + 2) }; }));
+    XLSX.utils.book_append_sheet(wb, ws, sheetName('Summary'));
+
+    /* one sheet per BDO: every agent in his branches, every KPI */
+    var per = {};
+    (d.rows || []).forEach(function (a) { (per[a.o] = per[a.o] || []).push(a); });
+    var HEAD = ['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch', 'Physical Location',
+                'Served', 'Served by', 'Visited', 'APK updated', 'Float served',
+                'Activeness at start', 'Activeness now', 'Activeness change',
+                'Withdraw Target', 'Withdraw transactions', 'Left to target', 'Acceleration'];
+    function agentSheet(title, sub, list, o) {
+      var a2 = [[title], [sub],
+        [fmt(o.agents) + ' agents  |  served ' + fmt(o.served) + '  |  visited ' + fmt(o.visited) +
+         '  |  acceleration ' + fmt(o.accelDone) + '/' + fmt(o.accelTarget) +
+         '  |  woken ' + fmt(o.woken) + ', lost ' + fmt(o.lost) +
+         (o.score !== null && o.score !== undefined ? '  |  WEIGHTED SCORE ' + o.score + '%' : '')], []];
+      /* HOW THE SCORE IS MADE: each KPI's target, what was done, its weight
+       * and how much of it he reached - the weighted average is the score */
+      var pctRows = [];
+      if (o.scoreKpis) {
+        var KN = { serving: 'Unique served', float: 'Float served', visits: 'Visits', apk: 'APK updated',
+                   activeness: 'Inactive -> Active', base: 'Base growth', accel: 'Txn acceleration' };
+        a2.push(['KPI', 'Target', 'Done', 'Weight', 'Achieved']);
+        Object.keys(o.scoreKpis).forEach(function (k) {
+          var q = o.scoreKpis[k];
+          if (!Number(q.weight)) return;
+          a2.push([KN[k] || k, Number(q.target) || 0, Number(q.actual) || 0, Number(q.weight) / 100,
+                   q.pct === null || q.pct === undefined ? '' : Number(q.pct) / 100]);
+          pctRows.push(a2.length - 1);
+        });
+        a2.push([]);
+      }
+      var headRow = a2.length;
+      a2.push(HEAD);
+      list.forEach(function (a, i) {
+        var acc = a.wt == null ? '' : (a.wl === 0 ? 'ACHIEVED' : 'SHORT');
+        a2.push([i + 1, a.acc, a.name, a.phone, a.branch, a.loc,
+          /* a serve under an open flag is shown for what it is, and not counted */
+          a.srv ? 'YES' : (a.srvFlag ? 'FLAGGED' : 'NO'), a.srv || a.srvFlag || '',
+          a.vis ? 'YES' : 'NO', a.apk ? 'YES' : 'NO', a.flt || 0,
+          a.a0 || '-', a.a1 || '-', a.chg === 'WOKEN' ? 'INACTIVE -> ACTIVE' : a.chg === 'LOST' ? 'ACTIVE -> INACTIVE' : '',
+          a.wt == null ? '' : a.wt, a.wx == null ? '' : a.wx, a.wl == null ? '' : a.wl, acc]);
+      });
+      var s = XLSX.utils.aoa_to_sheet(a2);
+      s['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 26 },
+                    { wch: 8 }, { wch: 18 }, { wch: 8 }, { wch: 11 }, { wch: 14 },
+                    { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 12 }];
+      pctRows.forEach(function (pr) {
+        [3, 4].forEach(function (c) { var pc = XLSX.utils.encode_cell({ r: pr, c: c }); if (s[pc] && typeof s[pc].v === 'number') s[pc].z = '0%'; });
+        [1, 2].forEach(function (c) { var nc = XLSX.utils.encode_cell({ r: pr, c: c }); if (s[nc]) s[nc].z = '#,##0'; });
+      });
+      for (var rr = headRow + 1; rr < a2.length; rr++) { var fc = XLSX.utils.encode_cell({ r: rr, c: 10 }); if (s[fc]) s[fc].z = '#,##0'; }
+      /* a filter on the heading row, so "show me who is still not served" is one click */
+      s['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headRow, c: 0 }, e: { r: Math.max(headRow, a2.length - 1), c: HEAD.length - 1 } }) };
+      return s;
+    }
+    (d.officers || []).forEach(function (o) {
+      XLSX.utils.book_append_sheet(wb, agentSheet(String(o.name).toUpperCase() + ' - ' + d.monthName,
+        'Branch: ' + ((o.branches || []).join(', ') || 'none'), per[o.bdo] || [], o), sheetName(o.name));
+    });
+    if (per[''] && per[''].length) {
+      XLSX.utils.book_append_sheet(wb, agentSheet('UNALLOCATED BRANCHES - ' + d.monthName,
+        'Branches no BDO holds: ' + ((d.vacant.branches || []).join(', ') || 'no branch on record'), per[''], d.vacant),
+        sheetName('Unallocated branches'));
+    }
+    return wb;
+  }
+  function scorecardDownload() {
+    if (!xlsxReady()) return;
+    var m = state._repMonth || state.openMonth || curMonth();
+    toast(t('Building the scorecard...'), 'ok');
+    api('branch_scorecard', { qs: '&month=' + encodeURIComponent(m) }).then(function (d) {
+      if (!(d.officers || []).length) { toast(t('No BDO holds a branch yet - assign branches first.'), 'warn'); return; }
+      var cv = scorecardPng(d);
+      var base = 'BDO_branch_scorecard_' + d.month;
+      /* show it on the page too, so the OM sees what he is about to send */
+      var pv = elById('scPreview');
+      if (pv) pv.innerHTML = '<img alt="' + esc(t('Branch scorecard')) + '" style="width:100%;height:auto;border:1px solid var(--line);border-radius:10px;margin-top:10px" src="' + cv.toDataURL('image/png') + '">';
+      cv.toBlob(function (blob) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = base + '.png';
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        /* the workbook a moment later - two downloads in the same instant can be dropped */
+        setTimeout(function () {
+          if (!xlsxReady()) return;
+          XLSX.writeFile(scorecardXlsx(d), base + '.xlsx');
+          toast(t('Scorecard picture and workbook downloaded'), 'ok');
+        }, 800);
+      }, 'image/png');
+    }).catch(function (e) { toast(e.message, 'err'); });
+  }
   function reportPanelHtml() {
     var m = state._repMonth || state.openMonth || curMonth();
     return '<div class="panel"><h2>' + svg('download') + t('Prepared reports') + '</h2>' +
@@ -4147,7 +4435,13 @@
       '<div class="field"><label>' + t('One officer') + '</label><select id="repBdo"></select></div>' +
       '<button class="ghost" data-action="repOne">' + svg('download') + ' ' + t('That officer') + '</button>' +
       '<button class="ghost" data-action="repAll">' + svg('download') + ' ' + t('Every officer, one file each') + '</button>' +
-      '</div></div>';
+      '</div>' +
+      /* the branch scorecard: one picture for the wall, one workbook behind it */
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">' +
+      '<p class="note" style="margin:0 0 8px">' + t('Branch scorecard: every BDO against the agents in his branches - unique served, float, visits, transaction acceleration and activeness both ways. Downloads a large picture to share, and an Excel workbook with one sheet per BDO listing every agent and his status on every KPI.') + '</p>' +
+      '<button class="btn" data-action="repScorecard">' + svg('download') + ' ' + t('Branch scorecard (PNG + Excel)') + '</button>' +
+      '<div id="scPreview"></div></div>' +
+      '</div>';
   }
   function reportBdosLoad() {
     var sel = elById('repBdo'); if (!sel) return;
@@ -4307,6 +4601,20 @@
      * works but lets the file being judged supply its own standard. Say so
      * at the moment it happens, while the OM can still fix it.
      */
+    /* rows from a station no longer worked were left out entirely */
+    if (d.skippedStation) {
+      s += '<div class="note" style="margin-top:6px"><span class="pill dim">' + fmt(d.skippedStation) + ' ' +
+        esc((d.excludedStations || []).join(', ')) + ' ' + t('rows skipped') + '</span> ' +
+        t('- that station is no longer read for performance.') + '</div>';
+    }
+    /* THE BASE FILE SET THIS MONTH'S TARGETS - say what each officer got */
+    if (d.targetsFixed && d.targetsFixed.length) {
+      s += '<div class="note" style="margin-top:6px"><b>' + t('Targets fixed for the month from each BDO\'s branch list') + ':</b> ' +
+        d.targetsFixed.map(function (x) {
+          return esc(x.name) + ' ' + fmt(x.agents) + ' ' + t('agents') + ' (' + fmt(x.inactive) + ' ' + t('inactive') +
+            ', ' + fmt(x.accel) + ' ' + t('with a withdraw target') + ')';
+        }).join(' &middot; ') + '. ' + t('Set the weights on the Targets screen.') + '</div>';
+    }
     /* THE BASE FILE'S ACTIVENESS, beside what the app now holds - the two
      * numbers the OM compares, on one line, the moment the upload finishes */
     var ac = d.activeness;
@@ -4360,10 +4668,20 @@
      * 40. Blank keeps it automatic. */
     var floor = (bt.baseFloor && bt.baseFloor[sel] != null) ? bt.baseFloor[sel] : 0;
     var startVal = cur.base_start != null && Number(cur.base_start) > 0 ? cur.base_start : '';
+    /* ONCE THE BASE FILE HAS FIXED THE MONTH, the agent-count targets are his
+     * branch list at that moment and are not typed - the OM sets the weights */
+    var fixedAt = bt.fixed;
+    var AUTO_HINT = { serving: 'every agent in his branches at the start of the month',
+                      visits: 'every agent in his branches at the start of the month',
+                      activeness: 'agents the base file had INACTIVE - to wake',
+                      apk: 'agents not on the required APK version',
+                      accel: 'agents the base file gave a Withdraw Target' };
     var rows = TARGET_DEFS.map(function (td) {
       var col = td.key;
       var tv = cur[col + '_target'], wv = cur[col + '_w'];
       var extra = '', hint = td.hint;
+      var auto = !!fixedAt && (bt.autoCols || []).indexOf(col) >= 0;
+      if (auto) hint = t('From the base file') + ': ' + t(AUTO_HINT[col] || td.hint);
       if (col === 'base') {
         var effective = startVal === '' ? floor : Number(startVal);
         var need = (tv != null && Number(tv) > effective) ? (Number(tv) - effective) : 0;
@@ -4374,12 +4692,18 @@
       }
       return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
         '<span class="tg-name">' + esc(td.label) + '</span>' +
-        '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
+        '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px' +
+          (auto ? ';opacity:.75' : '') + '" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"' +
+          (auto ? ' readonly title="' + esc(t('Fixed from the base file - set the weight')) + '"' : '') + '></div>' +
         extra +
         '<div class="field"><label>Weight %</label><input id="btw_' + col + '" type="number" min="0" max="100" style="width:90px" class="bt-w" value="' + (wv != null ? esc(wv) : DEFAULT_W[col]) + '"></div>' +
         '<span class="note" style="flex:1">' + esc(hint) + '</span></div>';
     }).join('');
     return '<div class="panel"><h2>' + svg('users') + 'BDO Targets &amp; KPI Weights &mdash; ' + esc(m) + '</h2>' +
+      (fixedAt
+        ? '<p class="note"><span class="pill ok">' + t('Targets fixed from the base file') + ' &middot; ' + esc(fixedAt.at || '') + '</span> ' +
+          t('Serving, visits, activeness, APK and acceleration are counted off each BDO\'s branch list when the base file was uploaded, and stay the same all month. Set how much each KPI weighs; float and base growth are still typed.') + '</p>'
+        : '<p class="note">' + t('Upload this month\'s base (fixed) file and each BDO\'s targets are set from his branch list automatically - then you only set the weights.') + '</p>') +
       '<p class="note">Set each BDO\'s monthly target per KPI and how much each KPI weighs in his score. Weights must total <b>100%</b>. Score flags: <span class="pill bad">below 50%</span> <span class="pill gold">50-79%</span> <span class="pill ok">80%+ excellent</span></p>' +
       '<div class="row" style="margin:10px 0 4px"><div class="field"><label>BDO</label><select id="btBdo">' + opts + '</select></div>' +
       '<div class="spacer"></div><span class="note">Weights total: <b id="btSum">?</b>%</span>' +
@@ -6925,6 +7249,7 @@
     if (a === 'repOverall') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; agentReportDownload(''); return; }
     if (a === 'repOne') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; agentReportDownload(elById('repBdo') ? elById('repBdo').value : ''); return; }
     if (a === 'repAll') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; reportAll(); return; }
+    if (a === 'repScorecard') { state._repMonth = elById('repMonth') ? elById('repMonth').value : ''; scorecardDownload(); return; }
     if (a === 'brLoad') { branchLoad(); return; }
     if (a === 'baseDiag') { baseDiagLoad(); return; }
     if (a === 'heXlsAll') { heReport('', 'excel'); return; }

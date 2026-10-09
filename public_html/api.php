@@ -713,7 +713,7 @@ try {
       $ids = array();
       if (count($myBranches)) {
         $bin = implode(',', array_fill(0, count($myBranches), '?'));
-        $aq = db()->prepare("SELECT id FROM agents WHERE branch IN ($bin)");
+        $aq = db()->prepare("SELECT id FROM agents WHERE branch IN ($bin)" . perf_station_sql('agents', $month));
         $aq->execute($myBranches);
         foreach ($aq->fetchAll() as $r) $ids[] = (int)$r['id'];
       } else {
@@ -875,6 +875,8 @@ try {
                        OR NOT EXISTS (SELECT 1 FROM agent_month_kpi k WHERE k.month = ? AND k.agent_id = a.id AND k.kpi = 'served'))";
       $ucVals = array($month, $month);
       if ($scope2 !== '') { $ucSql .= ' AND (a.station = ? OR a.station = "")'; $ucVals[] = $scope2; }
+      /* a station no longer worked is in nobody's round on purpose */
+      $ucSql .= perf_station_sql('a', $month);
       $ucSql .= ' ORDER BY a.name LIMIT 300';
       $ucq = db()->prepare($ucSql);
       $ucq->execute($ucVals);
@@ -1283,14 +1285,15 @@ try {
                                   w.note wr_note, w.bdo wr_bdo
                            FROM agents a
                            LEFT JOIN wont_return w ON w.agent_id = a.id
-                           WHERE a.act_current = 'INACTIVE'
+                           WHERE a.act_current = 'INACTIVE'" . perf_station_sql('a', $month) . "
                            ORDER BY (w.agent_id IS NOT NULL), (a.act_prev = 'ACTIVE') DESC, a.station, a.name
                            LIMIT 600");
       $sq->execute();
       $sleeping = $sq->fetchAll();
       /* the list stops at 600; the count must not, or the tab reads 600 in a
        * month the file says 1,400 are asleep */
-      $sleepingTotal = (int)db()->query("SELECT COUNT(*) c FROM agents WHERE act_current = 'INACTIVE'")->fetch()['c'];
+      $sleepingTotal = (int)db()->query("SELECT COUNT(*) c FROM agents a WHERE a.act_current = 'INACTIVE'" .
+                                        perf_station_sql('a', $month))->fetch()['c'];
 
       /* WAKED this month. hasProof only - the photo itself is management's. */
       $wsql = "SELECT k.agent_id, k.bdo, k.at, k.proof <> '' hasProof, k.source,
@@ -2440,6 +2443,10 @@ try {
        * can get the file fixed at source. */
       $homeStation = strtoupper(setting_get('home_station', 'ARUSHA'));
       $blankStation = 0;
+      /* stations no longer worked (MANYARA) are not read at all - not into
+       * the office totals, not into anybody's round, not into any score */
+      $exStations = perf_excluded_stations($month);
+      $skippedStation = 0;
 
       /*
        * THE MONTH'S BASELINE, from the base file.
@@ -2466,6 +2473,7 @@ try {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
         if ($r['station'] === '') { $blankStation++; $r['station'] = $homeStation; }
+        if (in_array($r['station'], $exStations, true)) { $skippedStation++; continue; }
         $r['act_cur'] = act_norm($r['activeness']);
         $r['act_prev'] = act_norm($r['activeness_prev']);
         $r['apk_yes'] = apk_is_yes($r['apk_raw'], $apkRequired);
@@ -2516,6 +2524,7 @@ try {
           }
         }
       }
+      if (!count($parsed) && $skippedStation) fail('Every row in this file is from ' . implode(', ', $exStations) . ', which is no longer read for performance - nothing was imported.');
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
       foreach ($byStation as $k => $s) $byStation[$k]['net_active'] = $s['waked'] - $s['lost'];
@@ -2884,6 +2893,19 @@ try {
       /* new agents arrived, so the branches must own them before anything
        * counts a round size */
       $branchSync = sync_branch_base($month);
+      /* THE BASE FILE SETS THE MONTH'S TARGETS: each officer's branch list as
+       * it stands now, read once and held for the month */
+      $targetsFixed = null;
+      if ($mode === 'fixed') {
+        $tf = fix_bdo_targets_from_base($month);
+        if ($tf !== null) {
+          $targetsFixed = array();
+          foreach ($tf as $tb => $tp) {
+            $targetsFixed[] = array('bdo' => $tb, 'name' => isset($userByKey[$tb]['name']) ? $userByKey[$tb]['name'] : $tb,
+                                    'agents' => $tp['n'], 'inactive' => $tp['inactive'], 'apk' => $tp['apk'], 'accel' => $tp['accel']);
+          }
+        }
+      }
       $restored = isset($restored) ? $restored : 0;
       /* Which standard the wakes were judged against. An OM who uploads
        * performance before the base file should be told his activeness was
@@ -2899,7 +2921,9 @@ try {
                      * uploads performance before the base file is told at once */
                     'baselineUsed' => $baselineUsed, 'baselineAgents' => $baselineFrom,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation,
-                    'activeness' => $actSummary));
+                    'activeness' => $actSummary,
+                    'skippedStation' => $skippedStation, 'excludedStations' => $exStations,
+                    'targetsFixed' => $targetsFixed));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
@@ -2967,7 +2991,10 @@ try {
        * and does not have to go and count anybody's round himself. */
       $floor = array();
       foreach ($bdos as $b) $floor[$b['username']] = base_start_default($month, $b['username']);
-      respond(array('month' => $month, 'targets' => $rows, 'bdos' => $bdos, 'baseFloor' => $floor));
+      respond(array('month' => $month, 'targets' => $rows, 'bdos' => $bdos, 'baseFloor' => $floor,
+                    /* once the base file has fixed them, the agent-count targets are read-only */
+                    'fixed' => perf_rules_on($month) ? targets_fixed_info($month) : null,
+                    'autoCols' => auto_target_cols()));
     }
 
     /*
@@ -2989,11 +3016,24 @@ try {
         $vals[$col . '_w'] = $w; $wsum += $w;
       }
       if ($wsum !== 100) fail('KPI weights must add up to 100% (currently ' . $wsum . '%)');
+      /* Once the base file has fixed this month's targets they are not typed:
+       * whatever the form sent for them, the counts off his branch list stand. */
+      $fixed = perf_rules_on($month) ? targets_fixed_info($month) : null;
+      $curRow = array();
+      if ($fixed) {
+        $cq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ? AND bdo = ?');
+        $cq->execute(array($month, $bdo));
+        $curRow = $cq->fetch() ?: array();
+        foreach (auto_target_cols() as $ac) $vals[$ac . '_target'] = isset($curRow[$ac . '_target']) ? (int)$curRow[$ac . '_target'] : 0;
+      }
       /* The floor the growth is measured from. Blank means 'where he ended',
        * which is the answer nearly every time; the OM can still overrule it
-       * for a man who transferred in mid-month with somebody else's round. */
+       * for a man who transferred in mid-month with somebody else's round.
+       * Once the base file has fixed the month, 'where he ended' is the size
+       * of his branch list at that moment. */
       $bs = trim((string)bval('base_start'));
-      $baseStart = $bs === '' ? base_start_default($month, $bdo) : (int)num($bs);
+      $baseStart = $bs !== '' ? (int)num($bs)
+        : (($fixed && isset($curRow['base_start'])) ? (int)$curRow['base_start'] : base_start_default($month, $bdo));
       db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
                        serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w,
                        accel_target, accel_w)
@@ -3036,9 +3076,10 @@ try {
       $bdos = db()->query('SELECT username FROM users WHERE role = "bdo" AND active = 1')->fetchAll();
       if (!$bdos) fail('There are no active BDO accounts to set');
       $have = array();
-      $hq = db()->prepare('SELECT bdo FROM bdo_targets WHERE month = ?');
+      $hq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
       $hq->execute(array($month));
-      foreach ($hq->fetchAll() as $r) $have[$r['bdo']] = true;
+      foreach ($hq->fetchAll() as $r) $have[$r['bdo']] = $r;
+      $fixed = perf_rules_on($month) ? targets_fixed_info($month) : null;
 
       $ins = db()->prepare('INSERT INTO bdo_targets (month, bdo, serving_target, float_target, visits_target, apk_target, activeness_target,
                               serving_w, float_w, visits_w, apk_w, activeness_w, base_start, base_target, base_w,
@@ -3056,11 +3097,20 @@ try {
         /* One base-growth CEILING for everyone, but the FLOOR is each man's
          * own - they did not all end the month in the same place, and a
          * shared floor would score them on rounds they never had. */
-        $ins->execute(array($month, $b['username'], $vals['serving_target'], $vals['float_target'], $vals['visits_target'],
-                            $vals['apk_target'], $vals['activeness_target'], $vals['serving_w'], $vals['float_w'],
-                            $vals['visits_w'], $vals['apk_w'], $vals['activeness_w'],
-                            base_start_default($month, $b['username']), $vals['base_target'], $vals['base_w'],
-                            $vals['accel_target'], $vals['accel_w']));
+        $v = $vals;
+        $floor = base_start_default($month, $b['username']);
+        if ($fixed) {
+          /* the base file fixed each man's own counts - only the weights,
+           * float and the growth ceiling are shared out */
+          $cur0 = isset($have[$b['username']]) ? $have[$b['username']] : array();
+          foreach (auto_target_cols() as $ac) $v[$ac . '_target'] = isset($cur0[$ac . '_target']) ? (int)$cur0[$ac . '_target'] : 0;
+          if (isset($cur0['base_start'])) $floor = (int)$cur0['base_start'];
+        }
+        $ins->execute(array($month, $b['username'], $v['serving_target'], $v['float_target'], $v['visits_target'],
+                            $v['apk_target'], $v['activeness_target'], $v['serving_w'], $v['float_w'],
+                            $v['visits_w'], $v['apk_w'], $v['activeness_w'],
+                            $floor, $v['base_target'], $v['base_w'],
+                            $v['accel_target'], $v['accel_w']));
         $set++;
       }
       audit($u['id'], 'bdo_targets_save_all', $month . ' set=' . $set . ' kept=' . $skipped . ($onlyMissing ? ' [only missing]' : ''));
@@ -3535,7 +3585,7 @@ try {
                          WHERE a.act_current = 'INACTIVE'
                            AND NOT EXISTS (SELECT 1 FROM sweep_items si
                                            WHERE si.agent_id = a.id
-                                             AND si.outcome IN ('waked','never'))
+                                             AND si.outcome IN ('waked','never'))" . perf_station_sql('a', substr($from, 0, 7)) . "
                          ORDER BY a.station, a.name");
       $agents = $aq->fetchAll();
       if (!$agents) fail('No sleeping agents are waiting - every one of them has already been answered for');
@@ -4195,7 +4245,7 @@ try {
       $u = require_auth(); require_officer_view($u);
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
-      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stF = $station !== '' ? ' AND a.station = ?' : perf_station_sql('a', $month);
       $stV = $station !== '' ? array($station) : array();
 
       /* every active officer, so one with an empty round still shows up as a
@@ -4309,7 +4359,7 @@ try {
       $bdo = strtolower(trim((string)($_GET['bdo'] ?? '')));
       if ($bdo === '') fail('Which BDO?');
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
-      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stF = $station !== '' ? ' AND a.station = ?' : perf_station_sql('a', $month);
       $stV = $station !== '' ? array($station) : array();
 
       $uq = db()->prepare('SELECT username, name, specialty, serve_receipt, wake_receipt, partner_claim FROM users WHERE username = ?');
@@ -4408,7 +4458,7 @@ try {
        * an agent has no station of its own. A station filter must not hide it:
        * money the office does not even have a record for is the worst kind to
        * drop out of the report. */
-      $stF = $station !== '' ? ' AND (a.station = ? OR a.id IS NULL)' : '';
+      $stF = $station !== '' ? ' AND (a.station = ? OR a.id IS NULL)' : perf_station_sql('a', $month);
       $stV = $station !== '' ? array($station) : array();
       /*
        * THE COMMISSION BAND THE OM ASKS FOR - any two numbers, not only the
@@ -4483,9 +4533,11 @@ try {
     case 'branches_get': {
       $u = require_auth();
       if (!is_manager($u)) fail('Management access only', 403);
+      /* a branch made only of agents in a station no longer worked is not on
+       * the list - there is nothing in it to assign */
       $rows = db()->query("SELECT TRIM(branch) branch, COUNT(*) agents,
                                   SUM(act_current = 'ACTIVE') active
-                           FROM agents WHERE TRIM(branch) <> ''
+                           FROM agents WHERE TRIM(branch) <> ''" . perf_station_sql('agents', open_month()) . "
                            GROUP BY TRIM(branch) ORDER BY agents DESC")->fetchAll();
       $own = branch_owner_map();
       $bdos = db()->query('SELECT username, name FROM users WHERE role = "bdo" AND active = 1 ORDER BY name')->fetchAll();
@@ -4667,6 +4719,183 @@ try {
       ));
     }
 
+    /*
+     * THE BRANCH SCORECARD.
+     *
+     * Every officer is measured on his branches now, so this is the one page
+     * the OM puts on the wall: each BDO against every agent in the branches he
+     * holds - unique served, float, visits, transaction acceleration, and
+     * activeness both ways (woken and lost) - plus every agent behind those
+     * numbers, for the workbook that travels with the picture.
+     *
+     * Counted by BRANCH, whoever did the work: an agent in his branch the
+     * partner served is served, and the scorecard is about what is left on his
+     * streets. Float adds the officer's own typed daily reports, as his score
+     * does, so the two never show different numbers.
+     *
+     * Activeness: woken is an agent with a wake credit this month (the file's
+     * or an officer's) - the same thing his score counts; lost is an agent
+     * ACTIVE at the start of the month (this month's base file, else last
+     * month's status) and INACTIVE now.
+     *
+     * A claim under an open flag is not counted, as in his score. Stations no
+     * longer worked (MANYARA) are not read at all. Branches nobody holds are
+     * put together as UNALLOCATED BRANCHES.
+     *
+     * Each officer's weighted score comes from the same function his own
+     * dashboard uses, so the wall and his phone always agree.
+     */
+    case 'branch_scorecard': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      rate_limit($u['username'], 'branch_scorecard', 20, 300);      /* whole-office scan */
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $r) {
+        $names[$r['username']] = $r['name'] !== '' ? $r['name'] : $r['username'];
+      }
+      $own = branch_owner_map();
+
+      /* every officer who holds a branch is on the card, even with no agents yet */
+      $officers = array();
+      foreach (db()->query('SELECT bdo, branch FROM bdo_branches ORDER BY branch')->fetchAll() as $r) {
+        $b = $r['bdo'];
+        if (!isset($officers[$b])) {
+          $officers[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b, 'branches' => array(),
+                                'agents' => 0, 'served' => 0, 'visited' => 0, 'apk' => 0,
+                                'floatFile' => 0, 'floatDaily' => 0,
+                                'accelTarget' => 0, 'accelDone' => 0,
+                                'woken' => 0, 'lost' => 0, 'activeNow' => 0, 'inactiveNow' => 0);
+        }
+        $officers[$b]['branches'][] = $r['branch'];
+      }
+      $blank = array('agents' => 0, 'served' => 0, 'visited' => 0, 'apk' => 0, 'floatFile' => 0, 'floatDaily' => 0,
+                     'accelTarget' => 0, 'accelDone' => 0, 'woken' => 0, 'lost' => 0, 'activeNow' => 0, 'inactiveNow' => 0);
+      $vacant = $blank; $vacantBranches = array();
+
+      /* this month's marks per agent: kpi => the officer (or partners) credited */
+      $marks = array();
+      $kq = db()->prepare('SELECT agent_id, kpi, bdo FROM agent_month_kpi WHERE month = ?');
+      $kq->execute(array($month));
+      foreach ($kq->fetchAll() as $r) $marks[(int)$r['agent_id']][$r['kpi']] = $r['bdo'];
+      /* a claim under an open flag does not count - his score leaves it out too */
+      $flagged = array();
+      $flq = db()->prepare('SELECT agent_id, kpi, bdo FROM flags WHERE month = ?');
+      $flq->execute(array($month));
+      foreach ($flq->fetchAll() as $r) $flagged[(int)$r['agent_id'] . '|' . $r['kpi'] . '|' . $r['bdo']] = true;
+
+      $float = array();
+      $fq = db()->prepare('SELECT agent_id, COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? GROUP BY agent_id');
+      $fq->execute(array($month));
+      foreach ($fq->fetchAll() as $r) $float[(int)$r['agent_id']] = (float)$r['f'];
+
+      $accel = accel_map($month, null);
+
+      $dq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? GROUP BY bdo');
+      $dq->execute(array($month));
+      foreach ($dq->fetchAll() as $r) {
+        if (isset($officers[$r['bdo']])) $officers[$r['bdo']]['floatDaily'] = (float)$r['f'];
+      }
+
+      $who = function ($k) use ($names) {
+        if ($k === 'partners') return 'PARTNER';
+        if ($k === 'unassigned') return 'FILE (no BDO)';
+        return isset($names[$k]) ? $names[$k] : $k;
+      };
+
+      $rows = array();
+      $aq = db()->query('SELECT a.id, a.acc, a.name, a.phone, TRIM(a.branch) branch, a.physical_location, a.station,
+                                a.act_current, a.act_prev, a.act_base, a.act_base_month
+                         FROM agents a WHERE 1' . perf_station_sql('a', $month) . '
+                         ORDER BY TRIM(a.branch), a.name');
+      foreach ($aq->fetchAll() as $a) {
+        $id = (int)$a['id'];
+        $bk = strtolower(trim((string)$a['branch']));
+        $owner = ($bk !== '' && isset($own[$bk])) ? $own[$bk] : '';
+        if ($owner !== '' && !isset($officers[$owner])) $owner = '';
+        if ($owner === '' && $bk !== '') $vacantBranches[$bk] = $a['branch'];
+
+        $m = array(); $mFlag = array();
+        foreach ((isset($marks[$id]) ? $marks[$id] : array()) as $kk => $by) {
+          if (isset($flagged[$id . '|' . $kk . '|' . $by])) $mFlag[$kk] = $by; else $m[$kk] = $by;
+        }
+        $start = ((string)$a['act_base_month'] === $month && (string)$a['act_base'] !== '')
+          ? strtoupper((string)$a['act_base']) : strtoupper((string)$a['act_prev']);
+        $now = strtoupper((string)$a['act_current']);
+        $change = isset($m['active']) ? 'WOKEN'
+                : (($start === 'ACTIVE' && $now === 'INACTIVE') ? 'LOST' : '');
+        $x = isset($accel[$id]) ? $accel[$id] : null;
+        $f = isset($float[$id]) ? $float[$id] : 0;
+
+        if ($owner !== '') $g = &$officers[$owner]; else $g = &$vacant;
+        $g['agents']++;
+        if (isset($m['served'])) $g['served']++;
+        if (isset($m['visit'])) $g['visited']++;
+        if (isset($m['apk'])) $g['apk']++;
+        $g['floatFile'] += $f;
+        if ($x) { $g['accelTarget']++; if ($x['done']) $g['accelDone']++; }
+        if ($change === 'WOKEN') $g['woken']++;
+        if ($change === 'LOST') $g['lost']++;
+        if ($now === 'ACTIVE') $g['activeNow']++;
+        if ($now === 'INACTIVE') $g['inactiveNow']++;
+        unset($g);
+
+        $rows[] = array('o' => $owner, 'acc' => $a['acc'], 'name' => $a['name'], 'phone' => (string)$a['phone'],
+                        'branch' => (string)$a['branch'], 'loc' => (string)$a['physical_location'],
+                        'srv' => isset($m['served']) ? $who($m['served']) : '',
+                        /* claimed but under an open flag - shown, not counted */
+                        'srvFlag' => isset($mFlag['served']) ? $who($mFlag['served']) : '',
+                        'vis' => isset($m['visit']) ? 1 : 0, 'apk' => isset($m['apk']) ? 1 : 0,
+                        'flt' => $f, 'a0' => $start, 'a1' => $now, 'chg' => $change,
+                        'wt' => $x ? $x['target'] : null, 'wx' => $x ? $x['txn'] : null,
+                        'wl' => $x ? $x['left'] : null);
+      }
+
+      /* each officer's weighted score - the same maths as his own dashboard */
+      $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
+      $tq->execute(array($month));
+      $tgts = array();
+      foreach ($tq->fetchAll() as $r) $tgts[$r['bdo']] = $r;
+      $out = array();
+      $tot = $blank; $scoreSum = 0; $scoreN = 0;
+      foreach ($officers as $o) {
+        $o['float'] = $o['floatFile'] + $o['floatDaily'];
+        foreach ($blank as $k => $z) $tot[$k] += $o[$k];
+        $o['score'] = null;
+        if (isset($tgts[$o['bdo']])) {
+          $sa = bdo_scored_actuals($month, $o['bdo']);
+          $sc = user_specialty($o['bdo']) === 'activeness'
+            ? bdo_score_specialist($sa, $tgts[$o['bdo']]) : bdo_score($sa, $tgts[$o['bdo']]);
+          $o['score'] = $sc['score'];
+          $o['scoreKpis'] = $sc['kpis'];
+          if ($sc['score'] !== null) { $scoreSum += $sc['score']; $scoreN++; }
+        }
+        $out[] = $o;
+      }
+      $tot['float'] = $tot['floatFile'] + $tot['floatDaily'];
+      /* the office line carries the average of the officers' scores */
+      $tot['score'] = $scoreN ? (int)round($scoreSum / $scoreN) : null;
+      $vacant['float'] = $vacant['floatFile'];
+      $vacant['branches'] = array_values($vacantBranches);
+      /* a league table: the best weighted score at the top, then the
+       * best-covered branches - an officer with no weights set goes last */
+      usort($out, function ($x, $y) {
+        $sx = $x['score'] === null ? -1 : $x['score'];
+        $sy = $y['score'] === null ? -1 : $y['score'];
+        if ($sx !== $sy) return $sy > $sx ? 1 : -1;
+        $px = $x['agents'] ? $x['served'] / $x['agents'] : 0;
+        $py = $y['agents'] ? $y['served'] / $y['agents'] : 0;
+        if ($px !== $py) return $py > $px ? 1 : -1;
+        return strcmp($x['name'], $y['name']);
+      });
+
+      respond(array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
+                    'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
+                    'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
+                    'excludedStations' => perf_excluded_stations($month)));
+    }
+
     case 'base_diagnosis': {
       $u = require_auth();
       if (!is_manager($u)) fail('Management access only', 403);
@@ -4712,7 +4941,7 @@ try {
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $only = strtolower(trim((string)($_GET['bdo'] ?? '')));
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
-      $stF = $station !== '' ? ' AND a.station = ?' : '';
+      $stF = $station !== '' ? ' AND a.station = ?' : perf_station_sql('a', $month);
       $stV = $station !== '' ? array($station) : array();
 
       $names = array();
@@ -4779,7 +5008,7 @@ try {
       $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
       $station = strtoupper(trim((string)($_GET['station'] ?? '')));
 
-      $stFilter = $station !== '' ? ' AND a.station = ?' : '';
+      $stFilter = $station !== '' ? ' AND a.station = ?' : perf_station_sql('a', $month);
       $stVals = $station !== '' ? array($station) : array();
 
       /* per KPI: how many credits came from the file vs from the field */
