@@ -566,6 +566,9 @@ try {
        * must not hide an agent from the man who has to serve him. */
       $scope = station_scope($u);
       if ($scope !== '') { $conds[] = '(station = ? OR station = "")'; $vals[] = $scope; }
+      /* a station no longer worked (MANYARA) is not on the list at all */
+      $exw = perf_station_sql('agents', $month);
+      if ($exw !== '') $conds[] = preg_replace('/^\s*AND\s+/', '', $exw);
 
       /* High-earner band filter (A..E, or F = not on the commission list). */
       $fband = strtoupper(trim((string)($_GET['fband'] ?? '')));
@@ -1977,18 +1980,23 @@ try {
       foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $n) $names[$n['username']] = $n['name'];
 
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
-      $sql = 'SELECT id, acc, name, phone, branch, station, physical_location FROM agents';
+      $sql = 'SELECT id, acc, name, phone, branch, station, physical_location FROM agents WHERE 1'
+           . perf_station_sql('agents', $month);
       $vals = array();
-      if ($station !== '') { $sql .= ' WHERE station = ?'; $vals[] = $station; }
+      if ($station !== '') { $sql .= ' AND station = ?'; $vals[] = $station; }
       $sql .= ' ORDER BY name';
       $q = db()->prepare($sql);
       $q->execute($vals);
       $rows = array();
       foreach ($q->fetchAll() as $r) {
         $id = (int)$r['id'];
-        $b = isset($own[$id]) ? $own[$id] : 'unassigned';
+        /* the branch decides whose sheet he is on; a branch nobody holds
+         * falls back to the old owner, and nobody at all is Unallocated */
+        $bo = branch_owner($r['branch']);
+        $b = $bo !== '' ? $bo : (isset($own[$id]) ? $own[$id] : 'unassigned');
+        if ($b === 'unassigned' || $b === 'partners') $b = 'unassigned';
         $rows[] = array(
-          'bdo' => $b, 'bdoName' => isset($names[$b]) ? $names[$b] : $b,
+          'bdo' => $b, 'bdoName' => $b === 'unassigned' ? 'Unallocated branches' : (isset($names[$b]) ? $names[$b] : $b),
           'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
           'branch' => $r['branch'], 'station' => $r['station'],
           'location' => $r['physical_location'], 'band' => he_band($r['acc']),
@@ -4610,6 +4618,7 @@ try {
                                  EXISTS(SELECT 1 FROM agent_month_kpi k2
                                         WHERE k2.month = ? AND k2.agent_id = a.id AND k2.kpi = 'visit') vis
                           FROM agents a LEFT JOIN high_earners h ON h.acc = a.acc
+                          WHERE 1" . perf_station_sql('a', $month) . "
                           ORDER BY COALESCE(h.commission, 0) DESC, a.name");
       $q->execute(array($month, $month));
       $all = $q->fetchAll();
@@ -4652,11 +4661,11 @@ try {
           $gname = $bk !== '' ? $a['branch'] : 'NO BRANCH';
           $gsub = '';
         } elseif ($bk === '') {
-          $gk = '~unallocated'; $gname = 'UNALLOCATED'; $gsub = 'agents with no branch on record';
+          $gk = '~unallocated'; $gname = 'UNALLOCATED BRANCHES'; $gsub = '';
         } elseif (isset($own[$bk])) {
           $gk = $own[$bk]; $gname = strtoupper(isset($names[$gk]) ? $names[$gk] : $gk); $gsub = '';
         } else {
-          $gk = '~vacant'; $gname = 'VACANT'; $gsub = '';
+          $gk = '~unallocated'; $gname = 'UNALLOCATED BRANCHES'; $gsub = '';
         }
         if (!isset($groups[$gk])) {
           $groups[$gk] = array('key' => $gk, 'name' => $gname, 'sub' => $gsub, 'branches' => array(),
@@ -5456,7 +5465,8 @@ try {
                              (SELECT k.bdo FROM agent_month_kpi k WHERE k.agent_id = a.id AND k.kpi = "served"
                               ORDER BY k.at DESC LIMIT 1) last_served_by,
                              (SELECT MAX(k.at) FROM agent_month_kpi k WHERE k.agent_id = a.id AND k.kpi = "served") last_served_at
-                           FROM agents a WHERE a.physical_location <> "" ORDER BY a.branch, a.name')->fetchAll();
+                           FROM agents a WHERE a.physical_location <> ""' . perf_station_sql('a', open_month()) . '
+                           ORDER BY a.branch, a.name')->fetchAll();
       respond(array('count' => count($rows), 'items' => $rows));
     }
 

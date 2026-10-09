@@ -5,6 +5,42 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.84.0 — 2026-10-09 · Manyara off the agent lists, and reports that read like the office made them
+
+### Manyara is not on the agent lists either
+
+v1.83.0 took Manyara out of every performance number. These lists still showed its agents when the OM
+viewed all stations, and now they don't:
+
+- **All Agents:** the list, its counts and its filters.
+- **All agents download:** each agent now goes on the sheet of the BDO who holds his branch, rather than
+  whoever last served him. Agents nobody holds go on **Unallocated branches**.
+- **Locations download.**
+- **Prepared agent report** (overall / one officer / every officer). Its separate **VACANT** and
+  **UNALLOCATED** groups are now one group, **UNALLOCATED BRANCHES**.
+
+### The BDO performance report reads like an office report
+
+The scorecard picture and workbook were full of explanation sentences. They now look like something
+prepared in the office:
+
+- **Picture:** a letterhead (*Hardware Supermarkets – CRDB Super Agent*, **BDO PERFORMANCE REPORT**, the
+  month and "As at" date). Plain column names: Served, Float (TZS), Visits, Txn Acceleration, Inactive to
+  Active, Active to Inactive, Net Active, Score. Only the % and how many are left under Served and Visits.
+  Rows are TOTAL (6 BDOs, average score) and UNALLOCATED BRANCHES. The explanation sentences are gone;
+  instead there is a colour key (80% and above / 50% – 79% / Below 50%) and "Manyara excluded".
+- **Workbook:** the same letterhead and a "Date:" line. Title-case headings (Served %, Not Served,
+  Accel Pending, Total Float, …), whole-number percentages, a TOTAL row, and "Note: Manyara excluded."
+  Each BDO's sheet has his name, branch and month, then **KPI / Target / Achieved / Weight / Score** with
+  an **Overall Score** line, then his agents. Agent values read Woken / Lost, Achieved / Pending, and
+  Active / Inactive. The column formerly called Left is now Balance.
+- **Files** are named `BDO Performance Report - October 2026.png` / `.xlsx`, and the button is
+  *BDO performance report (PNG + Excel)*.
+
+APP_VERSION 1.84.0, assets bumped to v101.
+
+---
+
 ## v1.83.0 — 2026-10-09 · Measured by branch: the scorecard, scores, fixed targets, and no Manyara
 
 Four changes that belong together, because all four follow from the same rule — **every BDO is measured
