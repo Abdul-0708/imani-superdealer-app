@@ -4801,11 +4801,9 @@ try {
 
       $accel = accel_map($month, null);
 
-      $dq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? GROUP BY bdo');
-      $dq->execute(array($month));
-      foreach ($dq->fetchAll() as $r) {
-        if (isset($officers[$r['bdo']])) $officers[$r['bdo']]['floatDaily'] = (float)$r['f'];
-      }
+      /* Float is his agents' float as the files report it. What an officer
+       * types into his daily report is his own account of the day, not a
+       * figure the company can check, so the report card does not carry it. */
 
       $who = function ($k) use ($names) {
         if ($k === 'partners') return 'PARTNER';
@@ -4869,7 +4867,7 @@ try {
       $out = array();
       $tot = $blank; $scoreSum = 0; $scoreN = 0;
       foreach ($officers as $o) {
-        $o['float'] = $o['floatFile'] + $o['floatDaily'];
+        $o['float'] = $o['floatFile'];
         foreach ($blank as $k => $z) $tot[$k] += $o[$k];
         $o['score'] = null;
         if (isset($tgts[$o['bdo']])) {
@@ -4882,7 +4880,7 @@ try {
         }
         $out[] = $o;
       }
-      $tot['float'] = $tot['floatFile'] + $tot['floatDaily'];
+      $tot['float'] = $tot['floatFile'];
       /* the office line carries the average of the officers' scores */
       $tot['score'] = $scoreN ? (int)round($scoreSum / $scoreN) : null;
       $vacant['float'] = $vacant['floatFile'];
@@ -4903,6 +4901,129 @@ try {
                     'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
                     'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
                     'excludedStations' => perf_excluded_stations($month)));
+    }
+
+    /*
+     * FOLLOW-UP: THE TWO LISTS AN OFFICER WORKS FROM MID-MONTH.
+     *
+     *   lost   - agents in his branches the month's base file had ACTIVE and
+     *            the latest status has INACTIVE. These are the ones slipping
+     *            away this month; every one of them costs the office its net
+     *            activeness, and a visit while it is fresh is what brings
+     *            them back.
+     *   accel  - agents in his branches with a Withdraw Target they have not
+     *            reached yet, fewest transactions left first: the nearest
+     *            finishes are the quickest wins.
+     *
+     * An officer sees his own branches and nobody else's. The OM picks one
+     * officer, every officer, or the branches nobody holds. Stations no longer
+     * worked are not read, as everywhere else.
+     */
+    case 'followup': {
+      $u = require_auth();
+      $month = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['month'] ?? '')) ? $_GET['month'] : open_month();
+      $isMgr = is_manager($u);
+      $who = strtolower(trim((string)($_GET['bdo'] ?? '')));
+      if (!$isMgr) {
+        if (!can($u, 'mybase', 'v')) fail('No access', 403);
+        $who = $u['username'];
+      }
+
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $r) {
+        $names[$r['username']] = $r['name'] !== '' ? $r['name'] : $r['username'];
+      }
+      $own = branch_owner_map();
+      $ex = perf_station_sql('a', $month);
+      $cols = 'a.id, a.acc, a.name, a.phone, TRIM(a.branch) branch, a.physical_location, a.act_current, a.act_base, a.act_base_month';
+      if ($who !== '' && $who !== '~unallocated') {
+        $q = db()->prepare("SELECT $cols FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
+                            WHERE 1$ex ORDER BY a.name");
+        $q->execute(array($who));
+      } else {
+        $q = db()->prepare("SELECT $cols FROM agents a WHERE 1$ex ORDER BY a.name");
+        $q->execute();
+      }
+      $agents = array();
+      foreach ($q->fetchAll() as $a) {
+        $bk = strtolower(trim((string)$a['branch']));
+        $owner = ($bk !== '' && isset($own[$bk])) ? $own[$bk] : '';
+        if ($who === '~unallocated' && $owner !== '') continue;
+        $a['owner'] = $owner;
+        $agents[(int)$a['id']] = $a;
+      }
+
+      /* this month's work on them, so a visit already made is visible */
+      $marks = array();
+      $kq = db()->prepare("SELECT agent_id, kpi FROM agent_month_kpi WHERE month = ? AND kpi IN ('served','visit')");
+      $kq->execute(array($month));
+      foreach ($kq->fetchAll() as $r) $marks[(int)$r['agent_id']][$r['kpi']] = true;
+      $wr = array();
+      foreach (db()->query('SELECT agent_id FROM wont_return')->fetchAll() as $r) $wr[(int)$r['agent_id']] = true;
+
+      $ownerName = function ($o) use ($names) {
+        return $o === '' ? 'Unallocated' : (isset($names[$o]) ? $names[$o] : $o);
+      };
+      $row = function ($a) use ($marks, $wr, $ownerName) {
+        $id = (int)$a['id'];
+        return array('id' => $id, 'acc' => $a['acc'], 'name' => $a['name'], 'phone' => (string)$a['phone'],
+                     'branch' => (string)$a['branch'], 'loc' => (string)$a['physical_location'],
+                     'bdo' => $a['owner'], 'bdoName' => $ownerName($a['owner']),
+                     'band' => he_band($a['acc']),
+                     'served' => isset($marks[$id]['served']), 'visited' => isset($marks[$id]['visit']),
+                     'wontReturn' => isset($wr[$id]));
+      };
+
+      /* ACTIVE in the base file, INACTIVE now */
+      $baseLoaded = false; $lost = array();
+      foreach ($agents as $a) {
+        if ((string)$a['act_base_month'] !== $month || (string)$a['act_base'] === '') continue;
+        $baseLoaded = true;
+        if (strtoupper((string)$a['act_base']) === 'ACTIVE' && strtoupper((string)$a['act_current']) === 'INACTIVE') {
+          $lost[] = $row($a);
+        }
+      }
+      /* the money first, then by name - he works down the list */
+      $bandOrder = array('A' => 0, 'B' => 1, 'C' => 2, 'D' => 3, 'E' => 4, 'F' => 5);
+      usort($lost, function ($x, $y) use ($bandOrder) {
+        if ($bandOrder[$x['band']] !== $bandOrder[$y['band']]) return $bandOrder[$x['band']] - $bandOrder[$y['band']];
+        return strcmp($x['name'], $y['name']);
+      });
+
+      /* short of the Withdraw Target, fewest left first */
+      $accelAll = accel_map($month, ($who !== '' && $who !== '~unallocated') ? array_keys($agents) : null);
+      $accel = array(); $accelTotal = 0; $accelDone = 0;
+      foreach ($accelAll as $id => $x) {
+        if (!isset($agents[$id])) continue;
+        $accelTotal++;
+        if ($x['done']) { $accelDone++; continue; }
+        $r = $row($agents[$id]);
+        $r['target'] = $x['target']; $r['txn'] = $x['txn']; $r['left'] = $x['left']; $r['source'] = $x['source'];
+        $accel[] = $r;
+      }
+      usort($accel, function ($x, $y) {
+        if ($x['left'] !== $y['left']) return $x['left'] - $y['left'];
+        return strcmp($x['name'], $y['name']);
+      });
+
+      $perfQ = db()->prepare("SELECT 1 FROM service_history WHERE month = ? AND source <> 'bdo' LIMIT 1");
+      $perfQ->execute(array($month));
+
+      $out = array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
+                   'generated' => date('j M Y, H:i'),
+                   'bdo' => $who, 'name' => $who === '' ? 'All BDOs' : ($who === '~unallocated' ? 'Unallocated branches' : $ownerName($who)),
+                   'branches' => ($who !== '' && $who !== '~unallocated') ? bdo_branch_list($who) : array(),
+                   'agents' => count($agents),
+                   'baseLoaded' => $baseLoaded, 'perfLoaded' => (bool)$perfQ->fetch(),
+                   'lost' => $lost, 'accel' => $accel, 'accelTotal' => $accelTotal, 'accelDone' => $accelDone);
+      if ($isMgr) {
+        $out['bdos'] = array();
+        foreach (db()->query('SELECT DISTINCT bdo FROM bdo_branches')->fetchAll() as $r) {
+          $out['bdos'][] = array('bdo' => $r['bdo'], 'name' => $ownerName($r['bdo']));
+        }
+        usort($out['bdos'], function ($x, $y) { return strcmp($x['name'], $y['name']); });
+      }
+      respond($out);
     }
 
     case 'base_diagnosis': {

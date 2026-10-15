@@ -911,7 +911,7 @@
     /* Activeness sits with the agent list, not in My Branch: waking an agent
      * is work on the agent database, and the OM needs it without being given a
      * 'My Branch' tab that means nothing to him. */
-    agents:      [['agents', 'Agent List'], ['activeness', 'Activeness']],
+    agents:      [['agents', 'Agent List'], ['activeness', 'Activeness'], ['followup', 'Follow-up']],
     performance: [['fuel', 'Fuel & Weights'], ['targets', 'Monthly Targets'], ['flags', 'Flags']],
     reports:     [['upload', 'Upload'], ['commission', 'Commission & Months']],
     settings:    [['data', 'Settings & Data'], ['inbox', 'Messages'], ['admin', 'Admin']]
@@ -922,6 +922,7 @@
     if (key === 'mybase') return !isOfficeRole() && can('mybase', 'v');
     if (key === 'daily') return !isOfficeRole() && can('mybase', 'e');
     if (key === 'activeness') return isManager() || can('mybase', 'v');
+    if (key === 'followup') return isManager() || can('mybase', 'v');
     if (key === 'fuel') return isManager();
     if (key === 'targets') return can('targets', 'v');
     if (key === 'flags') return isManager() || can('mybase', 'v');
@@ -1361,6 +1362,7 @@
     if (key === 'dashboard') viewDashboard(v);
     else if (key === 'agents') viewAgents(v);
     else if (key === 'activeness') viewActiveness(v);
+    else if (key === 'followup') viewFollowup(v);
     else if (key === 'fuel') viewFuel(v);
     else if (key === 'mybase') viewMyBase(v);
     else if (key === 'daily') viewDaily(v);
@@ -2308,6 +2310,126 @@
    * who he has brought in - the last two being the two halves of the same KPI,
    * which is why showing them apart was showing half a score.
    */
+  /*
+   * ===================== FOLLOW-UP =====================
+   *
+   * Two lists, per branch: agents who were ACTIVE in the month's base file
+   * and have gone INACTIVE since, and agents still short of their Withdraw
+   * Target, nearest to finishing first. An officer sees his own branches;
+   * the OM picks an officer, all of them, or the branches nobody holds.
+   */
+  function viewFollowup(v) {
+    v.innerHTML =
+      '<h1 class="page-title">' + t('Follow-up') + '</h1>' +
+      '<p class="page-sub">' + (isManager()
+        ? t('Agents who went inactive since the base file, and agents still short of their acceleration target - by BDO.')
+        : t('Agents in your branches who went inactive since the base file, and the ones still short of their acceleration target.')) + '</p>' +
+      '<div id="fuBox"><div class="note">' + t('Loading') + '...</div></div>';
+    followupLoad();
+  }
+  function followupLoad() {
+    var box = elById('fuBox'); if (!box) return;
+    var qs = '&month=' + encodeURIComponent(state.month || state.openMonth || curMonth()) +
+      (isManager() && state._fuBdo ? '&bdo=' + encodeURIComponent(state._fuBdo) : '');
+    api('followup', { qs: qs }).then(function (d) {
+      state._fu = d;
+      box.innerHTML = followupHtml(d);
+    }).catch(function (e) { box.innerHTML = errBox(e); });
+  }
+  function followupHtml(d) {
+    var tab = state._fuTab || 'lost';
+    var all = isManager() && !d.bdo;
+    var picker = isManager()
+      ? '<div class="field"><label>' + t('BDO') + '</label><select data-change="fuBdo">' +
+        '<option value="">' + t('All BDOs') + '</option>' +
+        (d.bdos || []).map(function (b) {
+          return '<option value="' + esc(b.bdo) + '"' + (d.bdo === b.bdo ? ' selected' : '') + '>' + esc(b.name) + '</option>';
+        }).join('') +
+        '<option value="~unallocated"' + (d.bdo === '~unallocated' ? ' selected' : '') + '>' + t('Unallocated branches') + '</option>' +
+        '</select></div>'
+      : '';
+    var head = '<div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">' + picker +
+      '<button class="' + (tab === 'lost' ? 'btn' : 'ghost') + ' mini" data-action="fuTab" data-t="lost">' +
+      t('Turned inactive') + ' (' + fmt((d.lost || []).length) + ')</button>' +
+      '<button class="' + (tab === 'accel' ? 'btn' : 'ghost') + ' mini" data-action="fuTab" data-t="accel">' +
+      t('Acceleration pending') + ' (' + fmt((d.accel || []).length) + ')</button>' +
+      '<div class="spacer"></div>' +
+      '<button class="ghost mini" data-action="fuExport">' + svg('download') + ' ' + t('Excel') + '</button></div>' +
+      '<p class="note" style="margin:0 0 8px">' + esc(d.name) +
+      ((d.branches || []).length ? ' &middot; ' + esc(d.branches.join(', ')) : '') +
+      ' &middot; ' + esc(d.monthName) + ' &middot; ' + fmt(d.agents) + ' ' + t('agents') + '</p>';
+    var who = function (a) { return all ? '<td class="c-meta" data-l="BDO">' + esc(a.bdoName) + '</td>' : ''; };
+    var whoTh = all ? '<th>BDO</th>' : '';
+    var work = function (a) {
+      return (a.visited ? '<span class="pill ok">' + t('Visited') + '</span> ' : '<span class="pill dim">' + t('Not visited') + '</span> ') +
+        (a.served ? '<span class="pill ok">' + t('Served') + '</span>' : '') +
+        (a.wontReturn ? ' <span class="pill bad">' + t('not coming back') + '</span>' : '');
+    };
+    var body;
+    if (tab === 'accel') {
+      var rowsA = (d.accel || []).map(function (a, i) {
+        return '<tr><td class="c-meta" data-l="No.">' + (i + 1) + '</td>' +
+          '<td class="c-name">' + esc(a.name) + ' ' + bandPill(a.band) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
+          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' + who(a) +
+          '<td class="c-meta" data-l="target">' + fmt(a.target) + '</td>' +
+          '<td class="c-meta" data-l="done">' + fmt(a.txn) + '</td>' +
+          '<td class="c-kpis"><span class="kchip bad-off">' + fmt(a.left) + ' ' + t('left') + '</span></td></tr>';
+      }).join('') || '<tr><td colspan="' + (all ? 8 : 7) + '">' + emptyState('zap', t('Nobody pending'),
+        d.accelTotal ? t('Every agent with a target has reached it.') : t('No withdraw targets yet this month.')) + '</td></tr>';
+      body = '<p class="note" style="margin:0 0 8px">' + fmt(d.accelDone) + ' ' + t('of') + ' ' + fmt(d.accelTotal) + ' ' +
+        t('achieved. Fewest transactions left at the top.') + '</p>' +
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>No.</th><th>' + t('Agent') + '</th><th>' + t('Phone') +
+        '</th><th>' + t('Branch') + '</th>' + whoTh + '<th>' + t('Target') + '</th><th>' + t('Done') + '</th><th>' + t('Left') +
+        '</th></tr></thead><tbody>' + rowsA + '</tbody></table></div>';
+    } else {
+      var rowsL = (d.lost || []).map(function (a, i) {
+        return '<tr><td class="c-meta" data-l="No.">' + (i + 1) + '</td>' +
+          '<td class="c-name">' + esc(a.name) + ' ' + bandPill(a.band) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+          '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
+          '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' + who(a) +
+          '<td class="c-meta" data-l="location">' + (a.loc ? esc(a.loc) : '<span class="pill bad">' + t('missing') + '</span>') + '</td>' +
+          '<td class="c-kpis">' + work(a) + '</td></tr>';
+      }).join('') || '<tr><td colspan="' + (all ? 7 : 6) + '">' + emptyState('check', t('None'),
+        !d.baseLoaded ? t('This month\'s base file has not been uploaded yet.')
+          : !d.perfLoaded ? t('No performance file uploaded yet this month.')
+          : t('No agent has gone inactive since the base file.')) + '</td></tr>';
+      body = '<p class="note" style="margin:0 0 8px">' + t('Active in the base file, inactive now. Highest earners first.') + '</p>' +
+        '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>No.</th><th>' + t('Agent') + '</th><th>' + t('Phone') +
+        '</th><th>' + t('Branch') + '</th>' + whoTh + '<th>' + t('Location') + '</th><th>' + t('This month') +
+        '</th></tr></thead><tbody>' + rowsL + '</tbody></table></div>';
+    }
+    return '<div class="panel">' + head + body + '</div>';
+  }
+  /* both lists in one workbook, the way the office would send them */
+  function followupExport() {
+    var d = state._fu; if (!d) return;
+    if (!xlsxReady()) return;
+    var withBdo = isManager() && !d.bdo;
+    var top = [['HARDWARE SUPERMARKETS – CRDB SUPER AGENT'], ['FOLLOW-UP – ' + String(d.name).toUpperCase()],
+               ['Month: ' + d.monthName + (d.branches && d.branches.length ? '   Branch: ' + d.branches.join(', ') : '')],
+               ['Date: ' + d.generated], []];
+    var lost = top.concat([['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch'].concat(withBdo ? ['BDO'] : [])
+      .concat(['Location', 'List', 'Visited', 'Served'])]);
+    (d.lost || []).forEach(function (a, i) {
+      lost.push([i + 1, a.acc, a.name, a.phone, a.branch].concat(withBdo ? [a.bdoName] : [])
+        .concat([a.loc, a.band, a.visited ? 'YES' : 'NO', a.served ? 'YES' : 'NO']));
+    });
+    var acc = top.concat([['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch'].concat(withBdo ? ['BDO'] : [])
+      .concat(['Withdraw Target', 'Withdraw Txns', 'Balance'])]);
+    (d.accel || []).forEach(function (a, i) {
+      acc.push([i + 1, a.acc, a.name, a.phone, a.branch].concat(withBdo ? [a.bdoName] : [])
+        .concat([a.target, a.txn, a.left]));
+    });
+    var wb = XLSX.utils.book_new();
+    var w1 = XLSX.utils.aoa_to_sheet(lost), w2 = XLSX.utils.aoa_to_sheet(acc);
+    var widths = [{ wch: 6 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 16 }].concat(withBdo ? [{ wch: 18 }] : []);
+    w1['!cols'] = widths.concat([{ wch: 26 }, { wch: 6 }, { wch: 8 }, { wch: 8 }]);
+    w2['!cols'] = widths.concat([{ wch: 15 }, { wch: 14 }, { wch: 9 }]);
+    XLSX.utils.book_append_sheet(wb, w1, 'Turned Inactive');
+    XLSX.utils.book_append_sheet(wb, w2, 'Acceleration Pending');
+    XLSX.writeFile(wb, 'Follow-up - ' + d.name + ' - ' + d.monthName + '.xlsx');
+  }
   function viewActiveness(v) {
     v.innerHTML =
       '<h1 class="page-title">' + t('Activeness') + '</h1>' +
@@ -4318,7 +4440,7 @@
         o.agents,
         o.served, o.agents ? o.served / o.agents : 0, o.agents - o.served,
         o.visited, o.agents ? o.visited / o.agents : 0, o.apk,
-        o.floatFile, o.floatDaily || 0, o.float,
+        o.float,
         o.accelTarget, o.accelDone, o.accelTarget ? o.accelDone / o.accelTarget : 0, o.accelTarget - o.accelDone,
         o.woken, o.lost, o.woken - o.lost, o.activeNow, o.inactiveNow];
     }
@@ -4328,7 +4450,7 @@
       [dateLine],
       [],
       ['BDO', 'Branch', 'Score', 'Agents', 'Served', 'Served %', 'Not Served', 'Visited', 'Visited %', 'APK Updated',
-       'Float (Files)', 'Float (Daily Reports)', 'Total Float',
+       'Float Served',
        'Accel Target', 'Accel Achieved', 'Accel %', 'Accel Pending',
        'Inactive to Active', 'Active to Inactive', 'Net Active', 'Active', 'Inactive']
     ];
@@ -4346,8 +4468,8 @@
     }
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     var dataRows = []; for (var r = first; r < last; r++) dataRows.push(r);
-    fmtCells(ws, dataRows, [2, 5, 8, 15], '0%', true);
-    fmtCells(ws, dataRows, [10, 11, 12], '#,##0', false);
+    fmtCells(ws, dataRows, [2, 5, 8, 13], '0%', true);
+    fmtCells(ws, dataRows, [10], '#,##0', false);
     ws['!cols'] = [{ wch: 24 }, { wch: 30 }].concat(aoa[first - 1].slice(2).map(function (h) { return { wch: Math.max(10, h.length + 2) }; }));
     XLSX.utils.book_append_sheet(wb, ws, sheetName('Summary'));
 
@@ -7236,6 +7358,8 @@
       return;
     }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
+    if (a === 'fuTab') { state._fuTab = node.getAttribute('data-t'); var fb = elById('fuBox'); if (fb && state._fu) fb.innerHTML = followupHtml(state._fu); return; }
+    if (a === 'fuExport') { followupExport(); return; }
     if (a === 'baseScope') { state._baseNew = node.getAttribute('data-v'); renderTab(); return; }
     if (a === 'baseClear') {
       state._baseBand = ''; state._baseKpi = ''; state._baseSearch = '';
@@ -7746,6 +7870,7 @@
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseField') { state._baseField = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseSort') { state._baseSort = n.value; renderTab(); return; }
     if (n && n.getAttribute && n.getAttribute('data-change') === 'baseAccel') { state._baseAccel = n.value; renderTab(); return; }
+    if (n && n.getAttribute && n.getAttribute('data-change') === 'fuBdo') { state._fuBdo = n.value; followupLoad(); return; }
     if (n && n.getAttribute && ['agentField','fserved','fvisit','fapk','factive','fband','faccel'].indexOf(n.getAttribute('data-change')) >= 0) {
       state['_' + (n.getAttribute('data-change') === 'agentField' ? 'agentField' : n.getAttribute('data-change'))] = n.value;
       state.agentPage = 1; agentsBodyLoad(); return;

@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.84.0');
+define('APP_VERSION', '1.85.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -570,9 +570,10 @@ function branch_actuals($month, $bdo, $unflagged) {
   $q->execute(array($bdo, $month));
   foreach ($q->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
 
-  /* typed daily reports carry no agent: they stay his own, as before */
-  $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f, COALESCE(SUM(apk),0) a
-                      FROM daily_reports WHERE month = ? AND bdo = ?');
+  /* typed daily reports carry no agent: his typed APK count still stands
+   * as before, but typed FLOAT does not - float is his agents' float as the
+   * files report it, not what he wrote down he served */
+  $d = db()->prepare('SELECT COALESCE(SUM(apk),0) a FROM daily_reports WHERE month = ? AND bdo = ?');
   $d->execute(array($month, $bdo));
   $dr = $d->fetch();
   $k['apk'] = max($k['apk'], (int)$dr['a']);
@@ -583,7 +584,7 @@ function branch_actuals($month, $bdo, $unflagged) {
                       JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
                       WHERE s.month = ?$ex");
   $f->execute(array($bdo, $month));
-  $k['float'] = (float)$f->fetch()['f'] + (float)$dr['f'];
+  $k['float'] = (float)$f->fetch()['f'];
 
   $iq = db()->prepare("SELECT a.id FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
                        WHERE 1$ex");

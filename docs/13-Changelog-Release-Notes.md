@@ -5,6 +5,35 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.85.0 — 2026-10-14 · Follow-up: who slipped since the base file, and who is nearly there
+
+### A new screen: Agents → Follow-up
+
+It has two lists, worked per branch:
+
+- **Turned inactive:** agents in his branches that this month's base file had **ACTIVE** and the latest
+  performance file has **INACTIVE**. Highest earners come first. Each row shows whether the agent has
+  been visited or served this month, a missing location, and anyone marked *not coming back*.
+- **Acceleration pending:** agents in his branches with a Withdraw Target they have not reached,
+  **fewest transactions left first**, with the target, transactions done and what is left. The heading
+  says how many of the branch's targets are already achieved.
+
+A **BDO** sees his own branches only. The **OM** chooses **All BDOs** (which adds a BDO column), one
+BDO, or **Unallocated branches**. Both lists download as one Excel workbook, with the office letterhead
+and one sheet per list. If the base file or a performance file for the month is missing, the empty list
+says so rather than looking like good news. Manyara is excluded, as everywhere. New endpoint `followup`.
+
+### Float on the report card is the agents' float only
+
+Float for a BDO who holds branches (October onwards) is now the float his branch agents served, as
+the performance files report it. What he types into his daily report is no longer added, both on the
+report card and in his weighted score, so the two always agree. The workbook's Summary has one
+**Float Served** column instead of three. His typed APK count still counts as before.
+
+APP_VERSION 1.85.0, assets bumped to v102.
+
+---
+
 ## v1.84.0 — 2026-10-09 · Manyara off the agent lists, and reports that read like the office made them
 
 ### Manyara is not on the agent lists either
