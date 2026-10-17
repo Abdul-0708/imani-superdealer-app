@@ -5,6 +5,41 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.87.0 — 2026-10-17 · Float from the current performance file, and a "final file" tick (schema v32)
+
+### Float is the current performance file, summed for his branch agents
+
+v1.86.0 used BDOs' own entries for float until the final file, and the figures did not look real. Now
+a BDO's float (October onwards) is the sum of the **float served** that the month's **current
+performance file** reports for the agents in his branches. Nothing typed is used, and nothing is added
+up across weekly files.
+
+- The **current file** is the performance upload ticked final if there is one, otherwise the most
+  recent performance upload for the month (`latest_perf_upload()`). Erase it and the previous one
+  takes over.
+- The **report card, the workbook and his weighted score** all read that one file agent by agent. A
+  BDO's float on the picture, his line in the Summary, and the total of his agents' **Float Served**
+  column are the same number. TOTAL is the sum of the BDOs' figures. Unallocated branches are read from
+  the same file.
+- The picture shows the **full figure** (e.g. 1,248,350,000, not 1.25B) so it reads exactly as the
+  workbook does. The whole column is set in one size, the largest that fits its widest figure. The
+  footer names the file, for example "Float: performance file of 14 Oct 2026". The workbook adds the
+  same line under the Summary.
+- `float_is_final()` and `bdo_typed_float()` are gone. Typed float no longer counts anywhere in a
+  branch-holding BDO's score.
+
+### "This is the final file" (schema v32)
+
+On **Database Upload**, a weekly performance file has a tick: **This is the final file for the month**.
+It asks once to confirm. It marks the upload as final (new `uploads.final` column), and that file then
+stays the month's current file for float even if another weekly file is uploaded later. The upload
+result shows **FINAL FILE**, the uploads list (Settings & Data) tags it **FINAL**, and the default
+label is *Final performance - YYYY-MM file*. Erasing it removes the mark.
+
+APP_VERSION 1.87.0, assets bumped to v104.
+
+---
+
 ## v1.86.0 — 2026-10-17 · Float is what the BDO enters until the final file; typed APK does not score
 
 Both apply to a BDO who holds branches, from October 2026.

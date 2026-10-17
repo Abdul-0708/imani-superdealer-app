@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.86.0');
+define('APP_VERSION', '1.87.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -573,16 +573,19 @@ function branch_actuals($month, $bdo, $unflagged) {
   /* APK is his branch agents' updates and nothing else - a count he typed
    * into his daily report does not score */
 
-  $f = db()->prepare("SELECT COALESCE(SUM(s.float_served),0) f
-                      FROM service_history s
-                      JOIN agents a ON a.id = s.agent_id
-                      JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
-                      WHERE s.month = ?$ex");
-  $f->execute(array($bdo, $month));
-  $fileFloat = (float)$f->fetch()['f'];
-  /* FLOAT: what he entered in the app while the month runs, the final
-   * performance file once it is in - see float_is_final() */
-  $k['float'] = float_is_final($month) ? $fileFloat : bdo_typed_float($month, $bdo);
+  /* FLOAT: his branch agents' float in the month's current performance
+   * file - see latest_perf_upload() */
+  $k['float'] = 0;
+  $lu = latest_perf_upload($month);
+  if ($lu) {
+    $f = db()->prepare("SELECT COALESCE(SUM(s.float_served),0) f
+                        FROM service_history s
+                        JOIN agents a ON a.id = s.agent_id
+                        JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
+                        WHERE s.upload_id = ?$ex");
+    $f->execute(array($bdo, (int)$lu['id']));
+    $k['float'] = (float)$f->fetch()['f'];
+  }
 
   $iq = db()->prepare("SELECT a.id FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
                        WHERE 1$ex");
@@ -647,36 +650,38 @@ function fix_bdo_targets_from_base($month) {
   return $per;
 }
 /*
- * WHICH FLOAT COUNTS.
+ * WHICH FLOAT COUNTS: THE CURRENT PERFORMANCE FILE.
  *
- * While the month runs, a BDO's float is what he enters in the app as he
- * serves - the weekly files are partial and late, and the office reads the
- * month off its officers' own entries. The final performance file settles
- * it: from then on the float is what the file says his branch agents served.
+ * A BDO's float is the sum of the float served that the month's current
+ * performance file reports for the agents in his branches - the file the
+ * office actually holds, nothing typed and nothing added up across weeks.
+ * "Current" is the one ticked as the final file if there is one, otherwise
+ * the most recent performance upload for the month. Erase it and the one
+ * before it takes over.
  *
- * The month is final once it is CLOSED, or once a performance file for it
- * has been uploaded after the month ended - that is the final file the
- * office sends in.
+ * The report card and its workbook both read this one file, agent by agent,
+ * so the BDO's total on the picture, his line in the Summary and the sum of
+ * his agents' Float Served column are the same number.
  */
-function float_is_final($month) {
+function latest_perf_upload($month) {
   static $cache = array();
-  if (isset($cache[$month])) return $cache[$month];
-  $final = month_status($month) === 'CLOSED';
-  if (!$final) {
+  if (array_key_exists($month, $cache)) return $cache[$month];
+  $r = null;
+  try {
+    $q = db()->prepare("SELECT id, label, at, final FROM uploads WHERE month = ? AND kind = 'performance'
+                        ORDER BY final DESC, id DESC LIMIT 1");
+    $q->execute(array($month));
+    $r = $q->fetch() ?: null;
+  } catch (Exception $e) {
+    /* v32 not applied yet - no final tick to prefer */
     try {
-      $q = db()->prepare("SELECT 1 FROM uploads WHERE month = ? AND kind = 'performance' AND at >= ? LIMIT 1");
-      $q->execute(array($month, next_month($month) . '-01'));
-      $final = (bool)$q->fetch();
-    } catch (Exception $e) { $final = false; }
+      $q = db()->prepare("SELECT id, label, at FROM uploads WHERE month = ? AND kind = 'performance' ORDER BY id DESC LIMIT 1");
+      $q->execute(array($month));
+      $r = $q->fetch() ?: null;
+    } catch (Exception $e2) { $r = null; }
   }
-  $cache[$month] = $final;
-  return $final;
-}
-/* What he entered in the app as float served this month. */
-function bdo_typed_float($month, $bdo) {
-  $q = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? AND bdo = ?');
-  $q->execute(array($month, $bdo));
-  return (float)$q->fetch()['f'];
+  $cache[$month] = $r;
+  return $r;
 }
 
 /* The targets the base file sets - counted off his agents, never typed. */

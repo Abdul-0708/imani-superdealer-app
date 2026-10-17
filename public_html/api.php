@@ -1683,7 +1683,11 @@ try {
     case 'uploads_list': {
       $u = require_auth();
       if (!can($u, 'upload', 'v') && !is_manager($u)) fail('No access', 403);
-      $rows = db()->query('SELECT id, month, week, label, by_user, rows_count, at FROM uploads ORDER BY id DESC LIMIT 200')->fetchAll();
+      try {
+        $rows = db()->query('SELECT id, month, week, label, by_user, rows_count, at, kind, final FROM uploads ORDER BY id DESC LIMIT 200')->fetchAll();
+      } catch (Exception $e) {
+        $rows = db()->query('SELECT id, month, week, label, by_user, rows_count, at FROM uploads ORDER BY id DESC LIMIT 200')->fetchAll();
+      }
       respond(array('rows' => $rows));
     }
 
@@ -2549,14 +2553,21 @@ try {
 
       /* Register this upload: dated, labelled, and every row/credit it writes
        * carries its id - so it can be renamed or ERASED as one unit later. */
+      /* THE FINAL FILE: only a performance file can be it */
+      $isFinal = $mode === 'performance' && (string)bval('final') !== '' && (string)bval('final') !== '0';
       $upLabel = trim((string)bval('label'));
       if ($upLabel === '') {
-        $upLabel = ($mode === 'fixed' ? 'Monthly database baseline - ' : ($week !== '' ? $week . ' - ' : ''))
+        $upLabel = ($mode === 'fixed' ? 'Monthly database baseline - '
+                    : ($isFinal ? 'Final performance - ' : ($week !== '' ? $week . ' - ' : '')))
                  . $month . ' file';
       }
       db()->prepare('INSERT INTO uploads (month, week, label, by_user, rows_count, stats, kind) VALUES (?,?,?,?,?,?,?)')
           ->execute(array($month, $week, mb_substr($upLabel, 0, 160), $u['username'], count($parsed), json_encode($stats), $mode));
       $uploadId = (int)db()->lastInsertId();
+      if ($isFinal) {
+        try { db()->prepare('UPDATE uploads SET final = 1 WHERE id = ?')->execute(array($uploadId)); }
+        catch (Exception $e) { /* v32 not applied yet - the date rule still applies */ }
+      }
 
       /* PASS 2: write agents, history, bases, ledger, flags. */
       foreach ($parsed as $r) {
@@ -2931,7 +2942,7 @@ try {
                     'blankStation' => $blankStation, 'homeStation' => $homeStation,
                     'activeness' => $actSummary,
                     'skippedStation' => $skippedStation, 'excludedStations' => $exStations,
-                    'targetsFixed' => $targetsFixed));
+                    'targetsFixed' => $targetsFixed, 'final' => $isFinal));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
@@ -4773,13 +4784,13 @@ try {
         if (!isset($officers[$b])) {
           $officers[$b] = array('bdo' => $b, 'name' => isset($names[$b]) ? $names[$b] : $b, 'branches' => array(),
                                 'agents' => 0, 'served' => 0, 'visited' => 0, 'apk' => 0,
-                                'floatFile' => 0, 'floatDaily' => 0,
+                                'floatFile' => 0,
                                 'accelTarget' => 0, 'accelDone' => 0,
                                 'woken' => 0, 'lost' => 0, 'activeNow' => 0, 'inactiveNow' => 0);
         }
         $officers[$b]['branches'][] = $r['branch'];
       }
-      $blank = array('agents' => 0, 'served' => 0, 'visited' => 0, 'apk' => 0, 'floatFile' => 0, 'floatDaily' => 0,
+      $blank = array('agents' => 0, 'served' => 0, 'visited' => 0, 'apk' => 0, 'floatFile' => 0,
                      'accelTarget' => 0, 'accelDone' => 0, 'woken' => 0, 'lost' => 0, 'activeNow' => 0, 'inactiveNow' => 0);
       $vacant = $blank; $vacantBranches = array();
 
@@ -4794,21 +4805,18 @@ try {
       $flq->execute(array($month));
       foreach ($flq->fetchAll() as $r) $flagged[(int)$r['agent_id'] . '|' . $r['kpi'] . '|' . $r['bdo']] = true;
 
+      /* float per agent from the month's current performance file - the one
+       * file, so every total on the card adds up from the agent sheets */
       $float = array();
-      $fq = db()->prepare('SELECT agent_id, COALESCE(SUM(float_served),0) f FROM service_history WHERE month = ? GROUP BY agent_id');
-      $fq->execute(array($month));
-      foreach ($fq->fetchAll() as $r) $float[(int)$r['agent_id']] = (float)$r['f'];
+      $lu = latest_perf_upload($month);
+      if ($lu) {
+        $fq = db()->prepare('SELECT agent_id, COALESCE(SUM(float_served),0) f FROM service_history WHERE upload_id = ? GROUP BY agent_id');
+        $fq->execute(array((int)$lu['id']));
+        foreach ($fq->fetchAll() as $r) $float[(int)$r['agent_id']] = (float)$r['f'];
+      }
 
       $accel = accel_map($month, null);
 
-      /* FLOAT: what each BDO entered in the app while the month runs; the
-       * final performance file once it is in (float_is_final) */
-      $floatFinal = float_is_final($month);
-      $dq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? GROUP BY bdo');
-      $dq->execute(array($month));
-      foreach ($dq->fetchAll() as $r) {
-        if (isset($officers[$r['bdo']])) $officers[$r['bdo']]['floatDaily'] = (float)$r['f'];
-      }
 
       $who = function ($k) use ($names) {
         if ($k === 'partners') return 'PARTNER';
@@ -4872,7 +4880,7 @@ try {
       $out = array();
       $tot = $blank; $scoreSum = 0; $scoreN = 0;
       foreach ($officers as $o) {
-        $o['float'] = $floatFinal ? $o['floatFile'] : $o['floatDaily'];
+        $o['float'] = $o['floatFile'];
         foreach ($blank as $k => $z) $tot[$k] += $o[$k];
         $o['score'] = null;
         if (isset($tgts[$o['bdo']])) {
@@ -4885,11 +4893,10 @@ try {
         }
         $out[] = $o;
       }
-      $tot['float'] = $floatFinal ? $tot['floatFile'] : $tot['floatDaily'];
+      $tot['float'] = $tot['floatFile'];
       /* the office line carries the average of the officers' scores */
       $tot['score'] = $scoreN ? (int)round($scoreSum / $scoreN) : null;
-      /* nobody enters float for branches nobody holds - only the final file has a figure */
-      $vacant['float'] = $floatFinal ? $vacant['floatFile'] : null;
+      $vacant['float'] = $vacant['floatFile'];
       $vacant['branches'] = array_values($vacantBranches);
       /* a league table: the best weighted score at the top, then the
        * best-covered branches - an officer with no weights set goes last */
@@ -4906,7 +4913,11 @@ try {
       respond(array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
                     'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
                     'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
-                    'excludedStations' => perf_excluded_stations($month), 'floatFinal' => $floatFinal));
+                    'excludedStations' => perf_excluded_stations($month),
+                    /* which file the float column was read from */
+                    'floatFrom' => $lu ? array('label' => (string)$lu['label'],
+                                               'at' => date('j M Y', strtotime($lu['at'])),
+                                               'final' => !empty($lu['final'])) : null));
     }
 
     /*

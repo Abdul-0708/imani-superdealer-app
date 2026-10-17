@@ -4268,14 +4268,6 @@
    * in a WhatsApp group. The workbook carries the same summary, then one sheet
    * per BDO with every agent in his branches and his status on every KPI.
    */
-  function scCompact(n) {
-    n = Number(n) || 0;
-    var a = Math.abs(n);
-    if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 1 : 2).replace(/\.?0+$/, '') + 'B';
-    if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace(/\.0$/, '') + 'M';
-    if (a >= 1e4) return Math.round(n / 1e3) + 'K';
-    return fmt(n);
-  }
   function scPct(n, d) { return d ? Math.round(n / d * 100) : 0; }
   /* green / amber / red, as fill + ink - a document, so fixed colours, not the theme */
   function scBand(p) {
@@ -4308,16 +4300,16 @@
       g.fillText(s, x, y);
     }
     var cols = [
-      { k: 'bdo', label: ['BDO / BRANCH'], w: 450 },
-      { k: 'agents', label: ['AGENTS'], w: 190 },
-      { k: 'served', label: ['SERVED'], w: 240 },
-      { k: 'float', label: ['FLOAT', '(TZS)'], w: 220 },
-      { k: 'visit', label: ['VISITS'], w: 230 },
-      { k: 'accel', label: ['TXN', 'ACCELERATION'], w: 240 },
-      { k: 'woken', label: ['INACTIVE', 'TO ACTIVE'], w: 180 },
-      { k: 'lost', label: ['ACTIVE TO', 'INACTIVE'], w: 180 },
+      { k: 'bdo', label: ['BDO / BRANCH'], w: 400 },
+      { k: 'agents', label: ['AGENTS'], w: 170 },
+      { k: 'served', label: ['SERVED'], w: 230 },
+      { k: 'float', label: ['FLOAT SERVED', '(TZS)'], w: 320 },
+      { k: 'visit', label: ['VISITS'], w: 220 },
+      { k: 'accel', label: ['TXN', 'ACCELERATION'], w: 230 },
+      { k: 'woken', label: ['INACTIVE', 'TO ACTIVE'], w: 170 },
+      { k: 'lost', label: ['ACTIVE TO', 'INACTIVE'], w: 170 },
       { k: 'net', label: ['NET', 'ACTIVE'], w: 160 },
-      { k: 'score', label: ['SCORE'], w: 190 }
+      { k: 'score', label: ['SCORE'], w: 210 }
     ];
     var x0 = M; cols.forEach(function (c) { c.x = x0; x0 += c.w; });
 
@@ -4344,9 +4336,19 @@
     y += TH;
 
     /* one cell: a big number, an optional small line under it, an optional tint */
+    /* the float column is set in ONE size, the largest that fits its widest
+     * figure, so a billion does not shrink beside a million */
+    var floatPx = 58;
+    (function () {
+      var fc = cols[3], vals = offs.concat([d.totals]).concat(vac ? [vac] : []);
+      font(floatPx, 800);
+      while (floatPx > 30 && vals.some(function (o) {
+        return o.float != null && g.measureText(fmt(o.float)).width > fc.w - 20;
+      })) { floatPx -= 2; font(floatPx, 800); }
+    })();
     function cell(c, yy, big, small, fill, ink) {
       if (fill) { g.fillStyle = fill; g.fillRect(c.x + 6, yy + 8, c.w - 12, RH - 16); }
-      text(big, c.x + c.w / 2, yy + RH / 2 - (small ? 16 : 0), c.w - 20, 58, ink || '#111111', 'center', 800);
+      text(big, c.x + c.w / 2, yy + RH / 2 - (small ? 16 : 0), c.w - 20, c.k === 'float' ? floatPx : 58, ink || '#111111', 'center', 800);
       if (small) text(small, c.x + c.w / 2, yy + RH / 2 + 38, c.w - 20, 28, ink || '#555555', 'center', 600);
     }
     function rowOf(o, yy, isTotal, isVacant) {
@@ -4367,7 +4369,8 @@
       cell(c[1], yy, fmt(o.agents), '', null, ink);
       var sb = scBand(sp);
       cell(c[2], yy, fmt(o.served), sp + '%  (' + fmt(o.agents - o.served) + ' left)', isTotal ? null : sb[0], isTotal ? ink : sb[1]);
-      cell(c[3], yy, o.float === null || o.float === undefined ? '-' : scCompact(o.float), '', null, ink);
+      /* the full figure, not 1.25B - it must read exactly as the workbook does */
+      cell(c[3], yy, o.float === null || o.float === undefined ? '-' : fmt(o.float), '', null, ink);
       var vb = scBand(vp);
       cell(c[4], yy, fmt(o.visited), vp + '%  (' + fmt(o.agents - o.visited) + ' left)', isTotal ? null : vb[0], isTotal ? ink : vb[1]);
       var ab = scBand(ap);
@@ -4411,8 +4414,8 @@
       kx += 60 + 300;
     });
     var exS = (d.excludedStations || []).map(function (st) { return st.charAt(0) + st.slice(1).toLowerCase(); }).join(', ');
-    /* which float the column shows: the BDOs' own entries until the final file */
-    var note = (d.floatFinal ? 'Float: final performance file' : 'Float: as entered by BDOs') +
+    /* which file the float column was read from */
+    var note = (d.floatFrom ? 'Float: performance file of ' + d.floatFrom.at : 'Float: no performance file yet') +
       (exS ? '   |   ' + exS + ' excluded' : '');
     text(note, W - M, ky, 1000, 30, '#555555', 'right', 600);
     return cv;
@@ -4453,7 +4456,7 @@
       [dateLine],
       [],
       ['BDO', 'Branch', 'Score', 'Agents', 'Served', 'Served %', 'Not Served', 'Visited', 'Visited %', 'APK Updated',
-       d.floatFinal ? 'Float Served (Final File)' : 'Float Served (Entered by BDO)',
+       'Float Served',
        'Accel Target', 'Accel Achieved', 'Accel %', 'Accel Pending',
        'Inactive to Active', 'Active to Inactive', 'Net Active', 'Active', 'Inactive']
     ];
@@ -4469,6 +4472,10 @@
       aoa.push([]);
       aoa.push(['Note: ' + (d.excludedStations || []).map(function (st) { return st.charAt(0) + st.slice(1).toLowerCase(); }).join(', ') + ' excluded.']);
     }
+    if (d.floatFrom) {
+      if (!(d.excludedStations || []).length) aoa.push([]);
+      aoa.push(['Float served from the performance file uploaded ' + d.floatFrom.at + '.']);
+    }
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     var dataRows = []; for (var r = first; r < last; r++) dataRows.push(r);
     fmtCells(ws, dataRows, [2, 5, 8, 13], '0%', true);
@@ -4480,7 +4487,7 @@
     var per = {};
     (d.rows || []).forEach(function (a) { (per[a.o] = per[a.o] || []).push(a); });
     var HEAD = ['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch', 'Location',
-                'Served', 'Served By', 'Visited', 'APK', 'Float (File)',
+                'Served', 'Served By', 'Visited', 'APK', 'Float Served',
                 'Status (Start)', 'Status (Now)', 'Change',
                 'Withdraw Target', 'Withdraw Txns', 'Balance', 'Acceleration'];
     function cap(s) { s = String(s || ''); return s ? s.charAt(0) + s.slice(1).toLowerCase() : ''; }
@@ -4641,6 +4648,12 @@
       (def.k === 'performance' ? '<div class="field"><label>' + t('Week') + '</label><input id="upWeek" placeholder="e.g. W1"></div>' : '') +
       '<div class="field"><label>' + t('Label') + ' (' + t('optional') + ')</label><input id="upLabel" maxlength="160" placeholder="' + esc(t('e.g. August baseline')) + '"></div>' +
       '<div class="field"><label>' + t('Excel file') + ' (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
+      /* the final file decides the month's float - the OM says when this is it */
+      (def.k === 'performance'
+        ? '<label class="kchip todo" style="cursor:pointer;align-self:flex-end;min-height:38px">' +
+          '<input type="checkbox" id="upFinal" style="accent-color:var(--fire2);margin-right:6px">' +
+          t('This is the final file for the month') + '</label>'
+        : '') +
       (can('upload', 'e')
         ? '<button class="btn" data-action="doUpload">' + svg('upload') + ' ' + t('Upload') + '</button>' +
           (def.k === 'performance' ? '<button class="ghost" data-action="loadDemo">' + t('Load demo data') + '</button>' : '')
@@ -4671,6 +4684,13 @@
   function doUpload() {
     var kind = state._upKind || 'performance';
     var box = elById('upResult');
+    /* marking the final file switches the month's float to this file - ask once */
+    var finBox = elById('upFinal');
+    if (kind === 'performance' && finBox && finBox.checked) {
+      var mm = elById('upMonth') ? elById('upMonth').value : '';
+      if (!window.confirm(t('Upload this as the FINAL performance file for') + ' ' + mm + '? ' +
+          t('Float on the BDO report will come from this file from now on.'))) return;
+    }
     readExcel(elById('upFile'), function (rows) {
       box.innerHTML = '<span class="note">' + t('Importing') + ' ' + fmt(rows.length) + ' ' + t('rows...') + '</span>';
       if (kind === 'highearners') {
@@ -4693,10 +4713,12 @@
           .catch(function (e) { box.innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
         return;
       }
+      var fin = elById('upFinal');
       api('upload_weekly', { body: {
         month: elById('upMonth').value,
         week: elById('upWeek') ? elById('upWeek').value : '',
         label: elById('upLabel') ? elById('upLabel').value : '',
+        final: fin && fin.checked ? '1' : '',
         mode: kind, rows: rows
       } })
         .then(function (d) { box.innerHTML = uploadSummary(d); toast(t('Upload complete'), 'ok'); })
@@ -4723,7 +4745,8 @@
     var KINDNAME = { performance: 'weekly performance', fixed: 'monthly database baseline',
                      location: 'physical locations', priority: 'priority base' };
     var s = 'Imported <b>' + fmt(d.rows) + '</b> rows into ' + esc(d.month) +
-            ' as <b>' + esc(t(KINDNAME[d.mode] || d.mode || 'performance')) + '</b>';
+            ' as <b>' + esc(t(KINDNAME[d.mode] || d.mode || 'performance')) + '</b>' +
+            (d.final ? ' <span class="pill ok">' + t('FINAL FILE') + '</span>' : '');
     s += d.scoring
       ? ': ' + fmt(d.served) + ' served. BDOs: <b>' + (d.bdos || []).map(esc).join(', ') + '</b>.'
       : '. <span class="pill ok">' + t('No scores and no flags from this file') + '</span>';
@@ -6894,7 +6917,7 @@
       var cfg = rr[2], wd = rr[3];
       var upRows = ups.map(function (u) {
         return '<tr><td>' + esc((u.at || '').slice(0, 16)) + '</td><td>' + esc(u.month) + '</td><td>' + esc(u.week || '-') + '</td>' +
-          '<td>' + esc(u.label) + '</td><td>' + esc(u.by_user) + '</td><td>' + fmt(u.rows_count) + '</td>' +
+          '<td>' + esc(u.label) + (Number(u.final) ? ' <span class="pill ok">' + t('FINAL') + '</span>' : '') + '</td><td>' + esc(u.by_user) + '</td><td>' + fmt(u.rows_count) + '</td>' +
           '<td><button class="ghost mini" data-action="upRename" data-id="' + u.id + '" data-label="' + esc(u.label) + '">Rename</button> ' +
           '<button class="danger mini" data-action="upErase" data-id="' + u.id + '" data-label="' + esc(u.label) + '">Erase</button></td></tr>';
       }).join('') || '<tr><td colspan="7" class="note">No uploads registered yet. New uploads appear here with their date and time.</td></tr>';

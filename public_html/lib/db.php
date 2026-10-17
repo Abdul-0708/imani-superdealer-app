@@ -478,6 +478,21 @@ function upgrade_schema($pdo) {
     schema_v31_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "31" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 32) {
+    schema_v32_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "32" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v32: THE FINAL FILE, SAID OUT LOUD.
+ *
+ * The final performance file decides the month's float. It used to be
+ * recognised only by its date - uploaded after the month ended - which
+ * misses a final file that arrives on the last day. The OM now ticks it.
+ */
+function schema_v32_apply($pdo) {
+  try { $pdo->exec('ALTER TABLE uploads ADD COLUMN final TINYINT(1) NOT NULL DEFAULT 0'); } catch (Exception $e) { /* exists */ }
 }
 
 /*
