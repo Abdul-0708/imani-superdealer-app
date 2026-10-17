@@ -4476,6 +4476,12 @@
       if (!(d.excludedStations || []).length) aoa.push([]);
       aoa.push(['Float served from the performance file uploaded ' + d.floatFrom.at + '.']);
     }
+    /* the weights the scores were made with - the office monthly targets */
+    var WN = { serving: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness', accel: 'Txn Acceleration' };
+    var wl = Object.keys(d.weights || {}).filter(function (k) { return Number(d.weights[k]) > 0; })
+      .map(function (k) { return (WN[k] || k) + ' ' + d.weights[k] + '%'; });
+    aoa.push([wl.length ? 'Score weights (office monthly targets): ' + wl.join(', ') + '.'
+                        : 'Office monthly target weights are not set for ' + d.monthName + ' - no scores.']);
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     var dataRows = []; for (var r = first; r < last; r++) dataRows.push(r);
     fmtCells(ws, dataRows, [2, 5, 8, 13], '0%', true);

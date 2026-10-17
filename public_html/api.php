@@ -4872,7 +4872,14 @@ try {
                         'wl' => $x ? $x['left'] : null);
       }
 
-      /* each officer's weighted score - the same maths as his own dashboard */
+      /* EACH OFFICER'S WEIGHTED SCORE, BY THE OFFICE'S WEIGHTS.
+       *
+       * His own targets (counted off his branch list by the base file), but
+       * every KPI weighed as the office monthly targets weigh it - the same
+       * percentages the office itself is scored by, so one BDO's 80% and the
+       * office's 80% mean the same mix. A KPI the office gives no weight does
+       * not count; base growth is not an office KPI, so it is not in here. */
+      $ow = office_weights($month, station_scope($u));
       $tq = db()->prepare('SELECT * FROM bdo_targets WHERE month = ?');
       $tq->execute(array($month));
       $tgts = array();
@@ -4885,8 +4892,10 @@ try {
         $o['score'] = null;
         if (isset($tgts[$o['bdo']])) {
           $sa = bdo_scored_actuals($month, $o['bdo']);
+          $tw = $tgts[$o['bdo']];
+          foreach (kpi_defs() as $col => $ak) $tw[$col . '_w'] = isset($ow['weights'][$col]) ? $ow['weights'][$col] : 0;
           $sc = user_specialty($o['bdo']) === 'activeness'
-            ? bdo_score_specialist($sa, $tgts[$o['bdo']]) : bdo_score($sa, $tgts[$o['bdo']]);
+            ? bdo_score_specialist($sa, $tw) : bdo_score($sa, $tw);
           $o['score'] = $sc['score'];
           $o['scoreKpis'] = $sc['kpis'];
           if ($sc['score'] !== null) { $scoreSum += $sc['score']; $scoreN++; }
@@ -4914,6 +4923,8 @@ try {
                     'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
                     'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
                     'excludedStations' => perf_excluded_stations($month),
+                    /* the weights every score on the card was made with */
+                    'weights' => $ow['weights'], 'weightsFrom' => $ow['from'],
                     /* which file the float column was read from */
                     'floatFrom' => $lu ? array('label' => (string)$lu['label'],
                                                'at' => date('j M Y', strtotime($lu['at'])),

@@ -5,6 +5,27 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.88.0 — 2026-10-17 · The report's scores use the office monthly target weights
+
+The weighted score on the BDO performance report (picture and workbook) now weighs each KPI the way
+the **office monthly targets** weigh it: Served, Float, Visits, APK, Activeness and Txn Acceleration.
+These are the same percentages the office itself is scored by. Each BDO is still measured against
+his own targets, counted off his branch list by the base file. Only the weights changed.
+
+- The weights are found the way the dashboard finds them (`office_weights()`): the OM's chosen
+  station's row if it has one, otherwise the office-wide row.
+- Base growth is not an office KPI, so it is not in the report score.
+- Each BDO's sheet shows the office weights in its KPI / Target / Achieved / Weight / Score table.
+  Under the Summary, the workbook lists the weights used, for example "Score weights (office monthly
+  targets): Served 30%, Float 20%, …". If the office has no weights for the month, it says so and
+  shows no scores.
+
+The BDO's own dashboard and the OM's Monthly Targets screen still use each BDO's individual weights.
+
+APP_VERSION 1.88.0, assets bumped to v105.
+
+---
+
 ## v1.87.0 — 2026-10-17 · Float from the current performance file, and a "final file" tick (schema v32)
 
 ### Float is the current performance file, summed for his branch agents

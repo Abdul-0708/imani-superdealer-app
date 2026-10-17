@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.87.0');
+define('APP_VERSION', '1.88.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -1774,6 +1774,26 @@ function office_attainment($month, $station = '') {
   return array('attainment' => $att, 'achievement' => $achievement, 'weighted' => $wsum > 0,
                'fromUpload' => !empty($a['fromUpload']), 'waked' => $a['waked'], 'lost' => $a['lost'],
                'station' => $station, 'targetsFrom' => $targetsFrom);
+}
+
+/*
+ * THE OFFICE'S KPI WEIGHTS FOR THE MONTH - the ones typed on the office
+ * monthly targets, found the way the dashboard finds them: the station's own
+ * row, else the office-wide row. Returns col => weight and where they came
+ * from ('station', 'office' or 'none').
+ */
+function office_weights($month, $station) {
+  $q = db()->prepare('SELECT * FROM targets WHERE month = ? AND station = ?');
+  $q->execute(array($month, $station));
+  $t = $q->fetch(); $from = $t ? ($station === '' ? 'office' : 'station') : 'none';
+  if (!$t && $station !== '') {
+    $q->execute(array($month, ''));
+    $t = $q->fetch();
+    if ($t) $from = 'office';
+  }
+  $w = array();
+  foreach (array_keys(office_kpi_defs()) as $col) $w[$col] = $t ? (int)($t[$col . '_w'] ?? 0) : 0;
+  return array('weights' => $w, 'from' => $from);
 }
 
 /* One BDO's actuals for a month: ledger credits + float (uploads + his typed daily reports). */
