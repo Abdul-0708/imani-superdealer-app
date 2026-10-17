@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.85.0');
+define('APP_VERSION', '1.86.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -570,13 +570,8 @@ function branch_actuals($month, $bdo, $unflagged) {
   $q->execute(array($bdo, $month));
   foreach ($q->fetchAll() as $r) $k[$r['kpi']] = (int)$r['n'];
 
-  /* typed daily reports carry no agent: his typed APK count still stands
-   * as before, but typed FLOAT does not - float is his agents' float as the
-   * files report it, not what he wrote down he served */
-  $d = db()->prepare('SELECT COALESCE(SUM(apk),0) a FROM daily_reports WHERE month = ? AND bdo = ?');
-  $d->execute(array($month, $bdo));
-  $dr = $d->fetch();
-  $k['apk'] = max($k['apk'], (int)$dr['a']);
+  /* APK is his branch agents' updates and nothing else - a count he typed
+   * into his daily report does not score */
 
   $f = db()->prepare("SELECT COALESCE(SUM(s.float_served),0) f
                       FROM service_history s
@@ -584,7 +579,10 @@ function branch_actuals($month, $bdo, $unflagged) {
                       JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
                       WHERE s.month = ?$ex");
   $f->execute(array($bdo, $month));
-  $k['float'] = (float)$f->fetch()['f'];
+  $fileFloat = (float)$f->fetch()['f'];
+  /* FLOAT: what he entered in the app while the month runs, the final
+   * performance file once it is in - see float_is_final() */
+  $k['float'] = float_is_final($month) ? $fileFloat : bdo_typed_float($month, $bdo);
 
   $iq = db()->prepare("SELECT a.id FROM agents a JOIN bdo_branches bb ON bb.branch = a.branch AND bb.bdo = ?
                        WHERE 1$ex");
@@ -648,6 +646,39 @@ function fix_bdo_targets_from_base($month) {
   setting_set('tgfixed_' . $month, json_encode(array('at' => date('j M Y, H:i'), 'bdos' => count($per))));
   return $per;
 }
+/*
+ * WHICH FLOAT COUNTS.
+ *
+ * While the month runs, a BDO's float is what he enters in the app as he
+ * serves - the weekly files are partial and late, and the office reads the
+ * month off its officers' own entries. The final performance file settles
+ * it: from then on the float is what the file says his branch agents served.
+ *
+ * The month is final once it is CLOSED, or once a performance file for it
+ * has been uploaded after the month ended - that is the final file the
+ * office sends in.
+ */
+function float_is_final($month) {
+  static $cache = array();
+  if (isset($cache[$month])) return $cache[$month];
+  $final = month_status($month) === 'CLOSED';
+  if (!$final) {
+    try {
+      $q = db()->prepare("SELECT 1 FROM uploads WHERE month = ? AND kind = 'performance' AND at >= ? LIMIT 1");
+      $q->execute(array($month, next_month($month) . '-01'));
+      $final = (bool)$q->fetch();
+    } catch (Exception $e) { $final = false; }
+  }
+  $cache[$month] = $final;
+  return $final;
+}
+/* What he entered in the app as float served this month. */
+function bdo_typed_float($month, $bdo) {
+  $q = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? AND bdo = ?');
+  $q->execute(array($month, $bdo));
+  return (float)$q->fetch()['f'];
+}
+
 /* The targets the base file sets - counted off his agents, never typed. */
 function auto_target_cols() { return array('serving', 'visits', 'activeness', 'apk', 'accel'); }
 /* When this month's targets were fixed from the base file, or null. */

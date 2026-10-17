@@ -4801,9 +4801,14 @@ try {
 
       $accel = accel_map($month, null);
 
-      /* Float is his agents' float as the files report it. What an officer
-       * types into his daily report is his own account of the day, not a
-       * figure the company can check, so the report card does not carry it. */
+      /* FLOAT: what each BDO entered in the app while the month runs; the
+       * final performance file once it is in (float_is_final) */
+      $floatFinal = float_is_final($month);
+      $dq = db()->prepare('SELECT bdo, COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ? GROUP BY bdo');
+      $dq->execute(array($month));
+      foreach ($dq->fetchAll() as $r) {
+        if (isset($officers[$r['bdo']])) $officers[$r['bdo']]['floatDaily'] = (float)$r['f'];
+      }
 
       $who = function ($k) use ($names) {
         if ($k === 'partners') return 'PARTNER';
@@ -4867,7 +4872,7 @@ try {
       $out = array();
       $tot = $blank; $scoreSum = 0; $scoreN = 0;
       foreach ($officers as $o) {
-        $o['float'] = $o['floatFile'];
+        $o['float'] = $floatFinal ? $o['floatFile'] : $o['floatDaily'];
         foreach ($blank as $k => $z) $tot[$k] += $o[$k];
         $o['score'] = null;
         if (isset($tgts[$o['bdo']])) {
@@ -4880,10 +4885,11 @@ try {
         }
         $out[] = $o;
       }
-      $tot['float'] = $tot['floatFile'];
+      $tot['float'] = $floatFinal ? $tot['floatFile'] : $tot['floatDaily'];
       /* the office line carries the average of the officers' scores */
       $tot['score'] = $scoreN ? (int)round($scoreSum / $scoreN) : null;
-      $vacant['float'] = $vacant['floatFile'];
+      /* nobody enters float for branches nobody holds - only the final file has a figure */
+      $vacant['float'] = $floatFinal ? $vacant['floatFile'] : null;
       $vacant['branches'] = array_values($vacantBranches);
       /* a league table: the best weighted score at the top, then the
        * best-covered branches - an officer with no weights set goes last */
@@ -4900,7 +4906,7 @@ try {
       respond(array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
                     'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
                     'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
-                    'excludedStations' => perf_excluded_stations($month)));
+                    'excludedStations' => perf_excluded_stations($month), 'floatFinal' => $floatFinal));
     }
 
     /*

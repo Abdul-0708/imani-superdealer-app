@@ -5,6 +5,38 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.86.0 — 2026-10-17 · Float is what the BDO enters until the final file; typed APK does not score
+
+Both apply to a BDO who holds branches, from October 2026.
+
+### Float: the BDO's own entries during the month, the final file at the end
+
+While the month runs, a BDO's float is what he enters in the app as he serves, from his daily
+reports. The weekly performance files are partial and late. Once the **final performance file** is in,
+float becomes what that file says his branch agents served.
+
+The month counts as final once it is **CLOSED**, or once a performance file for it has been
+**uploaded after the month ended** (`float_is_final()`). That is the final file the office sends in
+while the month sits AWAITING.
+
+The same rule feeds his weighted score and the BDO performance report, so they never disagree:
+
+- **Picture:** the footer says which float it shows, either "Float: as entered by BDOs" or "Float:
+  final performance file". Unallocated branches show "-" until the final file, because nobody enters
+  float for them.
+- **Workbook:** the Summary heading reads *Float Served (Entered by BDO)* or *Float Served (Final
+  File)*. The per-agent column is labelled *Float (File)*, because it is always the file's figure for
+  that agent.
+
+### Typed APK no longer scores
+
+APK in his score is now only his branch agents' APK updates. The APK count he types in his daily report
+is no longer used.
+
+APP_VERSION 1.86.0, assets bumped to v103.
+
+---
+
 ## v1.85.0 — 2026-10-14 · Follow-up: who slipped since the base file, and who is nearly there
 
 ### A new screen: Agents → Follow-up

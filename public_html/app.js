@@ -4367,7 +4367,7 @@
       cell(c[1], yy, fmt(o.agents), '', null, ink);
       var sb = scBand(sp);
       cell(c[2], yy, fmt(o.served), sp + '%  (' + fmt(o.agents - o.served) + ' left)', isTotal ? null : sb[0], isTotal ? ink : sb[1]);
-      cell(c[3], yy, scCompact(o.float), '', null, ink);
+      cell(c[3], yy, o.float === null || o.float === undefined ? '-' : scCompact(o.float), '', null, ink);
       var vb = scBand(vp);
       cell(c[4], yy, fmt(o.visited), vp + '%  (' + fmt(o.agents - o.visited) + ' left)', isTotal ? null : vb[0], isTotal ? ink : vb[1]);
       var ab = scBand(ap);
@@ -4411,7 +4411,10 @@
       kx += 60 + 300;
     });
     var exS = (d.excludedStations || []).map(function (st) { return st.charAt(0) + st.slice(1).toLowerCase(); }).join(', ');
-    if (exS) text(exS + ' excluded', W - M, ky, 600, 30, '#555555', 'right', 600);
+    /* which float the column shows: the BDOs' own entries until the final file */
+    var note = (d.floatFinal ? 'Float: final performance file' : 'Float: as entered by BDOs') +
+      (exS ? '   |   ' + exS + ' excluded' : '');
+    text(note, W - M, ky, 1000, 30, '#555555', 'right', 600);
     return cv;
   }
   function scorecardXlsx(d) {
@@ -4440,7 +4443,7 @@
         o.agents,
         o.served, o.agents ? o.served / o.agents : 0, o.agents - o.served,
         o.visited, o.agents ? o.visited / o.agents : 0, o.apk,
-        o.float,
+        o.float === null || o.float === undefined ? '' : o.float,
         o.accelTarget, o.accelDone, o.accelTarget ? o.accelDone / o.accelTarget : 0, o.accelTarget - o.accelDone,
         o.woken, o.lost, o.woken - o.lost, o.activeNow, o.inactiveNow];
     }
@@ -4450,7 +4453,7 @@
       [dateLine],
       [],
       ['BDO', 'Branch', 'Score', 'Agents', 'Served', 'Served %', 'Not Served', 'Visited', 'Visited %', 'APK Updated',
-       'Float Served',
+       d.floatFinal ? 'Float Served (Final File)' : 'Float Served (Entered by BDO)',
        'Accel Target', 'Accel Achieved', 'Accel %', 'Accel Pending',
        'Inactive to Active', 'Active to Inactive', 'Net Active', 'Active', 'Inactive']
     ];
@@ -4477,7 +4480,7 @@
     var per = {};
     (d.rows || []).forEach(function (a) { (per[a.o] = per[a.o] || []).push(a); });
     var HEAD = ['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch', 'Location',
-                'Served', 'Served By', 'Visited', 'APK', 'Float',
+                'Served', 'Served By', 'Visited', 'APK', 'Float (File)',
                 'Status (Start)', 'Status (Now)', 'Change',
                 'Withdraw Target', 'Withdraw Txns', 'Balance', 'Acceleration'];
     function cap(s) { s = String(s || ''); return s ? s.charAt(0) + s.slice(1).toLowerCase() : ''; }
