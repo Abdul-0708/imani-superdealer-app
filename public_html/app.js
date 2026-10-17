@@ -912,7 +912,7 @@
      * is work on the agent database, and the OM needs it without being given a
      * 'My Branch' tab that means nothing to him. */
     agents:      [['agents', 'Agent List'], ['activeness', 'Activeness'], ['followup', 'Follow-up']],
-    performance: [['fuel', 'Fuel & Weights'], ['targets', 'Monthly Targets'], ['flags', 'Flags']],
+    performance: [['fuel', 'Monthly Scores'], ['targets', 'Monthly Targets'], ['flags', 'Flags']],
     reports:     [['upload', 'Upload'], ['commission', 'Commission & Months']],
     settings:    [['data', 'Settings & Data'], ['inbox', 'Messages'], ['admin', 'Admin']]
   };
@@ -1026,7 +1026,6 @@
       state._liveTimer = setInterval(function () {
         if (!state.user) return;
         refreshBadges();
-        fuelAlarmLoad();
       }, 5 * 60 * 1000);
     }
   }
@@ -1327,9 +1326,8 @@
     /* THE VIEW IS BEING REBUILT, SO ANY OPEN DIALOG IS STALE BY DEFINITION. */
     closeModal();
     v.innerHTML = skeletonHtml();
-    /* Re-read on every screen change, so what a man is told about his fuel
-     * and about the office is never older than the last thing he tapped. */
-    fuelAlarmLoad();
+    /* Re-read on every screen change, so what a man is told about the office
+     * is never older than the last thing he tapped. */
     refreshBadges();
     var subs = TAB_SUBS[state.tab];
     if (!subs) { renderOne(state.tab, v); return; }
@@ -1354,7 +1352,7 @@
   /* the count that used to sit on a tab now sits on its chip */
   function subBadge(key) {
     if (key === 'inbox') return state.unreadMsgs || 0;
-    if (key === 'flags') return isFieldUser() ? (state.pendingFlags || 0) : 0;
+    if (key === 'flags') return 0;
     return 0;
   }
   function renderOne(key, v) {
@@ -1628,9 +1626,9 @@
             ? '<div class="sec">' +
               '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">' +
               '<span class="pill ' + (gap >= 10 ? 'ok' : 'gold') + '">+' + (gap > 0 ? gap : 0) + '%</span>' +
-              '<b>' + t('is what answering your flags is worth') + '</b></div>' +
-              '<div class="note" style="margin:6px 0 8px">' + t('Answer them on the Flags panel - a claim you can prove is a claim the OM can clear.') + '</div>' +
-              '<button class="btn mini" data-action="tab" data-tab="performance" data-sub="flags">' + t('Work on my flags') + '</button></div>'
+              '<b>' + t('more if the OM clears your flags') + '</b></div>' +
+              '<div class="note" style="margin:6px 0 8px">' + t('The OM reviews every flagged claim.') + '</div>' +
+              '<button class="ghost mini" data-action="tab" data-tab="performance" data-sub="flags">' + t('See my flags') + '</button></div>'
             : '<div class="note">' + t('Clean month - nothing is being questioned. Both numbers are the same.') + '</div>') +
           '<div style="margin-top:10px">' + perfBars(withF.kpis) + '</div>' +
           '</div>';
@@ -1729,16 +1727,12 @@
         idlePanel +
         '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
         scorePanel +
-        '<div class="panel"><h2>' + svg('cal') + t('My week, and the fuel it earns') + '</h2>' +
-        '<p class="note">' + t('Share of your round served, different agents served, visits and activeness. 70% or more of your weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</p>' +
-        '<div id="myFuelBox"></div></div>' +
         standPanel +
         heScorePanel +
         /* one Today: his half, then the team's, inside the same panel */
         livePanel.replace(/<\/div>$/, teamBoard + '</div>');
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
-      myFuelLoad('myFuelBox');
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -1754,7 +1748,7 @@
       var flRows = myfl.rows || [];
       var head = greetingLine() + '<h1 class="page-title">' + t('Flags against me') + '</h1>' +
         '<p class="page-sub">' + esc(myfl.month || '') + ' &middot; ' +
-        t('The performance file did not back these claims. Say whether each one is true - your answer goes to the OM.') + '</p>';
+        t('The performance file did not back these claims. The OM reviews each one.') + '</p>';
 
       if (!flRows.length) {
         v.innerHTML = head + '<div class="panel"><div class="row" style="align-items:center">' +
@@ -1784,8 +1778,7 @@
             ? '<span class="pill gold">' + t('I confirm') + '</span>' + (f.bdo_note ? '<div class="note">' + esc(f.bdo_note) + '</div>' : '')
           : f.bdo_response === 'DISPUTED'
             ? '<span class="pill ok">' + t('I dispute') + '</span><div class="note">' + esc(f.bdo_note) + '</div>'
-            : '<button class="btn mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="CONFIRMED" data-agent="' + esc(f.agent || '') + '">' + t('True') + '</button> ' +
-              '<button class="ghost mini" data-action="flagAnswer" data-id="' + f.id + '" data-r="DISPUTED" data-agent="' + esc(f.agent || '') + '">' + t('Not true') + '</button>';
+            : '<span class="pill dim">' + t('With the OM') + '</span>';
         return '<tr><td>' + esc(t(KLF[f.kpi] || f.kpi)) + '</td>' +
           '<td class="c-name">' + esc(f.agent || '') + '<div class="note">' + esc(f.acc || '') + '</div></td>' +
           '<td class="note">' + esc(f.detail || '') + '</td>' +
@@ -1796,9 +1789,9 @@
         '<div class="panel" style="border-color:' + (myfl.pending ? 'var(--bad)' : 'var(--line)') + '">' +
         '<h2>' + svg('alert') + t('Flags against me') +
         ' <span class="pill ' + (flRows.length ? 'bad' : 'dim') + '">' + flRows.length + ' ' + t('total') + '</span>' +
-        (myfl.pending ? ' <span class="pill bad">' + myfl.pending + ' ' + t('need your answer') + '</span>' : ' <span class="pill ok">' + t('all answered') + '</span>') + '</h2>' +
+        '</h2>' +
         '<div class="row tabrow" style="margin-bottom:8px">' + tabs + '</div>' +
-        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('When I did it') + '</th><th>' + t('Your answer') + '</th></tr></thead><tbody>' +
+        '<div class="tablewrap"><table><thead><tr><th>KPI</th><th>' + t('Agent') + '</th><th>' + t('Detail') + '</th><th>' + t('When I did it') + '</th><th>' + t('Status') + '</th></tr></thead><tbody>' +
         body + '</tbody></table></div></div>';
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
@@ -3406,7 +3399,7 @@
      * take it over, and the normal reconciliation still checks his claim against
      * the file, so he cannot take credit the file does not support. */
     var orphan = (mark.by === 'unassigned' || mark.by === 'partners');
-    var reversible = isOM || (mine && mark.src === 'bdo') || (orphan && can('mybase', 'e'));
+    var reversible = isOM || (!mark.flag && ((mine && mark.src === 'bdo') || (orphan && can('mybase', 'e'))));
     var xTitle = orphan ? t('Nobody was named in the file - take this over if you did it') : 'Reverse this mark';
     var x = reversible ? ' <button class="kchip-x" title="' + xTitle + '" aria-label="Reverse this mark" data-action="kpiUnmark" data-id="' + a.id + '" data-kpi="' + c.key + '">&times;</button>' : '';
     /* wake came with a receipt photo or a typed commitment - anyone can open it */
@@ -4413,10 +4406,8 @@
       text(k[1], kx + 60, ky, 320, 30, '#333333', 'left', 600);
       kx += 60 + 300;
     });
-    var exS = (d.excludedStations || []).map(function (st) { return st.charAt(0) + st.slice(1).toLowerCase(); }).join(', ');
     /* which file the float column was read from */
-    var note = (d.floatFrom ? 'Float: performance file of ' + d.floatFrom.at : 'Float: no performance file yet') +
-      (exS ? '   |   ' + exS + ' excluded' : '');
+    var note = d.floatFrom ? 'Float: performance file of ' + d.floatFrom.at : 'Float: no performance file yet';
     text(note, W - M, ky, 1000, 30, '#555555', 'right', 600);
     return cv;
   }
@@ -4468,14 +4459,8 @@
                       Object.assign({}, d.vacant, { score: null })));
     }
     var last = aoa.length;
-    if ((d.excludedStations || []).length) {
-      aoa.push([]);
-      aoa.push(['Note: ' + (d.excludedStations || []).map(function (st) { return st.charAt(0) + st.slice(1).toLowerCase(); }).join(', ') + ' excluded.']);
-    }
-    if (d.floatFrom) {
-      if (!(d.excludedStations || []).length) aoa.push([]);
-      aoa.push(['Float served from the performance file uploaded ' + d.floatFrom.at + '.']);
-    }
+    aoa.push([]);
+    if (d.floatFrom) aoa.push(['Float served from the performance file uploaded ' + d.floatFrom.at + '.']);
     /* the weights the scores were made with - the office monthly targets */
     var WN = { serving: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness', accel: 'Txn Acceleration' };
     var wl = Object.keys(d.weights || {}).filter(function (k) { return Number(d.weights[k]) > 0; })
@@ -4773,12 +4758,6 @@
      * works but lets the file being judged supply its own standard. Say so
      * at the moment it happens, while the OM can still fix it.
      */
-    /* rows from a station no longer worked were left out entirely */
-    if (d.skippedStation) {
-      s += '<div class="note" style="margin-top:6px"><span class="pill dim">' + fmt(d.skippedStation) + ' ' +
-        esc((d.excludedStations || []).join(', ')) + ' ' + t('rows skipped') + '</span> ' +
-        t('- that station is no longer read for performance.') + '</div>';
-    }
     /* THE BASE FILE SET THIS MONTH'S TARGETS - say what each officer got */
     if (d.targetsFixed && d.targetsFixed.length) {
       s += '<div class="note" style="margin-top:6px"><b>' + t('Targets fixed for the month from each BDO\'s branch list') + ':</b> ' +
@@ -5219,19 +5198,14 @@
   function viewFuel(v) {
     var m0 = state._fuelMonth || state.month || state.openMonth || curMonth();
     v.innerHTML =
-      '<h1 class="page-title">' + t('Fuel & Performance') + '</h1>' +
-      '<p class="page-sub">' + t('Weekly fuel targets for every BDO, and how each one performed month by month.') + '</p>' +
-      '<div class="toolbar">' +
-      '<span class="note" style="flex:1">' + t('Fuel rule: 70% or more of the weekly target earns FULL fuel, 40% to 69% earns HALF, below 40% earns NOTHING.') + '</span>' +
-      '<button class="btn" data-action="fuelPrint">' + svg('download') + t('Print all months') + '</button></div>' +
-      weeklyPanel() +
+      '<h1 class="page-title">' + t('Monthly Scores') + '</h1>' +
+      '<p class="page-sub">' + t('The weighted score of every BDO, month by month.') + '</p>' +
       momxHtml() +
       '<div class="panel"><h2>' + svg('percent') + t('One month, KPI by KPI') + '</h2>' +
       '<div class="row" style="gap:8px;align-items:flex-end;margin-bottom:8px">' +
       '<div class="field"><label>' + t('Month') + '</label><input id="fuelMonth" type="month" value="' + esc(m0) + '"></div>' +
       '<button class="ghost" data-action="fuelMonthLoad">' + t('Load') + '</button></div>' +
       '<div id="fuelMonthBox"><div class="note">' + t('Loading') + '...</div></div></div>';
-    weeklyLoad();
     momxLoad();
     fuelMonthLoad();
   }

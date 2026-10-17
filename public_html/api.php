@@ -407,7 +407,7 @@ try {
        * both read THAT station alone, against the targets typed for it. */
       $snap = json_decode(setting_get('month_stats_' . $month, '{}'), true);
       $byStation = isset($snap['_stations']) && is_array($snap['_stations']) ? $snap['_stations'] : array();
-      $stations = array_keys($byStation);
+      $stations = perf_stations_filter(array_keys($byStation), $month);
       sort($stations);
       /* the OM's stored choice governs; an explicit ?station= still wins for
        * one-off inspection without changing what everyone else sees */
@@ -1908,6 +1908,7 @@ try {
       foreach (db()->query('SELECT DISTINCT station FROM high_earners ORDER BY station')->fetchAll() as $r) {
         if ($r['station'] !== '') $stations[] = $r['station'];
       }
+      $stations = perf_stations_filter($stations, $month);
       $sql = 'SELECT h.acc, h.name AS he_name, h.commission, h.station,
                      a.id AS agent_id, a.name AS agent_name, a.phone, a.branch, a.physical_location,
                      (k.agent_id IS NOT NULL) AS served
@@ -1915,7 +1916,8 @@ try {
               LEFT JOIN agents a ON a.acc = h.acc
               LEFT JOIN agent_month_kpi k ON k.agent_id = a.id AND k.month = ? AND k.kpi = "served"';
       $vals = array($month);
-      if ($station !== '') { $sql .= ' WHERE h.station = ?'; $vals[] = $station; }
+      $sql .= ' WHERE 1' . perf_station_sql('h', $month);
+      if ($station !== '') { $sql .= ' AND h.station = ?'; $vals[] = $station; }
       $sql .= ' ORDER BY h.commission DESC';
       $q = db()->prepare($sql);
       $q->execute($vals);
@@ -2034,6 +2036,9 @@ try {
 
     case 'flag_respond': {
       $u = require_auth(); require_perm($u, 'mybase', 'e');
+      /* A FLAG IS THE OM'S TO JUDGE. An officer sees the flags against him;
+       * he does not answer, dispute or otherwise change them. */
+      if (!is_manager($u)) fail('Flags are reviewed by the OM', 403);
       $id = (int)bval('id');
       $resp = bval('response') === 'DISPUTED' ? 'DISPUTED' : 'CONFIRMED';
       $note = mb_substr(trim((string)bval('note')), 0, 255);
@@ -2280,6 +2285,13 @@ try {
       $chk->execute(array($month, $agentId, $kpi));
       $row = $chk->fetch();
       if (!$row) fail('Nothing to reverse', 404);
+      /* reversing a flagged mark would make the flag disappear with it - that
+       * is changing the flag, and only the OM does that */
+      if (!$isOM) {
+        $fq0 = db()->prepare('SELECT 1 FROM flags WHERE month = ? AND agent_id = ? AND kpi = ? AND bdo = ?');
+        $fq0->execute(array($month, $agentId, $kpi, $row['bdo']));
+        if ($fq0->fetch()) fail('This mark is flagged - only the OM can change it', 403);
+      }
       /* Permission ladder for reversing a KPI tick:
        *  - OM (agents.edit): can overturn ANY tick, any source, no time limit.
        *  - a BDO: can overturn his OWN live (bdo-source) mark within 6 hours,
@@ -2448,7 +2460,7 @@ try {
                     /* the month's own KPIs, whatever the OM set up */
                     'custom' => array());
       $stats = $zero;
-      $byStation = array(); /* SA-station breakdown (ARUSHA / MANYARA / ...) */
+      $byStation = array(); /* SA-station breakdown, per region */
       /* A blank SA STATION cell is a missing value, not a separate region: the
        * row belongs to the home station and must not vanish from that station's
        * attainment. We still COUNT the blanks and hand the number back so the OM
@@ -2536,7 +2548,7 @@ try {
           }
         }
       }
-      if (!count($parsed) && $skippedStation) fail('Every row in this file is from ' . implode(', ', $exStations) . ', which is no longer read for performance - nothing was imported.');
+      if (!count($parsed) && $skippedStation) fail('No rows in this file are for the stations the office works - nothing was imported.');
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
       foreach ($byStation as $k => $s) $byStation[$k]['net_active'] = $s['waked'] - $s['lost'];
@@ -2941,7 +2953,6 @@ try {
                     'baselineUsed' => $baselineUsed, 'baselineAgents' => $baselineFrom,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation,
                     'activeness' => $actSummary,
-                    'skippedStation' => $skippedStation, 'excludedStations' => $exStations,
                     'targetsFixed' => $targetsFixed, 'final' => $isFinal));
     }
 
@@ -2964,7 +2975,7 @@ try {
       foreach ($rows as $r) if ($r['station'] !== '') $stations[strtoupper($r['station'])] = true;
       $home = strtoupper(setting_get('home_station', 'ARUSHA'));
       $stations[$home] = true;                       /* the region we actually work */
-      $stations = array_keys($stations);
+      $stations = perf_stations_filter(array_keys($stations), open_month());
       sort($stations);
       respond(array('rows' => $rows, 'stations' => $stations, 'homeStation' => $home));
     }
@@ -4922,7 +4933,6 @@ try {
       respond(array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
                     'generated' => date('j M Y, H:i'), 'monthStatus' => month_status($month),
                     'officers' => $out, 'totals' => $tot, 'vacant' => $vacant, 'rows' => $rows,
-                    'excludedStations' => perf_excluded_stations($month),
                     /* the weights every score on the card was made with */
                     'weights' => $ow['weights'], 'weightsFrom' => $ow['from'],
                     /* which file the float column was read from */
@@ -5370,7 +5380,7 @@ try {
       foreach ($tq3->fetchAll() as $r) $stSet[strtoupper($r['station'])] = true;
       $stSet[strtoupper(setting_get('home_station', 'ARUSHA'))] = true;
       unset($stSet['']);
-      $stations = array_keys($stSet);
+      $stations = perf_stations_filter(array_keys($stSet), $month);
       sort($stations);
 
       respond(array('month' => $month, 'station' => $station, 'stations' => $stations,
@@ -5628,7 +5638,11 @@ try {
       if (month_status($month) === 'CLOSED') fail('Month ' . $month . ' is already closed');
       $rows = bval('rows', array());
       $parsed = array();
-      foreach ((array)$rows as $raw) { $p = parse_commission_row($raw); if ($p) $parsed[] = $p; }
+      $exC = perf_excluded_stations($month);
+      foreach ((array)$rows as $raw) {
+        $p = parse_commission_row($raw);
+        if ($p && !in_array($p['station'], $exC, true)) $parsed[] = $p;
+      }
       if (!count($parsed)) fail('No valid rows (need SA Commission and/or Served Status columns)');
       /* The station comes from each row. Only the stations present in THIS
        * file are replaced, so Arusha and Manyara can be loaded separately
@@ -5660,6 +5674,7 @@ try {
       $sq4 = db()->prepare('SELECT DISTINCT station FROM commission_rows WHERE month = ? ORDER BY station');
       $sq4->execute(array($month));
       foreach ($sq4->fetchAll() as $r4) $stns[] = $r4['station'];
+      $stns = perf_stations_filter($stns, $month);
 
       $station = isset($_GET['station']) ? strtoupper(trim((string)$_GET['station'])) : station_scope($u);
       /* An MD looking at every station still has to settle ONE of them; show

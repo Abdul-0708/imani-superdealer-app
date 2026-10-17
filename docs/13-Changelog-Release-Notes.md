@@ -5,6 +5,50 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.89.0 — 2026-10-17 · Stations no longer worked are not named; fuel removed; flags are the OM's
+
+### Stations no longer worked are not named anywhere
+
+v1.83.0 stopped counting the stations in `excluded_stations`. Now nothing names them either:
+
+- **Reports:** the report picture and workbook no longer carry an "… excluded" note.
+- **Uploads:** the result no longer reports skipped rows from that station. A file with nothing else in
+  it is refused with a neutral message.
+- **Station pickers:** they are no longer offered on the dashboard, Monthly Targets, high earners,
+  combined performance and commission screens.
+- **High earners:** they are left out of the list.
+- **Commission:** commission rows for them are not taken in.
+- **Viewed station:** it can no longer be one of them. `station_scope()` falls back to the home
+  station.
+- **Branch assignments:** a branch whose agents are all in such a station is taken off whichever BDO
+  held it (`sync_branch_base()`, logged in the audit as `branch_unassign`), so its name stops appearing
+  beside him. October is re-synced once on the first request after deploy. Agent records are kept;
+  they are simply not shown.
+- **Demo data:** the fresh-install demo user no longer belongs to that station.
+
+### Fuel removed
+
+- **For the OM:** the weekly fuel targets, fuel awards and the "Print all months" fuel report are gone
+  from the screen. It is now called **Monthly Scores** and keeps the all-BDO monthly score grid and the
+  one-month KPI breakdown.
+- **For a BDO:** the fuel alarm across the top of every screen and the *My week, and the fuel it earns*
+  panel are gone.
+
+### A BDO does not change anything about a flag
+
+- **Answering:** `flag_respond` is refused for a BDO, and his Flags page is read-only. Each flag shows
+  its status, and **With the OM** where nobody has answered yet. There are no True / Not true buttons
+  and no "need your answer" badge.
+- **Reversing marks:** a BDO cannot reverse a mark that carries a flag, so he cannot make a flag
+  disappear by removing the claim. On the server `kpi_unmark` refuses it, and in the lists the × is
+  hidden.
+- **Dashboard:** the score panel now says the OM reviews flagged claims, with a **See my flags** link,
+  instead of asking him to answer them.
+
+APP_VERSION 1.89.0, assets bumped to v106.
+
+---
+
 ## v1.88.0 — 2026-10-17 · The report's scores use the office monthly target weights
 
 The weighted score on the BDO performance report (picture and workbook) now weighs each KPI the way

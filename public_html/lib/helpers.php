@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.88.0');
+define('APP_VERSION', '1.89.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -529,6 +529,16 @@ function perf_station_sql($alias, $month) {
   return " AND ($alias.station IS NULL OR UPPER(TRIM($alias.station)) NOT IN (" . implode(',', $q) . "))";
 }
 
+/* A list of station names with the ones no longer worked taken out - for
+ * every picker, so they are never offered. */
+function perf_stations_filter($list, $month) {
+  $ex = perf_excluded_stations($month);
+  if (!count($ex)) return array_values($list);
+  $out = array();
+  foreach ($list as $s) { if (!in_array(strtoupper(trim((string)$s)), $ex, true)) $out[] = $s; }
+  return $out;
+}
+
 function bdo_branch_list($bdo) {
   static $cache = array();
   if (isset($cache[$bdo])) return $cache[$bdo];
@@ -738,6 +748,23 @@ function sync_branch_base($month) {
     $exQ = array();
     foreach (perf_excluded_stations($month) as $xs) $exQ[] = db()->quote($xs);
     $exDel = count($exQ) ? ' OR UPPER(TRIM(a.station)) IN (' . implode(',', $exQ) . ')' : '';
+    /* A BRANCH OF A STATION NO LONGER WORKED BELONGS TO NOBODY. Its agents
+     * are all in that station, so the assignment is taken off the officer -
+     * otherwise its name sits beside him on every screen and report. A branch
+     * with any agent of a station still worked is left alone. */
+    if (count($exQ)) {
+      $exIn = implode(',', $exQ);
+      $gone = db()->prepare("DELETE bb FROM bdo_branches bb
+                             WHERE EXISTS (SELECT 1 FROM agents a WHERE a.branch = bb.branch
+                                             AND UPPER(TRIM(a.station)) IN ($exIn))
+                               AND NOT EXISTS (SELECT 1 FROM agents a2 WHERE a2.branch = bb.branch
+                                                 AND UPPER(TRIM(a2.station)) NOT IN ($exIn))");
+      $gone->execute();
+      if ($gone->rowCount()) {
+        db()->prepare('INSERT INTO audit (user_id, action, detail) VALUES (NULL, "branch_unassign", ?)')
+            ->execute(array($gone->rowCount() . ' branch assignments removed - station no longer worked'));
+      }
+    }
     $del = db()->prepare('DELETE b FROM base b
                           JOIN agents a ON a.id = b.agent_id
                           WHERE b.month = ?
@@ -1110,7 +1137,7 @@ function maybe_roll_month() {
      * handed branch agents back to the branch's officer, v1.83.0 takes the
      * stations no longer worked out of every round. */
     $once = db()->prepare('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)');
-    $once->execute(array('branchsync183_' . $cur, date('Y-m-d H:i:s')));
+    $once->execute(array('branchsync189_' . $cur, date('Y-m-d H:i:s')));
     if ($once->rowCount() === 1) sync_branch_base($cur);
     return;
   }
@@ -2324,6 +2351,14 @@ function he_band($acc) {
  * working. Empty means "all stations".
  */
 function station_scope($user) {
+  $s = station_scope_raw($user);
+  /* a station no longer worked is never the one being looked at */
+  if ($s !== '' && in_array($s, perf_excluded_stations(open_month()), true)) {
+    return strtoupper(trim(setting_get('home_station', 'ARUSHA')));
+  }
+  return $s;
+}
+function station_scope_raw($user) {
   if (is_manager($user)) return strtoupper(trim(setting_get('view_station', setting_get('home_station', 'ARUSHA'))));
   /*
    * A FIELD USER IS PINNED TO HIS OWN STATION.

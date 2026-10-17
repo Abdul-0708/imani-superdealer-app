@@ -1231,7 +1231,7 @@ function seed($pdo) {
     array('md','md','Managing Director',''),
     array('john','bdo','John (BDO)','Arusha'),
     array('mary','bdo','Mary (BDO)','Arusha'),
-    array('peter','bdo','Peter (BDO)','Manyara'),
+    array('peter','bdo','Peter (BDO)','Arusha'),
   );
   $ins = $pdo->prepare('INSERT IGNORE INTO users (username, role, name, station, password_hash) VALUES (?,?,?,?,?)');
   foreach ($users as $u) $ins->execute(array($u[0],$u[1],$u[2],$u[3],$pw));
