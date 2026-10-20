@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.90.0');
+define('APP_VERSION', '1.91.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -829,13 +829,14 @@ function branch_for_recruit($user, $branch) {
  * TRANSACTION ACCELERATION, PER AGENT: what he is asked to do, what he has
  * done, and what is left - for the agents in $ids, this month.
  *
- * ACHIEVED MEANS HIS WITHDRAW TRANSACTIONS >= HIS WITHDRAW TARGET, read off
- * ONE row: his latest performance-file row this month that carries a target.
- * The target and the transactions are never taken from different files -
- * the highest target of one week against the highest transactions of
- * another could read as done when no file ever said so. Until a performance
- * file has given him a target, the fixed (monthly database) file's target
- * stands with nothing done against it - that file reports no transactions.
+ * ACHIEVED MEANS HIS WITHDRAW TRANSACTIONS >= HIS WITHDRAW TARGET, as the
+ * month's CURRENT performance file reports them (latest_perf_upload() - the
+ * same file float is read from). Nothing from an earlier file is carried:
+ * an agent the current file gives no target is not achieved, whatever a
+ * previous week said, so the count is exactly what the office can see in
+ * the file it holds. Until a performance file has given him a target, the
+ * fixed (monthly database) file's target stands with nothing done against
+ * it - that file reports no transactions.
  *
  * Only agents with a target are returned. An agent nobody asked for anything
  * is not short of anything.
@@ -850,12 +851,13 @@ function accel_map($month, $ids) {
   $in = $all ? '' : ' AND agent_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
   $inA = $all ? '' : ' AND id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')';
   try {
+    $lu = latest_perf_upload($month);
     $q = db()->prepare("SELECT s.agent_id, s.wd_target t, s.wd_txn x
                         FROM service_history s
                         JOIN (SELECT agent_id, MAX(id) mid FROM service_history
-                              WHERE month = ? AND source <> 'bdo' AND wd_target > 0$in
+                              WHERE upload_id = ? AND wd_target > 0$in
                               GROUP BY agent_id) m ON m.mid = s.id");
-    $q->execute(array_merge(array($month), $ids));
+    $q->execute(array_merge(array($lu ? (int)$lu['id'] : 0), $ids));
     foreach ($q->fetchAll() as $r) {
       if ((int)$r['t'] > 0) $out[(int)$r['agent_id']] = array('t' => (int)$r['t'], 'x' => (int)$r['x'], 'src' => 'performance');
     }
@@ -1529,13 +1531,15 @@ function month_actuals($month, $station = '') {
    * rows rather than read from the upload snapshot, so it is right even for a
    * month whose snapshot predates the campaign, and DISTINCT because a weekly
    * file lands several times and the same agent is in each one. */
+  /* the current performance file only - see accel_map() */
+  $luA = latest_perf_upload($month);
   $ac = db()->prepare("SELECT COUNT(*) c FROM service_history s
                        JOIN (SELECT agent_id, MAX(id) mid FROM service_history
-                             WHERE month = ? AND source <> 'bdo' AND wd_target > 0
+                             WHERE upload_id = ? AND wd_target > 0
                              GROUP BY agent_id) m ON m.mid = s.id
                        JOIN agents a ON a.id = s.agent_id
                        WHERE s.wd_txn >= s.wd_target" . $stFilter);
-  $ac->execute(array_merge(array($month), $stVals));
+  $ac->execute(array_merge(array($luA ? (int)$luA['id'] : 0), $stVals));
   $k['accel'] = (int)$ac->fetch()['c'];
   if ($station === '') {
     $d = db()->prepare('SELECT COALESCE(SUM(float_served),0) f FROM daily_reports WHERE month = ?');
@@ -1851,12 +1855,13 @@ function office_weights($month, $station) {
 function accel_count($month, $bdo) {
   /* his agents' latest row with a target, and only where that row's
    * transactions reached its own target */
+  $lu = latest_perf_upload($month);
   $q = db()->prepare("SELECT COUNT(*) c FROM service_history s
                       JOIN (SELECT agent_id, MAX(id) mid FROM service_history
-                            WHERE month = ? AND bdo = ? AND source <> 'bdo' AND wd_target > 0
+                            WHERE upload_id = ? AND bdo = ? AND wd_target > 0
                             GROUP BY agent_id) m ON m.mid = s.id
                       WHERE s.wd_txn >= s.wd_target");
-  $q->execute(array($month, $bdo));
+  $q->execute(array($lu ? (int)$lu['id'] : 0, $bdo));
   $r = $q->fetch();
   return $r ? (int)$r['c'] : 0;
 }

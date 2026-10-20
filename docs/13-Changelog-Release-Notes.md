@@ -5,6 +5,31 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.91.0 — 2026-10-20 · Acceleration is read from the current performance file only
+
+The 16 October performance file has **2** agents whose withdraw transactions reached their withdraw
+target: Sophia Isaya Kasubi (TFA ARUSHA, 30 of 30) and Veillah Harold Moshy (SAKINA, 40 of 36). The BDO
+performance report showed **4**.
+
+**Why:** the extra agents came from earlier October files. Before v1.90.0 the report mixed the highest
+target and the highest transactions across every file in the month. v1.90.0 read each agent's latest
+row *that carried a target*. An agent whose target is blank in the 16 October file (224 rows are blank)
+therefore fell back to an older week, and still counted if he had reached it there.
+
+**Now** acceleration is read only from the month's **current performance file**, the same file float
+comes from (`latest_perf_upload()`). An agent is achieved when **that file's** withdraw transactions are
+at least **that file's** withdraw target. An agent the current file gives no target is not achieved,
+whatever an earlier week said. This applies to `accel_map()` (which feeds My Agent Base, All Agents,
+Follow-up, the report and branch scores), the All Agents "what is left" filter, the office fallback
+count and `accel_count()`. The office card already came from the current file's own row-by-row count.
+
+Against the 16 October file, every count now reads 2. Both agents appear under the BDO holding TFA
+ARUSHA and SAKINA, or under Unallocated branches if nobody holds them.
+
+APP_VERSION 1.91.0, assets bumped to v108.
+
+---
+
 ## v1.90.0 — 2026-10-20 · Achieved acceleration means transactions ≥ target, on one row
 
 An agent counts as having **achieved** transaction acceleration only when **his withdraw transactions
