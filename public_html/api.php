@@ -588,9 +588,10 @@ try {
        * the list can filter and sort on it across pages. NULL = no target.
        * $month comes from open_month(), always YYYY-MM, so quoting is safe. */
       $qm = db()->quote($month);
-      $accelLeft = "COALESCE((SELECT GREATEST(MAX(s.wd_target) - MAX(s.wd_txn), 0) FROM service_history s
+      $accelLeft = "COALESCE((SELECT GREATEST(s.wd_target - s.wd_txn, 0) FROM service_history s
                               WHERE s.agent_id = agents.id AND s.month = $qm AND s.source <> 'bdo'
-                              HAVING MAX(s.wd_target) > 0),
+                                AND s.wd_target > 0
+                              ORDER BY s.id DESC LIMIT 1),
                              IF(agents.wd_target_month = $qm AND agents.wd_target_base > 0, agents.wd_target_base, NULL))";
       $order = 'name';
       $fac = (string)($_GET['faccel'] ?? '');

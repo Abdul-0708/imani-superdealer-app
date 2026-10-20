@@ -5,6 +5,37 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.90.0 — 2026-10-20 · Achieved acceleration means transactions ≥ target, on one row
+
+An agent counts as having **achieved** transaction acceleration only when **his withdraw transactions
+are at least his withdraw target**. Both numbers are read from **the same row**: his latest
+performance-file row this month that carries a withdraw target.
+
+### What was wrong
+
+- **Mixed weeks:** `accel_map()` took the **highest** target and the **highest** transactions
+  separately across every file in the month. One week's transactions could be set against another
+  week's target and read as achieved when no file ever said so. The All Agents "what is left"
+  filter did the same. `accel_map()` feeds My Agent Base, All Agents, Follow-up, the branch
+  scorecard and every branch BDO's score.
+- **"Any file":** the office fallback and the per-officer count (`accel_count()`) counted an agent as
+  achieved if **any** file that month showed it, even when a later file said otherwise.
+- **Office card at zero:** the office figure from the uploaded file was never passed through
+  (`month_actuals()` left `accel` out). With all stations selected, the dashboard's Transaction
+  Acceleration card and its attainment always read **0**.
+
+### Now
+
+- Every one of those places reads the agent's latest row with a target and compares that row's own
+  transactions with that row's own target.
+- The office figure is the count the upload makes row by row when the file is read.
+- An agent with only a base-file target has nothing done against it until a performance file reports
+  his transactions.
+
+APP_VERSION 1.90.0, assets bumped to v107.
+
+---
+
 ## v1.89.0 — 2026-10-17 · Stations no longer worked are not named; fuel removed; flags are the OM's
 
 ### Stations no longer worked are not named anywhere
