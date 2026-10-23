@@ -996,3 +996,221 @@ body.light tr.accel-done td{background:rgba(63,143,67,.12)}
   .cardable tbody tr.accel-done td{background:transparent;box-shadow:none}
   body.light .cardable tbody tr.accel-done{background:rgba(63,143,67,.12)}
 }
+
+/* ==========================================================================
+ * NEW LOOK (v1.92) - light, calm, and orange only where it matters
+ *
+ * Appended last, like the refinement layer above it: it re-points the light
+ * theme's tokens and restyles the frame, without rewriting any of the working
+ * rules underneath. Dark mode and the colour palettes are left as they were;
+ * light is now the default (applyTheme), so this is what nearly everyone sees.
+ *
+ * Two oranges, on purpose. The bright one (#F25C14) is for large brand areas.
+ * Anything carrying small white text - buttons, badges, a "mine" chip - uses
+ * the deeper one (#C9480C, 4.8:1 against white), because the bright one is
+ * only 3.3:1 and an officer reads this outdoors. Orange TEXT on the light page
+ * uses #B5410B (4.9:1).
+ * ========================================================================== */
+:root{
+  --f-display:"Manrope","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --f-body:"Plus Jakarta Sans",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --r-lg:20px; --r-md:14px;
+  --brand:#F25C14;            /* the bright brand orange - large areas only */
+}
+body{font-family:var(--f-body)}
+input,select,textarea,button{font-family:inherit}
+.page-title,.panel h2,.modalbox h2,.kpi,.login h1,.sb-title{font-family:var(--f-display)}
+
+body.light{
+  --bg:#F0EEEB; --bg2:#FFFFFF; --panel:#FFFFFF; --panel2:#FFFFFF; --line:#E7E3DE;
+  --ink:#1B1815; --muted:#6F6861;
+  --fire:#C9480C; --fire2:#B5410B; --gold:#B5410B; --yellow:#1B1815;
+  --grad:linear-gradient(140deg,#E4540F 0%,#C9480C 100%);
+  --grad-soft:#FFEADD;
+  --ok:#1F7F52; --bad:#C4402A;
+  --charcoal:#24201C; --field:#F4F2EF; --accent-soft:#FFEADD;
+  --e1:0 1px 2px rgba(27,24,21,.05);
+  --e2:0 1px 2px rgba(27,24,21,.04),0 10px 28px rgba(27,24,21,.06);
+  --glow:0 0 0 rgba(0,0,0,0); --glow-strong:0 0 0 rgba(0,0,0,0);
+  --hair:rgba(0,0,0,0); --sunk:#F7F5F2;
+  background:var(--bg);
+}
+
+/* ---- type ---- */
+body.light .page-title{font-size:24px;font-weight:800;letter-spacing:-.02em}
+body.light .page-sub{color:var(--muted)}
+body.light .kpi{font-weight:800;letter-spacing:-.02em}
+body.light a{color:var(--fire2)}
+body.light .greet{background:none;-webkit-text-fill-color:var(--fire2);color:var(--fire2);letter-spacing:1px}
+
+/* ---- sidebar (desktop) ---- */
+body.light .sidebar{background:var(--panel);border-right:1px solid var(--line)}
+.sb-letter{font-family:var(--f-display);font-weight:800;font-size:20px;line-height:1}
+body.light .sb-mark{background:var(--brand);color:#fff;box-shadow:none;border-radius:12px}
+body.light .sb-title{background:none;color:var(--ink);-webkit-text-fill-color:var(--ink);letter-spacing:.2px}
+body.light .sb-title small{-webkit-text-fill-color:var(--muted);color:var(--muted)}
+body.light .today-chip{background:var(--field);border-color:transparent;color:var(--ink);font-weight:600}
+body.light .today-chip svg{color:var(--brand)}
+body.light .nav-item{color:var(--muted);border-radius:12px}
+body.light .nav-item:hover{background:var(--field);color:var(--ink);transform:none}
+body.light .nav-item.active{background:var(--charcoal);color:#fff;box-shadow:none;transform:none}
+body.light .nav-item.active *{color:#fff}
+body.light .nav-item.active::before{display:none}
+body.light .navbadge{background:var(--fire);color:#fff;box-shadow:none}
+body.light .nav-item.active .navbadge{background:rgba(255,255,255,.18);color:#fff}
+body.light .nav-item.active .navbadge.bad{background:#fff;color:var(--bad)}
+body.light .sb-foot{border-top-color:var(--line)}
+body.light .avatar{background:var(--charcoal);color:#fff;box-shadow:none}
+
+/* ---- surfaces ---- */
+body.light .card,body.light .panel{
+  background:var(--panel);border:1px solid rgba(27,24,21,.05);border-radius:var(--r-lg);box-shadow:var(--e2)}
+body.light .panel .panel{background:var(--sunk);box-shadow:none;border-color:transparent}
+body.light .card:hover{border-color:rgba(27,24,21,.08);box-shadow:var(--e2)}
+body.light .kpi-ic,body.light .tg-ic,body.light .perm-ic{background:var(--accent-soft);color:var(--fire2)}
+body.light .msg-item{background:var(--panel);border-color:var(--line)}
+body.light .sec-head{color:var(--fire2);border-top-color:var(--line)}
+body.light .empty svg{color:var(--brand)}
+
+/* ---- inputs ---- */
+body.light input,body.light select,body.light textarea{
+  background:var(--field);border:1.5px solid transparent;border-radius:12px;color:var(--ink)}
+body.light input:focus,body.light select:focus,body.light textarea:focus{
+  background:var(--panel);border-color:var(--fire);box-shadow:0 0 0 3px rgba(201,72,12,.14)}
+body.light input[type=checkbox],body.light input[type=radio]{accent-color:var(--fire)}
+
+/* ---- buttons ---- */
+body.light button.btn{background:var(--fire);color:#fff;border-radius:12px;font-weight:700;
+  box-shadow:0 6px 16px rgba(201,72,12,.22);filter:none}
+body.light button.btn:hover{background:#B5410B;box-shadow:0 8px 20px rgba(201,72,12,.28);filter:none}
+body.light button.btn.loading::after{color:#fff}
+body.light button.ghost{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:12px}
+body.light button.ghost:hover{background:var(--field);border-color:#D9D3CC;color:var(--ink);box-shadow:none}
+body.light button.ghost.on{background:var(--charcoal);border-color:var(--charcoal);color:#fff;box-shadow:none}
+body.light button.danger{background:var(--bad);border-radius:12px}
+body.light .role-chip{background:var(--panel);border-color:var(--line);color:var(--muted)}
+body.light .role-chip:hover{border-color:#D9D3CC;color:var(--ink)}
+body.light .role-chip.active{background:var(--charcoal);border-color:var(--charcoal);color:#fff;box-shadow:none}
+body.light .tgl.on{background:var(--fire);color:#fff;box-shadow:none}
+body.light .mo.sel{border-color:var(--fire);box-shadow:none}
+body.light .pick-btn:hover{border-color:#D9D3CC;color:var(--ink);box-shadow:none;background:var(--field)}
+body.light .pweye:hover{color:var(--ink)}
+body.light .skip-link{background:var(--fire);color:#fff;box-shadow:none}
+
+/* ---- chips, pills, bars ---- */
+body.light .pill.fire{background:var(--accent-soft);color:var(--fire2)}
+body.light .pill.dim{background:var(--field);color:var(--muted)}
+body.light .kchip{border-radius:999px}
+body.light .kchip.todo{background:var(--panel);border-color:var(--fire);color:var(--fire2)}
+body.light .kchip.todo:hover{background:var(--fire);border-color:var(--fire);color:#fff;box-shadow:none}
+body.light .kchip.todo.arm{background:var(--fire);border-color:var(--fire);color:#fff;box-shadow:none}
+body.light .kchip.done.mine{background:var(--fire);color:#fff;border-color:transparent;box-shadow:none}
+body.light .bar{background:var(--field);border:0}
+body.light .bar>i{background:var(--brand);box-shadow:none}
+body.light .cov{background:var(--field)}
+body.light .cov i{background:var(--brand)}
+body.light #netbar{background:var(--brand);box-shadow:none}
+
+/* ---- tables ---- */
+body.light .tablewrap{border-color:var(--line);border-radius:var(--r-md)}
+body.light th{background:var(--panel);color:var(--muted)}
+body.light tbody tr:hover{background:#FAF8F6}
+
+/* ---- dialogs, toasts, loading ---- */
+body.light .modalback{background:rgba(27,24,21,.42)}
+body.light .modalbox{background:var(--panel);border:0;border-radius:22px;box-shadow:0 24px 60px rgba(27,24,21,.20)}
+body.light .toast{background:var(--panel);border-color:var(--line);box-shadow:var(--e2)}
+body.light .skel{background:linear-gradient(90deg,#ECE9E5 25%,#F6F4F1 50%,#ECE9E5 75%);background-size:200% 100%;border:0}
+body.light .pal-opt{background:var(--panel)}
+body.light .pal-opt:hover,body.light .pal-opt.on{border-color:var(--fire);box-shadow:none}
+
+/* ---- phones: white top bar, floating bottom menu, white agent cards ---- */
+@media (max-width:860px){
+  body.light .sidebar{background:var(--panel);border-right:0;border-bottom:1px solid var(--line);box-shadow:var(--e1)}
+  body.light .botnav{
+    left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));
+    padding:6px 4px;border-radius:22px;background:var(--panel);
+    border:1px solid rgba(27,24,21,.05);box-shadow:0 10px 30px rgba(27,24,21,.14)}
+  body.light .bn-item.active{color:var(--fire2)}
+  body.light .bn-item.active .bn-ic{background:var(--accent-soft)}
+  body.light .bn-dot{background:var(--fire);color:#fff;border-color:var(--panel)}
+  body.light .main{padding-bottom:calc(92px + env(safe-area-inset-bottom,0px))}
+}
+@media (max-width:640px){
+  body.light .cardable tbody tr,body.light .cardable tbody tr:hover{
+    background:var(--panel);border:1px solid rgba(27,24,21,.05);border-radius:16px;box-shadow:var(--e2)}
+  body.light .cardable .c-kpis{border-top-color:var(--line)}
+}
+
+/* yellow palette: dark text on its light orange-yellow buttons */
+body.light.pal-yellow button.btn{color:#2a2008}
+
+/* ==========================================================================
+ * SIGN-IN (v1.92): the orange brand panel beside the form; a short orange
+ * band above it on a phone. Written for BOTH themes - everything but the
+ * orange panel comes from the theme tokens.
+ * ========================================================================== */
+body .login{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:24px max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px));
+  background:var(--bg)}
+.login-card{display:grid;grid-template-columns:1.05fr 1fr;width:100%;max-width:980px;min-height:560px;
+  background:var(--panel);border-radius:28px;overflow:hidden;box-shadow:var(--e2)}
+.login-art{position:relative;overflow:hidden;padding:40px;color:#fff;
+  background:linear-gradient(155deg,#FF7A2E 0%,#F25C14 52%,#C9480C 100%);
+  display:flex;flex-direction:column;justify-content:space-between;gap:28px}
+.login-art::before,.login-art::after{content:"";position:absolute;border-radius:50%;pointer-events:none}
+.login-art::before{width:420px;height:420px;right:-150px;top:-130px;background:rgba(255,255,255,.12)}
+.login-art::after{width:260px;height:260px;left:-90px;bottom:-110px;background:rgba(255,255,255,.09)}
+.login-art>*{position:relative}
+.la-brand{display:flex;align-items:center;gap:12px;font-family:var(--f-display);font-weight:800;font-size:16px;letter-spacing:.4px}
+.la-mark{width:42px;height:42px;border-radius:12px;background:#fff;color:var(--brand);display:grid;place-items:center;
+  font-family:var(--f-display);font-weight:800;font-size:21px;flex:none}
+.la-copy h2{margin:0;font-family:var(--f-display);font-size:clamp(28px,3.6vw,40px);line-height:1.1;font-weight:800;
+  letter-spacing:-.02em;max-width:13ch;text-wrap:balance}
+.la-copy p{margin:12px 0 0;max-width:34ch;font-size:15px;opacity:.95}
+.la-foot{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;opacity:.9}
+.login .box{max-width:none;width:auto;background:transparent;border:0;border-radius:0;box-shadow:none;
+  padding:48px clamp(24px,5vw,60px);display:flex;flex-direction:column;justify-content:center}
+.login h1{margin:0 0 6px;font-size:30px;font-weight:800;letter-spacing:-.02em;
+  background:none;color:var(--ink);-webkit-text-fill-color:var(--ink)}
+.login p.hint{font-size:14px;margin:0 0 24px;color:var(--muted)}
+.login .field{margin-bottom:16px}
+.login .field label{font-size:13px;color:var(--ink)}
+.login input{height:52px;border-radius:14px;font-size:16px}
+.login .pweye{right:8px}
+.login button.btn{width:100%;height:52px;border-radius:14px;font-size:15px;margin-top:8px}
+.login .err:empty{min-height:0;margin:0}
+.login-lang{margin-top:14px;text-align:center}
+.login-ic{width:48px;height:48px;border-radius:14px;background:var(--accent-soft,rgba(255,140,26,.16));color:var(--fire2);
+  display:grid;place-items:center;margin-bottom:16px}
+.login-ic svg{width:24px;height:24px}
+@media (max-width:760px){
+  body .login{padding:0;align-items:stretch}
+  .login-card{grid-template-columns:1fr;max-width:none;min-height:100vh;border-radius:0;box-shadow:none;align-content:start}
+  .login-art{padding:calc(24px + env(safe-area-inset-top,0px)) 22px 30px;gap:18px;border-radius:0 0 28px 28px}
+  .la-copy h2{font-size:26px}
+  .la-foot{display:none}
+  .login .box{padding:28px 22px 40px;justify-content:flex-start}
+}
+
+/* ---- the phone top bar: brand and avatar on one line, account buttons as a
+ * row of small pills under them. It used to take five rows - the brand on three
+ * lines, the name, the buttons and the date - before any of the page showed. */
+@media (max-width:860px){
+  body.light .sidebar{padding:10px 12px;gap:8px}
+  body.light .sb-brand{order:1;flex:1 1 auto;padding:0;min-width:0}
+  body.light .sb-mark{width:36px;height:36px}
+  body.light .sb-title{font-size:14px;line-height:1.2;white-space:nowrap}
+  body.light .sb-title br,body.light .sb-title small{display:none}
+  body.light .today-chip{display:none}
+  body.light .sb-foot{display:contents}
+  body.light .sb-user{order:2;padding:0;flex:none}
+  body.light .sb-user > div{display:none}
+  body.light .avatar{width:36px;height:36px;font-size:12px}
+  body.light .sb-actions{order:3;flex:1 1 100%;padding:0;gap:6px;flex-wrap:nowrap;overflow-x:auto;
+    justify-content:flex-start;scrollbar-width:none}
+  body.light .sb-actions::-webkit-scrollbar{display:none}
+  body.light .sb-actions button{flex:0 0 auto;border-radius:999px;min-height:36px;padding:6px 14px!important;font-size:12px!important}
+}
+/* the language switch under the sign-in form is a pill, not a tall square */
+.login-lang button.ghost{border-radius:999px;padding:8px 18px!important;min-height:40px}

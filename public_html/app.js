@@ -29,6 +29,11 @@
     'Dark': 'Giza',
     'Sign in': 'Ingia',
     'Username': 'Jina la mtumiaji',
+    'Welcome back': 'Karibu tena',
+    'Sign in with your BDO or OM account.': 'Ingia kwa akaunti yako ya BDO au OM.',
+    'Every agent in your branch, in one place.': 'Kila wakala wa tawi lako, mahali pamoja.',
+    'Serve, visit and wake agents, and see where you stand this month.': 'Hudumia, tembelea na amsha mawakala, na uone ulipo mwezi huu.',
+    'Business Management Platform': 'Mfumo wa Usimamizi wa Biashara',
     'Search (live)': 'Tafuta (papo hapo)',
     'Show': 'Onyesha',
     'Clear': 'Futa',
@@ -815,12 +820,17 @@
     var p = localStorage.getItem('imani_pal') || 'fire';
     return PALETTES.some(function (x) { return x.key === p; }) ? p : 'fire';
   }
+  /* LIGHT IS THE DEFAULT (v1.92). The new look is light; dark stays for
+   * anyone who chose it, and that choice is kept on the device. */
   function applyTheme() {
     var pal = curPal();
-    var light = localStorage.getItem('imani_theme') === 'light';
+    var light = localStorage.getItem('imani_theme') !== 'dark';
     document.body.classList.remove('pal-green', 'pal-yellow', 'pal-blue');
     if (pal !== 'fire') document.body.classList.add('pal-' + pal);
     document.body.classList.toggle('light', light);
+    /* the phone's own status bar follows the page */
+    var tc = document.querySelector('meta[name="theme-color"]');
+    if (tc) tc.setAttribute('content', light ? '#F0EEEB' : '#1a0e05');
   }
   function setPalette(p) { localStorage.setItem('imani_pal', p); applyTheme(); }
   function toggleTheme() {
@@ -1085,36 +1095,49 @@
       }
     }
   }
+  /*
+   * THE SIGN-IN FRAME (v1.92): the orange brand panel beside the form on a wide
+   * screen, a short orange band above it on a phone. Sign-in and the 2FA step
+   * share it, so the second step looks like part of the first.
+   */
+  function loginFrame(inner) {
+    return '<div class="login"><div class="login-card">' +
+      '<div class="login-art">' +
+      '<div class="la-brand"><span class="la-mark">I</span><span>IMANI SUPERDEALER</span></div>' +
+      '<div class="la-copy"><h2>' + t('Every agent in your branch, in one place.') + '</h2>' +
+      '<p>' + t('Serve, visit and wake agents, and see where you stand this month.') + '</p></div>' +
+      '<div class="la-foot">' + t('Business Management Platform') + '</div>' +
+      '</div>' +
+      '<div class="box">' + inner + '</div>' +
+      '</div></div>';
+  }
   function renderLogin() {
-    elById('app').innerHTML =
-      '<div class="login"><div class="box">' +
-      '<div class="brandmark">' + svg('flame') + '</div>' +
-      '<h1>IMANI SUPERDEALER</h1>' +
-      '<p class="hint">Business Management Platform</p>' +
+    elById('app').innerHTML = loginFrame(
+      '<h1>' + t('Welcome back') + '</h1>' +
+      '<p class="hint">' + t('Sign in with your BDO or OM account.') + '</p>' +
       '<form id="loginForm">' +
       '<div class="field"><label>' + t('Username') + '</label><input id="lUser" autocomplete="username"></div>' +
       '<div class="field"><label>' + t('Password') + '</label><div class="pwwrap"><input id="lPass" type="password" autocomplete="current-password">' +
       '<button type="button" class="pweye" data-action="togglePw" data-for="lPass" aria-label="Show password">' + svg('eye') + '</button></div></div>' +
       '<button class="btn" type="submit">' + t('Sign in') + '</button>' +
-      '<div style="text-align:center;margin-top:10px"><button type="button" class="ghost tiny" data-action="toggleLang">' + (LANG === 'sw' ? 'English' : 'Swahili') + '</button></div>' +
       '<div class="err" id="lErr"></div>' +
-      '</form></div></div>';
+      '<div class="login-lang"><button type="button" class="ghost tiny" data-action="toggleLang">' + (LANG === 'sw' ? 'English' : 'Swahili') + '</button></div>' +
+      '</form>');
     var f = elById('lUser'); if (f) f.focus();
   }
   /* Second sign-in step when the account has 2FA: the 6-digit authenticator code. */
   function render2fa() {
-    elById('app').innerHTML =
-      '<div class="login"><div class="box">' +
-      '<div class="brandmark">' + svg('lock') + '</div>' +
+    elById('app').innerHTML = loginFrame(
+      '<div class="login-ic">' + svg('lock') + '</div>' +
       '<h1>' + t('Two-step verification') + '</h1>' +
       '<p class="hint">' + t('Open your authenticator app and type the 6-digit code for IMANI.') + '</p>' +
       '<form id="twofaForm">' +
       '<div class="field"><label>' + t('6-digit code') + '</label>' +
       '<input id="lCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;letter-spacing:6px;font-size:20px;font-weight:800"></div>' +
       '<button class="btn" type="submit">' + t('Verify') + '</button>' +
-      '<div style="text-align:center;margin-top:10px"><button type="button" class="ghost tiny" data-action="backToLogin">' + t('Back to sign in') + '</button></div>' +
       '<div class="err" id="lErr"></div>' +
-      '</form></div></div>';
+      '<div class="login-lang"><button type="button" class="ghost tiny" data-action="backToLogin">' + t('Back to sign in') + '</button></div>' +
+      '</form>');
     var f = elById('lCode'); if (f) f.focus();
   }
   function do2fa() {
@@ -1193,7 +1216,7 @@
        * reaching the thing he came for. Invisible until focused. */
       '<a class="skip-link" href="#main">' + t('Skip to the page') + '</a>' +
       '<div class="shell"><aside class="sidebar">' +
-      '<div class="sb-brand"><div class="sb-mark">' + svg('flame') + '</div><div class="sb-title">IMANI<br>SUPERDEALER<small>Business Management</small></div></div>' +
+      '<div class="sb-brand"><div class="sb-mark"><span class="sb-letter">I</span></div><div class="sb-title">IMANI <br>SUPERDEALER<small>Business Management</small></div></div>' +
       '<div class="today-chip">' + svg('cal') + '<span>' + esc(prettyToday()) + '</span></div>' +
       nav +
       '<div class="sb-foot"><div class="sb-user"><span class="avatar">' + esc(initials(state.user.name)) + '</span>' +

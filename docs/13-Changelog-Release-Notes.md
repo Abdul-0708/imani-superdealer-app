@@ -5,6 +5,57 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.92.0 — 2026-10-23 · The new look, step 1: sign-in and the main frame
+
+The first step of the redesign agreed from the preview: light, calm, and orange only where it matters.
+Login and the frame come first. The dashboards and the lists follow in their own releases.
+
+### Light is now the default
+
+`applyTheme()` treats everyone as light unless they chose **dark**, which is still kept on the
+device. The phone's status-bar colour follows the theme.
+
+### Sign-in
+
+- **Wide screens:** an orange brand panel sits beside the form (*Every agent in your branch, in one
+  place.*). The form has *Welcome back*, large 52px fields and a full-width Sign in button.
+- **Phones:** the orange panel becomes a short band above the form.
+- **2FA:** the two-step code screen uses the same frame.
+- **Other details:** the Swahili switch is a pill under the form, and the new words have Swahili
+  translations.
+- **Dark mode:** the new login works in dark too. Everything except the orange panel comes from the
+  theme.
+
+### The frame (light theme)
+
+The new-look layer is added at the end of `styles.css`. Dark mode and the colour palettes underneath
+are unchanged.
+
+- **Colours:** a warm grey page, white cards with soft shadows and 20px corners, near-black text, and
+  a calmer grey for secondary text (5.5:1 on white).
+- **Two oranges:**
+  - Bright `#F25C14` for large brand areas.
+  - Deeper `#C9480C` wherever there is small white text: buttons, badges and "mine" chips. White on
+    it is 4.8:1; on the bright orange it would only be 3.3:1.
+  - Orange text uses `#B5410B` (4.9:1).
+- **Fonts:** Manrope for headings and numbers, Plus Jakarta Sans for text. They load in the
+  background (`media="print"` and then swapped on), so a network that cannot reach Google keeps the
+  phone's own font and the app never waits for it.
+- **Sidebar:** white, with the orange **I** mark (the same letter as the browser tab), and the
+  active item is a near-black pill.
+- **Controls:** inputs are soft grey and turn white with an orange edge when focused. Buttons are
+  solid deeper orange, ghost buttons are white, and chips are rounded.
+- **Tables and dialogs:** tables are calmer, and dialogs and toasts are white.
+- **Phones:**
+  - The top bar is two short rows: the brand on one line with the avatar on the right, then Theme /
+    language / Password / Sign out as small pills. It used to take five rows.
+  - The bottom menu floats as a white bar with the active tab in orange.
+  - Agent rows become white cards.
+
+APP_VERSION 1.92.0, assets bumped to v109.
+
+---
+
 ## v1.91.0 — 2026-10-20 · Acceleration is read from the current performance file only
 
 The 16 October performance file has **2** agents whose withdraw transactions reached their withdraw
