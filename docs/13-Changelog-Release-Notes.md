@@ -5,6 +5,44 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.96.0 — 2026-10-23 · The new look, step 4: the forms, and the rest
+
+This is the last screen-by-screen pass. Every remaining screen was checked on a phone (375px), a
+tablet (800px) and a computer (1280px): Upload, Commission & Months, Monthly Scores, Monthly
+Targets, Flags, Team, Settings & Data, Messages, Admin, Activeness, Follow-up, Daily Report, and the
+Serve and Wake pop-ups. No screen shows low-contrast text or overflows sideways, for both OM and
+BDO.
+
+- **Target forms line up:** on Office targets, BDO targets and Week targets, the Target and Weight
+  boxes now sit in the same place on every row. A long target, such as 25,000,000,000 float, is no
+  longer cut off. On a phone, each KPI shows its name on one line and Target and Weight side by side
+  below it.
+- **File boxes:** the browser's grey "Choose File" button is now a dark rounded button on Upload,
+  Commission and the KPI set-up test.
+- **Tick boxes shown as chips are neutral until ticked:** "final file", the KPI on/off chips, the
+  report KPI choices and the officers picked for erasing. Before, they used the orange "to do" style
+  and read like warnings.
+- **On/off switches use soft orange, not solid orange:** dashboard KPIs, working days and Access
+  Control. A turned-on Delete permission shows in soft red.
+- **Boxes on the bare page get a white fill and an edge:** for example the Month box on Flags and
+  Team. Before, they almost disappeared against the grey page.
+- **Readable labels:** a label inside a dark selected chip, such as "scores" on Weekly performance,
+  is now readable.
+- **Flags:** on a phone the claim filters fold behind one Filters button, as on the lists.
+- **Screen tabs on a phone:** Upload / Commission, Scores / Targets / Flags and the others stay on
+  one line and swipe sideways instead of wrapping.
+- **The greeting is shown only on the two dashboards.** It was removed from Flags, Team, Messages
+  and Daily Report.
+- **Other fixes:**
+  - Message Reply and Delete buttons are sized to their text.
+  - Admin rows keep their three actions side by side.
+  - Permission switches keep one column.
+  - A toast is never hidden behind a pop-up.
+
+APP_VERSION 1.96.0, assets bumped to v114. No server or database change.
+
+---
+
 ## v1.95.0 — 2026-10-23 · The performance file decides every KPI (schema v35)
 
 ### Every tick must match the file

@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.95.0';
+  var APP_VERSION = '1.96.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1375,7 +1375,7 @@
     state._sub[state.tab] = cur;
     /* one screen behind a group needs no chips - a single chip is furniture */
     var chips = allowed.length > 1
-      ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
+      ? '<div class="row subtabs" style="gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
         allowed.map(function (x) {
           return '<button class="role-chip' + (x[0] === cur ? ' active' : '') +
             '" data-action="subTab" data-s="' + x[0] + '">' + t(x[1]) +
@@ -1788,7 +1788,7 @@
       paintBadges();
       var KLF = { served: 'Served', visit: 'Visit', apk: 'APK', active: 'Activeness' };
       var flRows = myfl.rows || [];
-      var head = greetingLine() + '<h1 class="page-title">' + t('Flags against me') + '</h1>' +
+      var head = '<h1 class="page-title">' + t('Flags against me') + '</h1>' +
         '<p class="page-sub">' + esc(myfl.month || '') + ' &middot; ' +
         t('The performance file did not back these claims. The OM reviews each one.') + '</p>';
 
@@ -3880,7 +3880,7 @@
        * shortage for him either. */
       if (sum) {
         v.innerHTML =
-          greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+          '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
           '<p class="page-sub">' + esc(sum.month) + ' &middot; ' + t('computed from your agent list and forms - nothing to type, nothing to forget') + '</p>' +
           '<div class="grid cards" style="margin-bottom:16px">' +
           card('users', t('Inactive visited'), fmt(sum.inactiveVisited), t('waked + won\'t-return')) +
@@ -3893,7 +3893,7 @@
         return;
       }
       v.innerHTML =
-        greetingLine() + '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
+        '<h1 class="page-title">' + t('Daily Report') + '</h1>' +
         '<p class="page-sub">' + t('Type only FLOAT here. Every other KPI is ticked on the agent itself, so we always know which agent was handled by whom.') + '</p>' +
         /* the day in the order he lives it: the route before 10:00, the float
          * when he comes back, the month underneath both */
@@ -4952,13 +4952,13 @@
         hint = 'he ended on ' + floor + ' - only agents beyond that count' +
           (need > 0 ? ' (needs ' + need + ' more)' : '');
       }
-      return '<div class="tg-row"><span class="tg-ic">' + svg(td.icon) + '</span>' +
+      return '<div class="tg-row tg-form"><span class="tg-ic">' + svg(td.icon) + '</span>' +
         '<span class="tg-name">' + esc(td.label) + '</span>' +
         '<div class="field"><label>Target</label><input id="bt_' + col + '" type="number" min="0" style="width:130px' +
           (auto ? ';opacity:.75' : '') + '" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"' +
           (auto ? ' readonly title="' + esc(t('Fixed from the base file - set the weight')) + '"' : '') + '></div>' +
         extra +
-        '<div class="field"><label>Weight %</label><input id="btw_' + col + '" type="number" min="0" max="100" style="width:90px" class="bt-w" value="' + (wv != null ? esc(wv) : DEFAULT_W[col]) + '"></div>' +
+        '<div class="field tg-wf"><label>Weight %</label><input id="btw_' + col + '" type="number" min="0" max="100" style="width:90px" class="bt-w" value="' + (wv != null ? esc(wv) : DEFAULT_W[col]) + '"></div>' +
         '<span class="note" style="flex:1">' + esc(hint) + '</span></div>';
     }).join('');
     return '<div class="panel"><h2>' + svg('users') + 'BDO Targets &amp; KPI Weights &mdash; ' + esc(m) + '</h2>' +
@@ -5202,12 +5202,12 @@
         var n = tv != null ? Math.round(Number(tv) / 100 * round) : 0;
         hint = 'percent of the ' + round + ' still unserved when this week opens' + (tv ? ' - about ' + n + ' agents' : '');
       }
-      return '<div class="tg-row"><span class="tg-ic">' + svg(wd.icon) + '</span>' +
+      return '<div class="tg-row tg-form"><span class="tg-ic">' + svg(wd.icon) + '</span>' +
         '<span class="tg-name">' + esc(wd.label) + '</span>' +
         '<div class="field"><label>Target' + (wd.unit ? ' ' + wd.unit : '') + '</label>' +
         '<input id="wk_' + k + '" type="number" min="0"' + (k === 'serving' ? ' max="100"' : '') +
         ' style="width:130px" value="' + (tv != null ? esc(tv) : '') + '" placeholder="0"></div>' +
-        '<div class="field"><label>Weight %</label><input id="wkw_' + k + '" type="number" min="0" max="100" style="width:90px" class="wk-w" value="' +
+        '<div class="field tg-wf"><label>Weight %</label><input id="wkw_' + k + '" type="number" min="0" max="100" style="width:90px" class="wk-w" value="' +
         (wv != null ? esc(wv) : WEEK_DEFAULT_W[k]) + '"></div>' +
         '<span class="note" style="flex:1">' + esc(hint) + '</span></div>';
     }).join('');
@@ -5597,10 +5597,10 @@
       var fields = OFFICE_DEFS.map(function (def) {
         var val = cur[def.key + '_target'];
         var wv = cur[def.key + '_w'];
-        return '<div class="tg-row"><span class="tg-ic">' + svg(def.icon) + '</span>' +
+        return '<div class="tg-row tg-form"><span class="tg-ic">' + svg(def.icon) + '</span>' +
           '<span class="tg-name">' + esc(def.label) + '</span>' +
           '<div class="field"><label>Target</label><input id="tg_' + def.key + '" type="number" min="0" style="width:150px" value="' + (val != null ? esc(val) : '') + '" placeholder="0"></div>' +
-          '<div class="field"><label>Weight %</label><input id="tgw_' + def.key + '" type="number" min="0" max="100" style="width:90px" class="tg-w" value="' + (wv != null && Number(wv) > 0 ? esc(wv) : '') + '" placeholder="0"></div>' +
+          '<div class="field tg-wf"><label>Weight %</label><input id="tgw_' + def.key + '" type="number" min="0" max="100" style="width:90px" class="tg-w" value="' + (wv != null && Number(wv) > 0 ? esc(wv) : '') + '" placeholder="0"></div>' +
           '<span class="note" style="flex:1">' + esc(def.hint) + '</span></div>';
       }).join('');
 
@@ -6167,7 +6167,6 @@
       }).join('') || '<tr><td colspan="7" class="note">' + t('No BDOs with a round this month.') + '</td></tr>';
 
       v.innerHTML =
-        greetingLine() +
         '<h1 class="page-title">' + t('BDOs') + '</h1>' +
         '<p class="page-sub">' + t('Every BDO\'s round, how far through it he is, and the high earners he has not reached yet. Tap a name to open him.') + '</p>' +
         '<div class="toolbar">' +
@@ -6326,7 +6325,7 @@
         '<td><input class="kcCols" data-i="' + i + '" value="' + esc(d.cols || '') + '"' + (canE ? '' : ' readonly') +
           ' placeholder="' + esc(t('Column name, or several separated by commas')) + '" style="min-width:230px"></td>' +
         '<td>' + modeSel('kcRead' + i, d.read) + '</td>' +
-        '<td class="note">' + esc(t('target & weight on the Targets panel above')) + '</td></tr>';
+        '<td class="note" style="min-width:170px">' + esc(t('target & weight on the Targets panel above')) + '</td></tr>';
     }).join('');
 
     var customRows = (k.custom || []).map(function (c, i) {
@@ -6808,7 +6807,6 @@
       }).join('');
 
       v.innerHTML =
-        greetingLine() +
         '<h1 class="page-title">' + t('Flags') + '</h1>' +
         '<p class="page-sub">' + t('Every BDO live mark cross-checked against the uploaded performance file. Matched = both agree, Mismatch = the file said NOT.') + '</p>' +
         '<div class="toolbar"><div class="field"><label>' + t('Month') + '</label><input id="flMonth" type="month" value="' + esc(m) + '"></div>' +
@@ -6828,8 +6826,9 @@
           : '') +
         '</div>' +
         '<div class="panel"><h2>' + svg('users') + t('Every claim') + '</h2>' +
-        '<div class="row" style="margin-bottom:8px">' +
-        '<div class="field" style="flex:1;min-width:180px"><label>' + t('Search') + '</label><input id="flSearch" placeholder="' + esc(t('BDO, agent name, acc, branch, station')) + '"></div>' +
+        '<div class="row fbox' + (state._fboxOpen ? ' open' : '') + '" style="margin-bottom:8px">' +
+        '<div class="field fbox-keep" style="flex:1;min-width:180px"><label>' + t('Search') + '</label><input id="flSearch" placeholder="' + esc(t('BDO, agent name, acc, branch, station')) + '"></div>' +
+        fboxButton(0) +
         '<div class="field"><label>' + t('BDO') + '</label><select id="flBdo">' + bdoOpts + '</select></div>' +
         '<div class="field"><label>KPI</label><select id="flKpi"><option value="">' + t('Any') + '</option>' +
         ['served','visit','apk','active'].map(function (k) { return '<option value="' + k + '">' + KL[k] + '</option>'; }).join('') + '</select></div>' +
@@ -6988,7 +6987,6 @@
           }).join('') + '</div>';
       }
       v.innerHTML =
-        greetingLine() +
         '<h1 class="page-title">' + t('Messages') + '</h1>' +
         '<p class="page-sub">' + t('Newest first. Reply to the sender, or delete a message from your own box once read.') + '</p>' +
         compose +
@@ -7202,7 +7200,9 @@
             '<option value=""' + (!u.specialty ? ' selected' : '') + '>General</option>' +
             '<option value="activeness"' + (u.specialty === 'activeness' ? ' selected' : '') + '>Activeness (wake + recruit only)</option></select>';
         return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.name) + '</td><td>' + roleSel + '</td><td>' + specSel + '</td><td>' + esc(u.station || '-') + '</td>' +
-          '<td>' + (Number(u.active) ? '<span class="pill ok">Active</span>' : '<span class="pill bad">Disabled</span>') + '</td><td>' + acts + '</td></tr>';
+          '<td>' + (Number(u.active) ? '<span class="pill ok">Active</span>' : '<span class="pill bad">Disabled</span>') + '</td>' +
+          /* the three actions side by side - stacked, they made every row three buttons tall */
+          '<td style="white-space:nowrap">' + acts + '</td></tr>';
       }).join('');
 
       var auditRows = (audit || []).slice(0, 40).map(function (a) {
