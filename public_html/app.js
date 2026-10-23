@@ -4659,7 +4659,7 @@
 
       '<div class="row" style="margin-top:10px">' +
       '<div class="field"><label>' + t('Month') + '</label><input id="upMonth" type="month" value="' + esc(state.openMonth || curMonth()) + '"></div>' +
-      (def.k === 'performance' ? '<div class="field"><label>' + t('Week') + '</label><input id="upWeek" placeholder="e.g. W1"></div>' : '') +
+      (def.k === 'performance' ? '<div class="field"><label>' + t('Week') + '</label><input id="upWeek" maxlength="40" placeholder="e.g. W1"></div>' : '') +
       '<div class="field"><label>' + t('Label') + ' (' + t('optional') + ')</label><input id="upLabel" maxlength="160" placeholder="' + esc(t('e.g. August baseline')) + '"></div>' +
       '<div class="field"><label>' + t('Excel file') + ' (.xlsx)</label><input id="upFile" type="file" accept=".xlsx,.xls,.csv"></div>' +
       /* the final file decides the month's float - the OM says when this is it */

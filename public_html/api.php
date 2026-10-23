@@ -2359,7 +2359,8 @@ try {
       if (!is_array($rows) || !count($rows)) fail('No rows provided');
       $month = preg_match('/^\d{4}-\d{2}$/', (string)bval('month')) ? bval('month') : open_month();
       if (month_status($month) === 'CLOSED') fail('Month ' . $month . ' is closed');
-      $week = trim((string)bval('week'));
+      /* the column holds 40 (v33); never let a long label sink the upload */
+      $week = mb_substr(trim((string)bval('week')), 0, 40);
       $globalBdo = strtolower(trim((string)bval('bdo')));
 
       $userByName = array(); $userByKey = array();
@@ -5748,9 +5749,18 @@ try {
       fail('Unknown action', 404);
   }
 } catch (PDOException $e) {
+  /* the real reason goes to the server's error log, where it can be read;
+   * the person gets something they can act on */
+  error_log('IMANI PDO: ' . $e->getMessage());
   http_response_code(500);
   header('Content-Type: application/json; charset=utf-8');
-  echo json_encode(array('error' => 'Database error. Check config.local.php and that the database exists.'));
+  /* SQLSTATE 22001 = a value too long for its column: say which one, so the
+   * fix is "shorten that box", not a call to the developer */
+  if ($e->getCode() === '22001' && preg_match("/for column '([a-z_]+)'/i", $e->getMessage(), $m)) {
+    echo json_encode(array('error' => 'The ' . str_replace('_', ' ', $m[1]) . ' you typed is too long. Shorten it and try again.'));
+  } else {
+    echo json_encode(array('error' => 'Database error. Check config.local.php and that the database exists.'));
+  }
 } catch (Exception $e) {
   http_response_code(500);
   header('Content-Type: application/json; charset=utf-8');

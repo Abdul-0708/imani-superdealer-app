@@ -104,7 +104,7 @@ function ensure_schema($pdo) {
     agent_id INT NOT NULL,
     bdo VARCHAR(64) NOT NULL,
     month CHAR(7) NOT NULL,
-    week VARCHAR(12) NOT NULL DEFAULT '',
+    week VARCHAR(40) NOT NULL DEFAULT '',
     date VARCHAR(10) NOT NULL DEFAULT '',
     time VARCHAR(8) NOT NULL DEFAULT '',
     odk VARCHAR(3) NOT NULL DEFAULT 'NO',
@@ -481,6 +481,25 @@ function upgrade_schema($pdo) {
   if ($ver < 32) {
     schema_v32_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "32" WHERE name = "schema_version"')->execute();
+  }
+  if ($ver < 33) {
+    schema_v33_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "33" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v33: ROOM FOR THE WEEK THE OM ACTUALLY TYPES.
+ *
+ * The week was 12 characters, so "Week 4 - 22nd" (13) made MySQL refuse the
+ * whole upload and the OM saw only "Database error". 40 is plenty for any
+ * label a person writes. Widening a short VARCHAR is a metadata change on
+ * InnoDB - no table copy - so it is quick even on service_history.
+ */
+function schema_v33_apply($pdo) {
+  foreach (array("ALTER TABLE uploads MODIFY week VARCHAR(40) NOT NULL DEFAULT ''",
+                 "ALTER TABLE service_history MODIFY week VARCHAR(40) NOT NULL DEFAULT ''") as $sql) {
+    try { $pdo->exec($sql); } catch (Exception $e) { /* already wide, or table missing */ }
   }
 }
 
@@ -1160,7 +1179,7 @@ function schema_v9_apply($pdo) {
   CREATE TABLE IF NOT EXISTS uploads (
     id INT AUTO_INCREMENT PRIMARY KEY,
     month CHAR(7) NOT NULL,
-    week VARCHAR(12) NOT NULL DEFAULT "",
+    week VARCHAR(40) NOT NULL DEFAULT "",
     label VARCHAR(160) NOT NULL DEFAULT "",
     by_user VARCHAR(64) NOT NULL,
     rows_count INT NOT NULL DEFAULT 0,

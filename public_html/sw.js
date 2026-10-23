@@ -3,7 +3,7 @@
  * newest deployed version; the cache is only an offline fallback for the app
  * shell. API responses are never cached - stale business data is worse than
  * an honest "no connection" message. */
-var CACHE = 'imani-v109';
+var CACHE = 'imani-v110';
 
 self.addEventListener('install', function () { self.skipWaiting(); });
 

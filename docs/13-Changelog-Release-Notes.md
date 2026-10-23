@@ -5,6 +5,27 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.92.1 — 2026-10-23 · A long week label no longer sinks the upload (schema v33)
+
+Uploading the 22 October file with **Week** set to "Week 4 - 22nd" failed with "Database error. Check
+config.local.php and that the database exists." The file was fine. The week columns
+(`uploads.week`, `service_history.week`) held only **12 characters**, the label was 13, and MySQL
+refused the row.
+
+- **Schema v33** widens both columns to 40 characters. Widening a short VARCHAR is a metadata change
+  on InnoDB, so it is quick even on `service_history`. The fresh-install table definitions match.
+- The upload cuts the week to 40 characters, and the Week box stops at 40.
+- **Error message:** a value too long for its column now says which box to shorten (SQLSTATE 22001)
+  instead of the generic database error. Every database error's real message is written to the
+  server's error log (`error_log`), so the next one can be read rather than guessed.
+
+**To finish the upload: deploy, then upload the 22 October file again.** The week label can stay as
+"Week 4 - 22nd".
+
+APP_VERSION 1.92.1, assets bumped to v110.
+
+---
+
 ## v1.92.0 — 2026-10-23 · The new look, step 1: sign-in and the main frame
 
 The first step of the redesign agreed from the preview: light, calm, and orange only where it matters.
