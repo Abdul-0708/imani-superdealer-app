@@ -5,6 +5,41 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.93.0 — 2026-10-23 · The new look, step 2: the dashboards
+
+### OM dashboard: the office result first
+
+- **The tiles open the page,** right under the month and station controls, ahead of Live work. Live
+  work and the file-plus-field table follow.
+- **One orange card: Office achievement.** It shows the weighted result the commission is settled on,
+  what it releases ("40% of the variable commission is released", from the same ladder as
+  `release_for()`), and a 50 / 60 / 70 / 80 / 90 strip.
+- **Every KPI tile shows how far it has got:** Served, Float served, Visits, Net active (woken and
+  lost), Txn acceleration, APK, any KPI the OM added, and Total agents. Each has a progress bar, an
+  attainment chip (green 80%+, amber 50–79%, red below 50%), its target and its weight.
+- **Simpler page:** the separate Target Attainment bars and the "My own KPIs" panel are gone, because
+  the tiles carry the same information.
+- **Long figures:** a tile with a long figure (float in TZS) spans two columns, or the full row on a
+  phone, instead of overflowing. Later tiles fill any gap that leaves.
+
+### BDO dashboard: his score first
+
+- **A dark score card at the top:** a ring with his weighted score (flagged claims left out) and the
+  three KPIs that weigh most in it, each with a bar.
+- **His five numbers as tiles with progress:** Served, Visited, Active, Acceleration (each with what is
+  left), and his branch base. On a phone they sit two to a row.
+- **The rest is unchanged:** score detail, flags, where he stands, high earners and today's work stay
+  below.
+
+### Everywhere
+
+- The greeting is a quiet line in sentence case ("Good morning, Neema") with no emoji.
+- Months in headings read "October 2026" instead of "2026-10".
+
+APP_VERSION 1.93.0, assets bumped to v111.
+
+---
+
 ## v1.92.1 — 2026-10-23 · A long week label no longer sinks the upload (schema v33)
 
 Uploading the 22 October file with **Week** set to "Week 4 - 22nd" failed with "Database error. Check

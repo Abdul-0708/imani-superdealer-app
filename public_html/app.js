@@ -132,6 +132,15 @@
     'Stages': 'Hatua',
     'DONE': 'IMEKAMILIKA',
     'GOOD MORNING': 'HABARI ZA ASUBUHI',
+    'Good morning': 'Habari za asubuhi',
+    'Good afternoon': 'Habari za mchana',
+    'Good evening': 'Habari za jioni',
+    'Office achievement': 'Mafanikio ya ofisi',
+    'Weighted by the office monthly targets': 'Kwa uzito wa malengo ya ofisi ya mwezi',
+    'of the variable commission is released': 'ya kamisheni inayobadilika inatolewa',
+    'nothing released below 50%': 'hakuna kinachotolewa chini ya 50%',
+    'Set this month\'s targets first': 'Weka malengo ya mwezi huu kwanza',
+    'Weighted, flagged claims left out': 'Kwa uzito, madai yenye alama hayahesabiwi',
     'GOOD AFTERNOON': 'HABARI ZA MCHANA',
     'GOOD EVENING': 'HABARI ZA JIONI',
     'WELCOME': 'KARIBU',
@@ -1442,9 +1451,11 @@
   /* Time-of-day greeting on the EAT (+3 Nairobi) business clock. */
   function greetingLine() {
     var h = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Africa/Nairobi' }).format(new Date()));
-    var g = h < 12 ? t('GOOD MORNING') : h < 17 ? t('GOOD AFTERNOON') : t('GOOD EVENING');
+    var g = h < 12 ? t('Good morning') : h < 17 ? t('Good afternoon') : t('Good evening');
     var first = (state.user && state.user.name ? state.user.name : '').split(' ')[0] || (state.user ? state.user.username : '');
-    return '<div class="greet">' + g + ', ' + esc(first.toUpperCase()) + ' &mdash; ' + t('WELCOME') + ' 👋</div>';
+    /* sentence case and no emoji - the new look greets, it does not shout */
+    first = first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : '';
+    return '<div class="greet">' + g + (first ? ', ' + esc(first) : '') + '</div>';
   }
   /* BDO: HIS OWN performance only - no office KPIs, no office targets. */
   /* His report days for a month: OK / LATE / MISS per elapsed working day.
@@ -1569,21 +1580,22 @@
         var share = function (done, all) {
           return all > 0 ? ' - ' + Math.round((done || 0) / all * 100) + '% ' + t('done') : '';
         };
+        /* v1.93: the same five numbers, each with a bar for how far along */
         cards =
-          card('users', t('My branch base'), fmt(pg.base || 0),
-               (d.branches || []).length ? (d.branches || []).join(', ') : t('no branch assigned to me yet')) +
-          card('zap', t('Active'), fmt(pg.active || 0),
+          kpiTile('check', t('Served'), fmt(pg.served || 0), pg.served, pg.base,
+               fmt(left(pg.base, pg.served)) + ' ' + t('still to serve')) +
+          kpiTile('target', t('Visited'), fmt(pg.visited || 0), pg.visited, pg.base,
+               fmt(left(pg.base, pg.visited)) + ' ' + t('still to visit')) +
+          kpiTile('zap', t('Active'), fmt(pg.active || 0), pg.active, pg.base,
                fmt(pg.inactive || 0) + ' ' + t('inactive')) +
-          card('check', t('Served'), fmt(pg.served || 0),
-               fmt(left(pg.base, pg.served)) + ' ' + t('still to serve') + share(pg.served, pg.base)) +
-          card('target', t('Visited'), fmt(pg.visited || 0),
-               fmt(left(pg.base, pg.visited)) + ' ' + t('still to visit') + share(pg.visited, pg.base)) +
-          card('percent', t('Acceleration'), fmt(pg.accelDone || 0),
+          kpiTile('percent', t('Acceleration'), fmt(pg.accelDone || 0), pg.accelDone, pg.accelTarget || null,
                !pg.accelTarget
                  ? t('no withdraw targets in the file yet')
                  : left(pg.accelTarget, pg.accelDone) === 0
                    ? t('all') + ' ' + fmt(pg.accelTarget) + ' ' + t('done')
-                   : fmt(left(pg.accelTarget, pg.accelDone)) + ' ' + t('of') + ' ' + fmt(pg.accelTarget) + ' ' + t('still short'));
+                   : fmt(left(pg.accelTarget, pg.accelDone)) + ' ' + t('of') + ' ' + fmt(pg.accelTarget) + ' ' + t('still short')) +
+          kpiTile('users', t('My branch base'), fmt(pg.base || 0), null, null,
+               (d.branches || []).length ? esc((d.branches || []).join(', ')) : t('no branch assigned to me yet'));
       }
       /* HIS DASHBOARD IS HIS DAY. Nothing else belongs on it: no office totals,
        * no team feed, no month-long tables. Just his own counters and what he
@@ -1746,9 +1758,11 @@
       }
       v.innerHTML =
         noticeHtml() + branchShareHtml() + greetingLine() + '<h1 class="page-title">' + t('My Dashboard') + '</h1>' +
-        '<p class="page-sub">' + esc(d.month) + ' &middot; ' + t('your own performance only') + '</p>' +
+        '<p class="page-sub">' + esc(monthWords(d.month)) + ' &middot; ' + t('your own performance only') + '</p>' +
         idlePanel +
-        '<div class="grid cards" style="margin-bottom:12px">' + cards + '</div>' +
+        /* v1.93: his score first, on the one dark card - then his branch */
+        (d.performance && !sum ? scoreHero(d.performance, d.month) : '') +
+        '<div class="grid cards dash-tiles bdo-tiles">' + cards + '</div>' +
         scorePanel +
         standPanel +
         heScorePanel +
@@ -2060,71 +2074,40 @@
         if (att[k] && att[k].custom) defs.push({ key: k, label: att[k].label || k, icon: 'chart' });
       });
 
-      /* NB: the loop variable must NOT be called `def`-something else - `t`
-       * shadows the t() translation helper used inside the body. */
-      function barRows(list) { return list.map(function (def) {
-        var a = att[def.key];
-        /* A NEGATIVE result (e.g. activeness -11: more agents lost than waked)
-         * must never draw a bar - a raw negative width is invalid CSS and the
-         * browser used to paint it FULL. Clamp to 0 and flag the retardation. */
-        var raw = a.pct == null ? null : a.pct;
-        var neg = raw !== null && raw < 0;
-        var pct = raw == null ? 0 : Math.max(0, Math.min(100, raw));
-        var meta = a.target > 0 ? fmt(a.actual) + ' / ' + fmt(a.target) : fmt(a.actual) + ' (no target)';
-        var wtag = a.weight > 0 ? ' <span class="note">(' + a.weight + '%)</span>' : '';
-        return '<div class="tg-row"><span class="tg-ic">' + svg(def.icon) + '</span>' +
-          '<span class="tg-name">' + esc(def.label) + wtag + '</span>' +
-          '<div class="bar' + (neg ? ' neg' : '') + '" style="flex:1"><i class="' + (neg ? 'red' : '') + '" style="width:' + pct + '%"></i></div>' +
-          '<span class="tg-meta">' + meta + '</span>' +
-          '<span class="tg-pct' + (neg ? ' bad' : '') + '">' + (raw == null ? '-' : raw + '%') +
-          (neg ? ' <span class="pill bad">' + t('GOING BACKWARDS') + '</span>' : '') + '</span></div>';
-      }).join(''); }
-
       /*
-       * A KPI THE OM INVENTED HIMSELF has no field half - it comes out of the
-       * uploaded file - so the combined table below (the six fixed office KPIs)
-       * cannot carry it. Those keep a panel; everything the combined table does
-       * cover is not drawn a second time here.
+       * THE TILES (v1.93): the office result, first. The orange card is the
+       * number the commission is settled on; every other tile carries its
+       * progress against the office target, so the screen answers "how far"
+       * before anyone scrolls. The combined file-plus-field table below keeps
+       * the detail.
        */
-      var customDefs = defs.filter(function (def) { return att[def.key] && att[def.key].custom; });
-
-      var cards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents));
-      if (shown('serving')) cards += card('users', 'Served' + stTag, fmt(cardVal('serving')));
-      if (shown('float')) cards += card('dollar', 'Float (SERVED only)' + stTag, fmt(cardVal('float')));
-      if (shown('visits')) cards += card('target', 'Visits' + stTag, fmt(cardVal('visits')));
-      if (shown('apk')) cards += card('rotate', 'APK upgraded to ' + esc(d.apkRequired) + '+' + stTag, fmt(cardVal('apk')), 'was below ' + esc(d.apkRequired) + ' last month');
-      if (shown('activeness')) cards += card('zap', 'Activeness (net)' + stTag, fmt(ss ? (ss.net_active || 0) : att.activeness.actual),
-        'waked ' + fmt(ss ? ss.waked : d.waked) + ' - lost ' + fmt(ss ? ss.lost : d.lost));
-      /* Acceleration replaces withdraw volume here. The sub-line says AGENTS
-       * because the number is a headcount, not money - a card reading 4 next
-       * to a card reading 12,400,000 has to say which it is. */
-      if (shown('accel')) cards += card('zap', 'Transaction Acceleration' + stTag, fmt(cardVal('accel')),
-        'agents at 100% of their withdraw target' + (ss ? ' - ' + esc(d.station) + ' only' : ''));
+      function attOf(k) { return att[k] || {}; }
+      function wsub(k, extra) {
+        var a0 = attOf(k);
+        var bits = [];
+        if (a0.target > 0) bits.push(t('of') + ' ' + fmt(a0.target) + ' ' + t('target'));
+        if (a0.weight > 0) bits.push(t('weight') + ' ' + a0.weight + '%');
+        if (extra) bits.push(extra);
+        return bits.join(' &middot; ');
+      }
+      var tiles = achievementHero(d.achievement, d.weighted);
+      if (shown('serving')) tiles += kpiTile('users', t('Served') + stTag, fmt(cardVal('serving')), null, null, wsub('serving'), attOf('serving').pct);
+      if (shown('float')) tiles += kpiTile('dollar', t('Float served') + stTag, fmt(cardVal('float')), null, null, wsub('float', 'TZS'), attOf('float').pct);
+      if (shown('visits')) tiles += kpiTile('target', t('Visits') + stTag, fmt(cardVal('visits')), null, null, wsub('visits'), attOf('visits').pct);
+      if (shown('activeness')) tiles += kpiTile('zap', t('Net active') + stTag,
+        fmt(ss ? (ss.net_active || 0) : attOf('activeness').actual), null, null,
+        wsub('activeness', t('woken') + ' ' + fmt(ss ? ss.waked : d.waked) + ', ' + t('lost') + ' ' + fmt(ss ? ss.lost : d.lost)),
+        attOf('activeness').pct);
+      if (shown('accel')) tiles += kpiTile('zap', t('Txn acceleration') + stTag, fmt(cardVal('accel')), null, null,
+        wsub('accel', t('agents at their withdraw target')), attOf('accel').pct);
+      if (shown('apk')) tiles += kpiTile('rotate', 'APK ' + esc(d.apkRequired) + '+' + stTag, fmt(cardVal('apk')), null, null, wsub('apk'), attOf('apk').pct);
       Object.keys(att).forEach(function (k) {
-        if (att[k] && att[k].custom) cards += card('chart', att[k].label + stTag, fmt(att[k].actual),
-          att[k].target > 0 ? 'target ' + fmt(att[k].target) : 'no target set');
+        if (att[k] && att[k].custom) tiles += kpiTile('chart', att[k].label + stTag, fmt(att[k].actual), null, null, wsub(k), att[k].pct);
       });
-      var achieveCard = card('percent', d.weighted ? 'Weighted Achievement' : 'Achievement',
-        d.achievement == null ? '-' : d.achievement + '%',
-        d.achievement == null ? 'set targets first' : (d.weighted ? 'real weighted result' : 'plain average - set weights'));
-      cards += achieveCard;
-      /*
-       * WITH THE COMBINED TABLE PRESENT, EVERY PER-KPI CARD IS A REPEAT.
-       *
-       * Served, Float, Visits, APK, Activeness and Acceleration each had a card
-       * here, a bar directly underneath it, and a row in the combined table
-       * below that - the same figure three times on one screen. The table is the
-       * one that carries the target, the field half and the attainment, so the
-       * cards fall back to what it does not say: how many agents there are, and
-       * the headline the commission is settled on.
-       *
-       * With no combined figures (the endpoint is allowed to fail) the full card
-       * row and the bars stay exactly as they were - then they are all there is.
-       */
-      var leanCards = card('users', 'Total Agents' + stTag, fmt(d.totalAgents)) + achieveCard;
+      tiles += kpiTile('users', t('Total agents') + stTag, fmt(d.totalAgents), null, null, '');
 
       v.innerHTML =
-        noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(d.month) +
+        noticeHtml() + greetingLine() + '<h1 class="page-title">' + t('Dashboard') + '</h1><p class="page-sub">Performance for ' + esc(monthWords(d.month)) +
         (d.status ? ' &middot; <span class="pill ' + (d.status === 'OPEN' ? 'gold' : d.status === 'AWAITING' ? 'fire' : 'dim') + '">' + d.status + '</span>' : '') +
         (d.fromUpload ? ' &middot; main KPIs from the uploaded performance file' : ' &middot; <span class="pill dim">no performance file uploaded yet</span>') + '</p>' +
         /* the controls for everything below, not a panel of their own */
@@ -2170,6 +2153,9 @@
             '<div class="spacer"></div><button class="ghost mini" data-action="tab" data-tab="reports" data-sub="upload">' + t('Go to Weekly Upload') + '</button>' +
             '</div></div>'
           : '') +
+        '<h2 class="sec-head">' + svg('upload') + ' ' + t('THE OFFICE RESULT - FROM THE PERFORMANCE FILE') + '</h2>' +
+        '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
+        '<div class="grid cards dash-tiles">' + tiles + '</div>' +
         '<div id="flagAlert"></div>' +
         /* LIVE: what the team is doing today, with times */
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
@@ -2187,19 +2173,6 @@
         '<button class="btn" data-action="liveDownload">' + svg('download') + ' ' + t('Download window') + '</button></div>' +
         '<p class="note">' + t('Every KPI your BDOs ticked inside the chosen time window (EAT).') + '</p>' +
         '<div id="liveBox"></div></div>' +
-        '<h2 class="sec-head">' + svg('upload') + ' ' + t('THE OFFICE RESULT - FROM THE PERFORMANCE FILE') + '</h2>' +
-        '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
-        '<div class="grid cards" style="margin-bottom:16px">' + (cb ? leanCards : cards) + '</div>' +
-        (cb
-          ? (customDefs.length
-              ? '<div class="panel"><h2>' + svg('target') + t('My own KPIs this month') +
-                (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') + '</h2>' +
-                '<p class="note">' + t('KPIs you added yourself. They come from the uploaded file, so they have no field half and are not in the combined table below.') + '</p>' +
-                barRows(customDefs) + '</div>'
-              : '')
-          : '<div class="panel"><h2>' + svg('target') + t('Target Attainment') +
-            (d.station ? ' <span class="pill fire">' + esc(d.station) + '</span>' : '') +
-            (d.weighted ? ' <span class="pill gold">weighted</span>' : '') + '</h2>' + barRows(defs) + '</div>') +
         (cb ? combinedSection(cb) : '');
       liveTodayLoad();
       flagAlertLoad();
@@ -2210,6 +2183,68 @@
     api('dashboard_settings_save', { body: { kpis: kpis, apkVersion: elById('apkReq').value.trim(), serveReceipt: elById('srvRec') ? elById('srvRec').value : '', wakeReceipt: elById('wakeRec') ? elById('wakeRec').value : '' } })
       .then(function () { toast(t('Rules saved'), 'ok'); renderTab(); })
       .catch(function (e) { toast(e.message, 'err'); });
+  }
+  /*
+   * THE NEW-LOOK TILES (v1.93).
+   *
+   * kpiTile: a big number with its progress against a target - the bar and the
+   * % chip are the attainment, so the tile answers "how far" as well as "how
+   * many". With no target it is a plain number with a line under it.
+   */
+  /* '2026-10' -> 'October 2026', for headings a person reads */
+  function monthWords(ym) {
+    var M = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    var m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+    return m ? t(M[Number(m[2]) - 1]) + ' ' + m[1] : String(ym || '');
+  }
+  function pctBand(p) { return p == null ? '' : (p >= 80 ? 'good' : (p >= 50 ? 'mid' : 'low')); }
+  function kpiTile(icon, title, value, done, total, sub, pctOverride) {
+    var has = total != null && Number(total) > 0;
+    var raw = pctOverride != null ? pctOverride : (has ? Math.round(Number(done || 0) / Number(total) * 100) : null);
+    var w = raw == null ? 0 : Math.max(0, Math.min(100, raw));
+    /* a long figure (float in TZS) gets the room it needs instead of overflowing */
+    var wide = String(value).length > 10;
+    return '<div class="card tile' + (wide ? ' wide' : '') + '"><div class="card-head"><span class="kpi-ic">' + svg(icon) + '</span><h3>' + esc(title) + '</h3>' +
+      (raw != null ? '<span class="tile-pct ' + pctBand(raw) + '">' + raw + '%</span>' : '') + '</div>' +
+      '<div class="kpi">' + esc(value) + '</div>' +
+      (raw != null ? '<div class="tbar"><i style="width:' + w + '%"></i></div>' : '') +
+      (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+  }
+  /* the commission release ladder - the same table as release_for() */
+  function releaseFor(a) { return a >= 90 ? 100 : a >= 80 ? 80 : a >= 70 ? 60 : a >= 60 ? 40 : a >= 50 ? 20 : 0; }
+  /* THE ONE ORANGE CARD: the number the commission is settled on */
+  function achievementHero(ach, weighted) {
+    var steps = [50, 60, 70, 80, 90].map(function (x) { return '<i class="' + (ach != null && ach >= x ? 'on' : '') + '"></i>'; }).join('');
+    var rel = ach == null ? null : releaseFor(ach);
+    return '<div class="card hero-card"><div class="card-head"><span class="kpi-ic">' + svg('percent') + '</span><h3>' +
+      t(weighted ? 'Office achievement' : 'Achievement') + '</h3></div>' +
+      '<div class="kpi">' + (ach == null ? '-' : ach + '%') + '</div>' +
+      '<div class="sub">' + (ach == null ? t('Set this month\'s targets first')
+        : (weighted ? t('Weighted by the office monthly targets') : t('plain average - set weights')) + '. ' +
+          (rel ? rel + '% ' + t('of the variable commission is released') : t('nothing released below 50%'))) + '</div>' +
+      '<div class="rel-steps">' + steps + '</div>' +
+      '<div class="rel-lab"><span>50</span><span>60</span><span>70</span><span>80</span><span>90%</span></div></div>';
+  }
+  /* A BDO'S SCORE, FIRST THING: a ring for the score and the three KPIs that
+   * weigh most in it, on the one dark card of his dashboard */
+  function scoreHero(p, month) {
+    var sc = p && p.score != null ? p.score : null;
+    var C = 2 * Math.PI * 42, off = sc == null ? C : C * (1 - Math.max(0, Math.min(100, sc)) / 100);
+    var lab = {}; TARGET_DEFS.forEach(function (d0) { lab[d0.key] = d0.label; });
+    var ks = Object.keys((p && p.kpis) || {}).filter(function (k) { return Number(p.kpis[k].weight) > 0; })
+      .sort(function (a, b) { return Number(p.kpis[b].weight) - Number(p.kpis[a].weight); }).slice(0, 3);
+    var rows = ks.map(function (k) {
+      var q = p.kpis[k], v = q.pct == null ? null : q.pct;
+      return '<div class="sh-row"><span>' + esc(t(lab[k] || k)) + '</span>' +
+        '<span class="sh-bar"><i style="width:' + (v == null ? 0 : Math.max(0, Math.min(100, v))) + '%"></i></span>' +
+        '<b>' + (v == null ? '-' : v + '%') + '</b></div>';
+    }).join('');
+    return '<div class="score-hero"><div class="sh-ring"><svg viewBox="0 0 100 100" aria-hidden="true">' +
+      '<circle class="sh-track" cx="50" cy="50" r="42"></circle>' +
+      '<circle class="sh-val" cx="50" cy="50" r="42" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"></circle>' +
+      '</svg><b>' + (sc == null ? '-' : sc + '%') + '</b></div>' +
+      '<div class="sh-body"><h3>' + t('My score') + ' &middot; ' + esc(monthWords(month)) + '</h3>' +
+      '<p>' + t('Weighted, flagged claims left out') + '</p>' + rows + '</div></div>';
   }
   function card(icon, title, value, sub) {
     return '<div class="card"><div class="card-head"><span class="kpi-ic">' + svg(icon) + '</span><h3>' + esc(title) + '</h3></div>' +
