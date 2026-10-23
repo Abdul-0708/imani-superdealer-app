@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.94.0';
+  var APP_VERSION = '1.95.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -530,6 +530,9 @@
     'Visit not done': 'Visit haijafanyika',
     'APK not done': 'APK haijafanyika',
     'Not active': 'Si active',
+    'Inactive': 'Si active',
+    'No status': 'Hakuna hali',
+    'no status': 'hakuna hali',
     'Visit done': 'Visit imefanyika',
     'APK done': 'APK imefanyika',
     'Preparing the photo...': 'Inaandaa picha...',
@@ -1588,7 +1591,8 @@
           kpiTile('target', t('Visited'), fmt(pg.visited || 0), pg.visited, pg.base,
                fmt(left(pg.base, pg.visited)) + ' ' + t('still to visit')) +
           kpiTile('zap', t('Active'), fmt(pg.active || 0), pg.active, pg.base,
-               fmt(pg.inactive || 0) + ' ' + t('inactive')) +
+               fmt(pg.inactive || 0) + ' ' + t('inactive') +
+               (pg.nostatus ? ' &middot; ' + fmt(pg.nostatus) + ' ' + t('no status') : '')) +
           kpiTile('percent', t('Acceleration'), fmt(pg.accelDone || 0), pg.accelDone, pg.accelTarget || null,
                !pg.accelTarget
                  ? t('no withdraw targets in the file yet')
@@ -2936,7 +2940,8 @@
       '<div class="field"><label>APK</label><select data-change="fapk">' +
       '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fapk === 'yes' ? ' selected' : '') + '>APK YES</option><option value="no"' + (state._fapk === 'no' ? ' selected' : '') + '>APK NO</option></select></div>' +
       '<div class="field"><label>Active</label><select data-change="factive">' +
-      '<option value="">' + t('Any') + '</option><option value="active"' + (state._factive === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (state._factive === 'inactive' ? ' selected' : '') + '>Inactive</option></select></div>' +
+      '<option value="">' + t('Any') + '</option><option value="active"' + (state._factive === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (state._factive === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
+      '<option value="none"' + (state._factive === 'none' ? ' selected' : '') + '>' + t('No status') + '</option></select></div>' +
       '<div class="field"><label>' + t('High-earner list') + '</label><select data-change="fband">' +
       '<option value="">' + t('Any') + '</option>' +
       ['A', 'B', 'C', 'D', 'E', 'F'].map(function (b) {
@@ -3522,6 +3527,12 @@
           : t('Active - carried from last month; no file has covered him yet this month')) + '">Active &#10003;' +
           (a.actFromFile ? '' : ' <small class="ksrc">' + t('carried') + '</small>') + '</span>';
       }
+      /* NO STATUS IS NOT INACTIVE (v1.95). The file left his cell blank, and
+       * calling him dormant sent officers to wake a man nobody said was asleep.
+       * He can still be marked woken - the same proof is asked for. */
+      if (!a.actStatus) {
+        return editable ? todoChip(a, c, t('No status')) : '<span class="kchip off">' + t('No status') + '</span>';
+      }
       return editable ? todoChip(a, c, 'Inactive - wake up') : '<span class="kchip bad-off">Inactive (wake up)</span>';
     }
     if (c.key === 'visit' && !mark) {
@@ -3551,7 +3562,9 @@
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       /* NEW = agents the monthly database file brought in that nobody owns yet.
        * He serves one and it joins his round, so this is where his base grows. */
-      var showNew = state._baseNew === '1';
+      /* an officer who holds a branch sees that branch and nothing else (v1.95) */
+      var holdsBranch = (d.branches || []).length > 0;
+      var showNew = state._baseNew === '1' && !holdsBranch;
       var all = showNew ? (d.unclaimed || []) : (d.agents || []);
       var q = (state._baseSearch || '').toLowerCase();
       var fb = state._baseBand || '';
@@ -3595,8 +3608,11 @@
         if (fac === 'done' && !(a.accel && a.accel.done)) return false;
         if (fk) {
           var parts = fk.split(':');           /* e.g. "visit:no" */
-          var want = parts[1] === 'yes';
-          if (kpiDone(a, parts[0]) !== want) return false;
+          /* activeness has three answers - active, inactive, and no status:
+           * a blank in the file is not a dormant agent (v1.95) */
+          if (fk === 'active:no') { if (a.actStatus !== 'INACTIVE') return false; }
+          else if (fk === 'active:none') { if (a.actStatus !== '') return false; }
+          else if (kpiDone(a, parts[0]) !== (parts[1] === 'yes')) return false;
         }
         if (!q) return true;
         return fieldText(a).toLowerCase().indexOf(q) >= 0;
@@ -3658,10 +3674,11 @@
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
         '<h2 style="margin:0">' + svg('phone') + (showNew ? t('Agents no branch holds') : t('My agents')) + ' (' + list.length + ')</h2>' +
         '<div class="spacer"></div>' +
+        (holdsBranch ? '' :
         '<button class="ghost mini' + (showNew ? '' : ' on') + '" data-action="baseScope" data-v="">' + t('My round') +
         ' <span class="pill dim">' + fmt((d.agents || []).length) + '</span></button>' +
         '<button class="ghost mini' + (showNew ? ' on' : '') + '" data-action="baseScope" data-v="1">' + t('NO BRANCH YET') +
-        ' <span class="pill ' + (d.counts.unclaimed ? 'fire' : 'dim') + '">' + fmt(d.counts.unclaimed || 0) + '</span></button>' +
+        ' <span class="pill ' + (d.counts.unclaimed ? 'fire' : 'dim') + '">' + fmt(d.counts.unclaimed || 0) + '</span></button>') +
         '</div>' +
         /* SERVING ONE NO LONGER MAKES HIM YOURS. The round is the branch now, so
          * this list is the orphans - agents whose branch is not assigned to
@@ -3681,7 +3698,7 @@
         }).join('') + '</select></div>' +
         '<div class="field"><label>' + t('KPI still to do') + '</label><select data-change="baseKpi">' +
         [['', t('Any')], ['visit:no', t('Visit not done')], ['apk:no', t('APK not done')],
-         ['active:no', t('Not active')], ['visit:yes', t('Visit done')], ['apk:yes', t('APK done')],
+         ['active:no', t('Inactive')], ['active:none', t('No status')], ['visit:yes', t('Visit done')], ['apk:yes', t('APK done')],
          ['active:yes', t('Active')]].map(function (o) {
           return '<option value="' + o[0] + '"' + (fk === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         }).join('') + '</select></div>' +
@@ -4592,7 +4609,7 @@
         a2.push([i + 1, a.acc, a.name, a.phone, a.branch, a.loc,
           a.srv ? 'YES' : (a.srvFlag ? 'FLAGGED' : 'NO'), a.srv || a.srvFlag || '',
           a.vis ? 'YES' : 'NO', a.apk ? 'YES' : 'NO', a.flt || 0,
-          cap(a.a0) || '-', cap(a.a1) || '-', a.chg === 'WOKEN' ? 'Woken' : a.chg === 'LOST' ? 'Lost' : '',
+          cap(a.a0) || 'No status', cap(a.a1) || 'No status', a.chg === 'WOKEN' ? 'Woken' : a.chg === 'LOST' ? 'Lost' : '',
           a.wt == null ? '' : a.wt, a.wx == null ? '' : a.wx, a.wl == null ? '' : a.wl, acc]);
         numRows.push(a2.length - 1);
       });
@@ -4821,6 +4838,21 @@
       t('- BDOs can claim them under NEW in My Agent Base.');
     if (d.createdBdos && d.createdBdos.length) s += ' New BDO accounts: ' + d.createdBdos.map(esc).join(', ') + ' (password imani123).';
     if (d.flagged) s += ' <span class="pill bad">' + d.flagged + ' flag' + (d.flagged > 1 ? 's' : '') + ' raised</span> (a BDO claim the month\'s files do not back - see Flags).';
+    /* v1.95: THE FILE DECIDES - what it took off because it does not show it */
+    var kc = d.kpiCleared;
+    var kcN = kc ? (kc.served || 0) + (kc.visit || 0) + (kc.apk || 0) + (kc.active || 0) : 0;
+    if (kcN) {
+      s += '<div class="note" style="margin-top:6px"><span class="pill gold">' + fmt(kcN) + ' ' + t('ticks cleared') + '</span> ' +
+        t('This file does not show them, so they no longer count') + ': ' +
+        [['served', t('served')], ['visit', t('visits')], ['apk', 'APK'], ['active', t('woken')]]
+          .filter(function (p) { return kc[p[0]]; })
+          .map(function (p) { return fmt(kc[p[0]]) + ' ' + p[1]; }).join(', ') +
+        '. ' + t('Erasing this upload puts them back.') + '</div>';
+    }
+    if (d.scoring && d.decides === false) {
+      s += '<div class="note" style="margin-top:6px">' +
+        t('A file ticked as final is already in for this month, so nothing was cleared against this one.') + '</div>';
+    }
     /* blank SA STATION cells were counted into the home station rather than
      * dropped - say so, so the file can be fixed at source */
     if (d.blankStation) {
@@ -4860,7 +4892,10 @@
       }
       s += '</div>';
     }
-    if (d.scoring && d.baselineUsed === 'file-column') {
+    if (d.scoring && d.baselineUsed === 'file-columns') {
+      s += '<div class="note" style="margin-top:6px">' +
+        t('Woken and lost are read from this file\'s last-month and this-month activeness columns, as the bank counts them.') + '</div>';
+    } else if (d.scoring && d.baselineUsed === 'file-column') {
       s += '<div class="note" style="margin-top:6px"><span class="pill gold">' +
         t('No base file for this month yet') + '</span> ' +
         t('so waking was judged from the previous-activeness column inside this file. Upload the monthly database baseline, then re-upload this file, to score wakes against the real starting point of the month.') + '</div>';

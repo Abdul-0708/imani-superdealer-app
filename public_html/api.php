@@ -559,6 +559,7 @@ try {
       $fa = (string)($_GET['factive'] ?? '');
       if ($fa === 'active') { $conds[] = 'act_current = "ACTIVE"'; }
       elseif ($fa === 'inactive') { $conds[] = 'act_current = "INACTIVE"'; }
+      elseif ($fa === 'none') { $conds[] = 'act_current = ""'; }
 
       /* Region: a field user is pinned to the home station; management follows
        * the one station choice the OM made, which now governs this list too.
@@ -884,9 +885,19 @@ try {
       /* a station no longer worked is in nobody's round on purpose */
       $ucSql .= perf_station_sql('a', $month);
       $ucSql .= ' ORDER BY a.name LIMIT 300';
-      $ucq = db()->prepare($ucSql);
-      $ucq->execute($ucVals);
-      foreach ($ucq->fetchAll() as $a2) {
+      /* HIS BRANCH AND NOTHING ELSE (v1.95). An officer who holds a branch was
+       * also offered every agent in the branches nobody holds - a second list
+       * one tap away on the same page, which read as My Branch showing the
+       * whole station. Those agents are the OM's to place (Unallocated
+       * branches on the scorecard). An officer with no branch yet still gets
+       * the list, or his page would be empty. */
+      $ucRows = array();
+      if (!count($myBranches)) {
+        $ucq = db()->prepare($ucSql);
+        $ucq->execute($ucVals);
+        $ucRows = $ucq->fetchAll();
+      }
+      foreach ($ucRows as $a2) {
         $a2['level'] = 'unclaimed';
         $a2['kpi'] = new stdClass();
         $a2['actStatus'] = strtoupper((string)$a2['act_current']);
@@ -1720,6 +1731,18 @@ try {
       $d->execute(array($id)); $n['services'] = $d->rowCount();
       $d = db()->prepare('DELETE FROM agent_month_kpi WHERE upload_id = ? AND source = "upload"');
       $d->execute(array($id)); $n['marks'] = $d->rowCount();
+      /* v1.95: the ticks this file cleared go back exactly as they were, and a
+       * wake among them sets the agent ACTIVE again, as the tick itself did */
+      try {
+        $rs = db()->prepare('INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by, upload_id, at)
+                             SELECT month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by, upload_id, COALESCE(at, NOW())
+                             FROM kpi_cleared WHERE cleared_by = ?');
+        $rs->execute(array($id)); $n['restored'] = $rs->rowCount();
+        db()->prepare("UPDATE agents a JOIN kpi_cleared c ON c.agent_id = a.id
+                       SET a.act_current = 'ACTIVE', a.act_month = c.month
+                       WHERE c.cleared_by = ? AND c.kpi = 'active' AND c.source = 'bdo'")->execute(array($id));
+        db()->prepare('DELETE FROM kpi_cleared WHERE cleared_by = ?')->execute(array($id));
+      } catch (Exception $e) { /* v35 not applied yet */ }
       db()->prepare('DELETE FROM uploads WHERE id = ?')->execute(array($id));
       /* office snapshot: fall back to the latest remaining upload of that month */
       $lq = db()->prepare('SELECT stats FROM uploads WHERE month = ? ORDER BY id DESC LIMIT 1');
@@ -1739,6 +1762,13 @@ try {
       $n = array();
       $n['services'] = db()->exec("DELETE FROM service_history WHERE source <> 'bdo'");
       $n['marks'] = db()->exec("DELETE FROM agent_month_kpi WHERE source = 'upload'");
+      /* a BDO tick a file cleared is BDO work too, and that stays (v1.95) */
+      try {
+        $n['restored'] = db()->exec("INSERT IGNORE INTO agent_month_kpi (month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by, upload_id, at)
+                                     SELECT month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by, 0, COALESCE(at, NOW())
+                                     FROM kpi_cleared WHERE source = 'bdo'");
+        db()->exec('DELETE FROM kpi_cleared');
+      } catch (Exception $e) { /* v35 not applied yet */ }
       $n['uploads'] = db()->exec('DELETE FROM uploads');
       $n['snapshots'] = db()->exec("DELETE FROM app_settings WHERE name LIKE 'month\\_stats\\_%'");
       db()->exec("UPDATE agents SET act_current = '', act_prev = '', act_month = '', partner = 0");
@@ -2344,7 +2374,10 @@ try {
         }
       }
       if ($kpi === 'active') {
-        db()->prepare('UPDATE agents SET act_current = "INACTIVE", act_month = ? WHERE id = ?')->execute(array($month, $agentId));
+        /* back to what the office last said about him - not INACTIVE by
+         * default: an agent with no status keeps none (v1.95) */
+        db()->prepare('UPDATE agents SET act_current = ?, act_month = ? WHERE id = ?')
+            ->execute(array(act_status_before_wake($agentId, $month), $month, $agentId));
       }
       audit($u['id'], 'kpi_unmark', $u['username'] . ' reversed ' . $kpi . ' agent=' . $agentId . ' (was ' . $row['bdo'] . ')');
       respond(array('ok' => true, 'kpi' => $kpi, 'reversedFrom' => $row['bdo']));
@@ -2497,6 +2530,7 @@ try {
       $abq->execute(array($month));
       foreach ($abq->fetchAll() as $ab) $actBase[(string)$ab['acc']] = $ab['act_base'];
       $baselineFrom = count($actBase);
+      $filePrev = false;   /* does the file carry last month's activeness column? */
       foreach ($rows as $raw) {
         $r = parse_weekly_row($raw, $month);
         if (!$r) continue;
@@ -2523,6 +2557,7 @@ try {
         $r['act_base'] = isset($actBase[(string)$r['acc']]) ? $actBase[(string)$r['acc']] : $r['act_prev'];
         $r['waked'] = ($r['act_cur'] === 'ACTIVE' && $r['act_base'] === 'INACTIVE');
         $r['lost'] = ($r['act_cur'] === 'INACTIVE' && $r['act_base'] === 'ACTIVE');
+        if ($r['act_prev'] !== '') $filePrev = true;
         $parsed[] = $r;
         $stKey = $r['station'];
         if (!isset($byStation[$stKey])) $byStation[$stKey] = $zero;
@@ -2532,8 +2567,6 @@ try {
         }
         if ($r['visit'] === 'YES') { $stats['visits']++; $byStation[$stKey]['visits']++; }
         if ($r['apk_up']) { $stats['apk']++; $byStation[$stKey]['apk']++; }
-        if ($r['waked']) { $stats['waked']++; $byStation[$stKey]['waked']++; }
-        if ($r['lost']) { $stats['lost']++; $byStation[$stKey]['lost']++; }
         $stats['withdraw'] += $r['withdraw'];
         $byStation[$stKey]['withdraw'] += $r['withdraw'];
         /* one agent, one point, and only once he is all the way there */
@@ -2552,6 +2585,35 @@ try {
           }
         }
       }
+      /*
+       * WOKEN AND LOST THE BANK'S WAY (v1.95), whenever the performance file
+       * carries last month's column beside this month's: woken = not active
+       * then, active now; lost = active then, not active now (blank counts as
+       * not active). The net is then "active now minus active then" - the
+       * bank's own figure - on the office dashboard, in every officer's
+       * activeness credit and on the report card alike. The base-file reading
+       * above stays for a file without last month's column.
+       *
+       * Also noted here: which KPIs this file carries at all. One that is never
+       * YES anywhere in it is a column the file does not track, and a file
+       * that does not track something cannot clear anybody's tick for it.
+       */
+      $actByFile = $scoring && $filePrev;
+      $carries = array('served' => false, 'visit' => false, 'apk' => false, 'active' => false);
+      foreach ($parsed as &$pr) {
+        if ($actByFile) {
+          $pr['waked'] = ($pr['act_prev'] !== 'ACTIVE' && $pr['act_cur'] === 'ACTIVE');
+          $pr['lost'] = ($pr['act_prev'] === 'ACTIVE' && $pr['act_cur'] !== 'ACTIVE');
+        }
+        $stKey = $pr['station'];
+        if ($pr['waked']) { $stats['waked']++; $byStation[$stKey]['waked']++; }
+        if ($pr['lost']) { $stats['lost']++; $byStation[$stKey]['lost']++; }
+        if ($pr['served'] === 'SERVED') $carries['served'] = true;
+        if ($pr['visit'] === 'YES') $carries['visit'] = true;
+        if ($pr['apk_yes']) $carries['apk'] = true;
+        if ($pr['act_cur'] !== '') $carries['active'] = true;
+      }
+      unset($pr);
       if (!count($parsed) && $skippedStation) fail('No rows in this file are for the stations the office works - nothing was imported.');
       if (!count($parsed)) fail('No valid agent rows found (need at least an Agent Account column)');
       $stats['net_active'] = $stats['waked'] - $stats['lost'];
@@ -2584,6 +2646,21 @@ try {
         try { db()->prepare('UPDATE uploads SET final = 1 WHERE id = ?')->execute(array($uploadId)); }
         catch (Exception $e) { /* v32 not applied yet - the date rule still applies */ }
       }
+      /* DOES THIS FILE DECIDE THE MONTH? A performance file does - unless an
+       * earlier one was ticked as the final file and this one is not. */
+      $decides = false;
+      if ($scoring) {
+        $decides = $isFinal;
+        if (!$decides) {
+          try {
+            $fq0 = db()->prepare("SELECT 1 FROM uploads WHERE month = ? AND kind = 'performance' AND final = 1 AND id <> ? LIMIT 1");
+            $fq0->execute(array($month, $uploadId));
+            $decides = !$fq0->fetch();
+          } catch (Exception $e) { $decides = true; /* v32 not applied - nothing is final */ }
+        }
+      }
+      /* what the file says about each agent, filled in PASS 2 */
+      $fileSays = array(); $fileAct = array();
 
       /* PASS 2: write agents, history, bases, ledger, flags. */
       foreach ($parsed as $r) {
@@ -2646,7 +2723,9 @@ try {
          * exactly what the file said), and if the file really does disagree the
          * reconciliation below raises the flag for the OM to judge. */
         $actCur = $r['act_cur'];
-        if ($actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
+        /* ...except in a file that decides the month: there the file's status
+         * stands, and a wake it does not show is cleared below (v1.95) */
+        if (!$decides && $actCur === 'INACTIVE' && isset($bdoWoke[$id])) $actCur = 'ACTIVE';
         /* THE BASE FILE IS THIS MONTH'S STATUS. It is written as the file has
          * it - blank included - so the status carried over from last month
          * never survives a base file that says something else. */
@@ -2737,7 +2816,90 @@ try {
         if ($r['visit'] === 'YES') $insKpi->execute(array($month, $id, 'visit', $key, $uploadId));
         if ($r['apk_up']) $insKpi->execute(array($month, $id, 'apk', $key, $uploadId));
         if ($r['waked']) $insKpi->execute(array($month, $id, 'active', $key, $uploadId));
+        if ($decides) {
+          if (!isset($fileSays[$id])) $fileSays[$id] = array('served' => false, 'visit' => false, 'apk' => false, 'active' => false);
+          if ($r['served'] === 'SERVED') $fileSays[$id]['served'] = true;
+          if ($r['visit'] === 'YES') $fileSays[$id]['visit'] = true;
+          if ($r['apk_up']) $fileSays[$id]['apk'] = true;
+          if ($r['waked']) $fileSays[$id]['active'] = true;
+          $fileAct[$id] = $r['act_cur'];
+        }
 
+      }
+
+      /*
+       * ================= THE FILE DECIDES (v1.95) =================
+       *
+       * The month's current performance file is what the office holds, and
+       * every number an officer is measured on has to add up to it: served,
+       * visits, APK, woken. A tick the file did not show kept counting - under
+       * a flag, or until somebody dealt with it - so his branch page and his
+       * score read more than the Excel did.
+       *
+       * Now every tick the file does not show is taken off: a BDO's own, the
+       * partner's, or a credit an earlier file of the month gave. It is moved
+       * to kpi_cleared, not lost - erasing this upload puts each one back.
+       *
+       * Left alone:
+       *   - a KPI the file does not carry at all ($carries);
+       *   - a mark the OM awarded himself;
+       *   - a field recruit, whom the bank's file cannot list yet;
+       *   - agents of a station no longer worked;
+       *   - everything, when a final file is already in and this one is not.
+       * Work ticked after this upload stands until the next file judges it.
+       */
+      $kpiCleared = array('served' => 0, 'visit' => 0, 'apk' => 0, 'active' => 0);
+      if ($decides) {
+        $judged = array();
+        foreach ($carries as $kk => $on) { if ($on) $judged[] = $kk; }
+        if (count($judged)) {
+          $inK = implode(',', array_fill(0, count($judged), '?'));
+          $lq = db()->prepare("SELECT k.id, k.agent_id, k.kpi,
+                                      EXISTS (SELECT 1 FROM base b WHERE b.month = k.month AND b.agent_id = k.agent_id
+                                                AND b.kind = 'new') AS recruit
+                               FROM agent_month_kpi k JOIN agents a ON a.id = k.agent_id
+                               WHERE k.month = ? AND k.kpi IN ($inK) AND k.awarded_by = ''" . perf_station_sql('a', $month));
+          $lq->execute(array_merge(array($month), $judged));
+          $clearIds = array(); $unwake = array(); $count = $kpiCleared;
+          foreach ($lq->fetchAll() as $k0) {
+            $aid = (int)$k0['agent_id'];
+            if (isset($fileSays[$aid])) {
+              if ($fileSays[$aid][$k0['kpi']]) continue;
+            } elseif ((int)$k0['recruit']) {
+              continue;
+            }
+            $clearIds[] = (int)$k0['id'];
+            $count[$k0['kpi']]++;
+            /* a wake set him ACTIVE on the spot - with the wake gone, he is
+             * what the file says, or what he was before it */
+            if ($k0['kpi'] === 'active') $unwake[] = $aid;
+          }
+          if (count($clearIds)) {
+            /* all of it or none of it: a tick is never deleted without its copy */
+            $pdo = db();
+            try {
+              $pdo->beginTransaction();
+              foreach (array_chunk($clearIds, 500) as $chunk) {
+                $inC = implode(',', array_fill(0, count($chunk), '?'));
+                $pdo->prepare("INSERT INTO kpi_cleared (cleared_by, month, agent_id, kpi, bdo, source, proof, proof_note,
+                                                        awarded_by, upload_id, at)
+                               SELECT ?, month, agent_id, kpi, bdo, source, proof, proof_note, awarded_by, upload_id, at
+                               FROM agent_month_kpi WHERE id IN ($inC)")
+                    ->execute(array_merge(array($uploadId), $chunk));
+                $pdo->prepare("DELETE FROM agent_month_kpi WHERE id IN ($inC)")->execute($chunk);
+              }
+              $setAct = $pdo->prepare('UPDATE agents SET act_current = ?, act_month = ? WHERE id = ?');
+              foreach ($unwake as $aid) {
+                $setAct->execute(array(isset($fileAct[$aid]) ? $fileAct[$aid] : act_status_before_wake($aid, $month), $month, $aid));
+              }
+              $pdo->commit();
+              $kpiCleared = $count;
+            } catch (Exception $e) {
+              if ($pdo->inTransaction()) $pdo->rollBack();
+              error_log('IMANI clear: ' . $e->getMessage());
+            }
+          }
+        }
       }
 
       /* ================= MONTH-WIDE RECONCILIATION =================
@@ -2947,8 +3109,8 @@ try {
       /* Which standard the wakes were judged against. An OM who uploads
        * performance before the base file should be told his activeness was
        * scored off the file's own column, not left to wonder later. */
-      $baselineUsed = $baselineFrom > 0 ? 'base-file' : 'file-column';
-      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ' answersKept=' . $restored . ($blankStation ? ' blankStation=' . $blankStation : ''));
+      $baselineUsed = $actByFile ? 'file-columns' : ($baselineFrom > 0 ? 'base-file' : 'file-column');
+      audit($u['id'], 'weekly_upload', $month . ' rows=' . $agents . ' bdos=' . implode('/', array_keys($bdos)) . ($priorityMode ? ' [priority]' : '') . ' flags=' . $flagged . ' answersKept=' . $restored . ' cleared=' . json_encode($kpiCleared) . ($blankStation ? ' blankStation=' . $blankStation : ''));
       respond(array('ok' => true, 'month' => $month, 'rows' => $agents, 'served' => $served,
                     'bdos' => array_keys($bdos), 'createdBdos' => $created, 'flagged' => $flagged,
                     'mode' => $mode, 'scoring' => $scoring,
@@ -2959,7 +3121,9 @@ try {
                     'baselineUsed' => $baselineUsed, 'baselineAgents' => $baselineFrom,
                     'blankStation' => $blankStation, 'homeStation' => $homeStation,
                     'activeness' => $actSummary,
-                    'targetsFixed' => $targetsFixed, 'final' => $isFinal));
+                    'targetsFixed' => $targetsFixed, 'final' => $isFinal,
+                    /* v1.95: what the file took off because it does not show it */
+                    'decides' => $decides, 'kpiCleared' => $kpiCleared));
     }
 
     /* ================= TARGETS (typed by OM) ================= */

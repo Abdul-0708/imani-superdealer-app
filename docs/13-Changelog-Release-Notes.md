@@ -5,6 +5,59 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.95.0 — 2026-10-23 · The performance file decides every KPI (schema v35)
+
+### Every tick must match the file
+
+- **The problem:** a BDO's branch page and his score counted more than the Excel did. Ticks the
+  file did not show kept counting under a flag, and so did credits from earlier files of the month.
+  Visits were the clearest example.
+- **Now:** each performance upload removes every served, visit, APK or woken tick that the file does
+  not show. That covers a BDO's own ticks, the partner's, and credits from an earlier file. A BDO's
+  served, visited, woken, his branch page and his score then add up to the Excel.
+- **Kept, not deleted:** a removed tick moves to a new table, `kpi_cleared`, with the upload that
+  removed it. **Erasing that upload puts every tick back,** including its photo, note and time.
+  "Erase all Excel data" brings back the BDO ticks too.
+- **Left alone:**
+  - a KPI the file does not carry at all (not one YES in that column);
+  - a mark the OM awarded himself;
+  - a field recruit, because the bank's file cannot list him yet;
+  - agents of a station no longer worked;
+  - everything, when a file ticked as final is already in and the new file is not final.
+- **Work after the upload:** ticks made after the upload count until the next file checks them.
+- **The upload result says what it removed:** for example "12 ticks cleared: 9 visits, 3 woken. Erasing
+  this upload puts them back."
+- **A woken tick that is removed:** the agent goes back to what the file says about him. An agent the
+  file does not list goes back to his status before the wake.
+
+### Woken and lost the bank's way, everywhere
+
+- **Where it applies:** when the performance file has last month's activeness column beside this
+  month's, woken and lost now use the same reading as the report card (from v1.94).
+- **The office dashboard's Net active and each BDO's activeness credit now use it too,** so all three
+  give the bank's figure. A file without last month's column still uses the base file.
+
+### No status is not inactive
+
+- **On the chip:** an agent whose status the file left blank shows **No status**, not "Inactive -
+  wake up". He can still be marked woken, with the same proof required.
+- **New filters:** **Inactive** and **No status** are separate choices in the My Branch KPI filter
+  and on All Agents.
+- **On the dashboard:** the Active tile adds "· N no status".
+- **In the report workbook:** a blank status reads "No status" instead of "-".
+- **Reversing a wake:** the agent returns to his last known status. Before, he always became
+  INACTIVE, even when he had no status.
+
+### My Branch shows his branch only
+
+- **The "NO BRANCH YET" list is gone for any BDO who holds a branch.** It showed agents from every
+  unassigned branch. A BDO with no branch yet still sees it.
+
+APP_VERSION 1.95.0, schema v35, assets bumped to v113. **Re-upload the current performance file once
+after deploying**, so the clearing and the bank's woken/lost run against it.
+
+---
+
 ## v1.94.0 — 2026-10-23 · The new look, step 3: lists; activeness the bank's way
 
 ### Branch report: activeness now matches the bank

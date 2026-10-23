@@ -490,6 +490,38 @@ function upgrade_schema($pdo) {
     schema_v34_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "34" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 35) {
+    schema_v35_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "35" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v35: WHAT A PERFORMANCE FILE CLEARS IS KEPT, NOT LOST.
+ *
+ * From v1.95 the month's current performance file decides every KPI: a tick
+ * the file does not show is taken off the ledger. It is moved here rather
+ * than deleted, with the upload that cleared it, so erasing that upload puts
+ * every tick back exactly as it was - photo, note and time included.
+ */
+function schema_v35_apply($pdo) {
+  $pdo->exec("CREATE TABLE IF NOT EXISTS kpi_cleared (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cleared_by INT NOT NULL,
+    cleared_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    kpi VARCHAR(12) NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    source VARCHAR(8) NOT NULL DEFAULT '',
+    proof VARCHAR(80) NOT NULL DEFAULT '',
+    proof_note VARCHAR(255) NOT NULL DEFAULT '',
+    awarded_by VARCHAR(64) NOT NULL DEFAULT '',
+    upload_id INT NOT NULL DEFAULT 0,
+    at DATETIME NULL,
+    INDEX idx_kc_by (cleared_by),
+    INDEX idx_kc_month (month, bdo)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 
 /*

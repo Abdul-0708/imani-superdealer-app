@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.94.0');
+define('APP_VERSION', '1.95.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -880,7 +880,7 @@ function accel_map($month, $ids) {
 }
 
 function base_progress($month, $ids) {
-  $out = array('base' => count($ids), 'active' => 0, 'inactive' => 0,
+  $out = array('base' => count($ids), 'active' => 0, 'inactive' => 0, 'nostatus' => 0,
                'served' => 0, 'visited' => 0, 'accelTarget' => 0, 'accelDone' => 0);
   if (!count($ids)) return $out;
   $in = implode(',', array_fill(0, count($ids), '?'));
@@ -891,6 +891,8 @@ function base_progress($month, $ids) {
       if ($r['c'] === 'ACTIVE') $out['active'] = (int)$r['n'];
       elseif ($r['c'] === 'INACTIVE') $out['inactive'] = (int)$r['n'];
     }
+    /* a blank in the file is no status, not a dormant agent (v1.95) */
+    $out['nostatus'] = max(0, $out['base'] - $out['active'] - $out['inactive']);
     $q = db()->prepare("SELECT kpi, COUNT(DISTINCT agent_id) n FROM agent_month_kpi
                         WHERE month = ? AND kpi IN ('served','visit') AND agent_id IN ($in)
                         GROUP BY kpi");
@@ -1387,6 +1389,30 @@ function act_norm($s) {
       strpos($s, 'notact') === 0 || strpos($s, 'nonact') === 0) return 'INACTIVE';
   if (strpos($s, 'activ') === 0) return 'ACTIVE';
   return '';
+}
+
+/*
+ * AN AGENT'S STATUS WITHOUT A BDO'S WAKE (v1.95).
+ *
+ * Waking sets him ACTIVE on the spot. When the wake is taken away - reversed,
+ * or cleared because the performance file does not show it - he goes back to
+ * what the office last said about him this month: the latest file row, then
+ * the base file, then the status the month opened with. It used to be
+ * INACTIVE whatever he had been, so an agent the file had left blank came
+ * back from a reversed wake as dormant. No status stays no status.
+ */
+function act_status_before_wake($agentId, $month) {
+  $q = db()->prepare("SELECT activeness FROM service_history
+                      WHERE agent_id = ? AND month = ? AND source <> 'bdo' ORDER BY id DESC LIMIT 1");
+  $q->execute(array((int)$agentId, $month));
+  if ($r = $q->fetch()) return act_norm($r['activeness']);
+  $q = db()->prepare('SELECT act_base, act_base_month, act_prev FROM agents WHERE id = ?');
+  $q->execute(array((int)$agentId));
+  $a = $q->fetch();
+  if (!$a) return '';
+  if ((string)$a['act_base_month'] === $month && (string)$a['act_base'] !== '') return strtoupper((string)$a['act_base']);
+  /* what the month opened with - he was not ACTIVE, or he could not have been woken */
+  return strtoupper((string)$a['act_prev']) === 'INACTIVE' ? 'INACTIVE' : '';
 }
 
 /* Detect which calendar month (1-12) a header refers to, else 0. */
