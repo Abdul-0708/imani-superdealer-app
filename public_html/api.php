@@ -2377,8 +2377,8 @@ try {
           physical_location = IF(? = "", physical_location, ?), partner = ?, station = IF(? = "", station, ?) WHERE id = ?');
       $insSvc = db()->prepare('INSERT INTO service_history
           (agent_id, bdo, month, week, date, time, odk, apk, float_served, activeness, sa_commission, served_status,
-           wd_target, wd_txn, campaign, source, upload_id)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?)');
+           wd_target, wd_txn, campaign, source, upload_id, act_prev, act_cur)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, "weekly", ?, ?, ?)');
       /*
        * WHAT KIND OF FILE IS THIS?
        *
@@ -2722,7 +2722,9 @@ try {
         if ($r['served'] === 'SERVED') $served++;
         $insSvc->execute(array($id, $key, $month, $week, date('Y-m-d'), date('H:i'),
                                $r['visit'], $r['apk_yes'] ? 'YES' : 'NO', $r['float'], $r['activeness'], $r['sa'], $r['served'],
-                               $r['wd_target'], $r['wd_txn'], $r['campaign'], $uploadId));
+                               $r['wd_target'], $r['wd_txn'], $r['campaign'], $uploadId,
+                               /* both activeness columns, as the file has them (v34) */
+                               $r['act_prev'], $r['act_cur']));
         /* In his round if the file NAMES him beside the agent - the portfolio
          * the office assigned - or if the file shows the agent SERVED. The
          * old rule was served-only, which is why rounds read as a fraction of
@@ -4829,6 +4831,23 @@ try {
         $fq->execute(array((int)$lu['id']));
         foreach ($fq->fetchAll() as $r) $float[(int)$r['agent_id']] = (float)$r['f'];
       }
+      /* ACTIVENESS THE BANK'S WAY (v1.94): the same file's previous-month and
+       * this-month columns, agent by agent. Woken = not active then, active
+       * now; lost = active then, not active now (blank counts as not active).
+       * Net is then exactly "active now minus active then", the bank's figure.
+       * A file uploaded before v34 kept no previous column - then the older
+       * reading below is used until it is uploaded again. */
+      $actF = array(); $actFromFile = false;
+      if ($lu) {
+        try {
+          $aq2 = db()->prepare('SELECT agent_id, act_prev, act_cur FROM service_history WHERE upload_id = ? ORDER BY id');
+          $aq2->execute(array((int)$lu['id']));
+          foreach ($aq2->fetchAll() as $r) {
+            $actF[(int)$r['agent_id']] = array((string)$r['act_prev'], (string)$r['act_cur']);
+            if ($r['act_prev'] !== '' || $r['act_cur'] !== '') $actFromFile = true;
+          }
+        } catch (Exception $e) { /* v34 not applied yet */ }
+      }
 
       $accel = accel_map($month, null);
 
@@ -4855,11 +4874,20 @@ try {
         foreach ((isset($marks[$id]) ? $marks[$id] : array()) as $kk => $by) {
           if (isset($flagged[$id . '|' . $kk . '|' . $by])) $mFlag[$kk] = $by; else $m[$kk] = $by;
         }
-        $start = ((string)$a['act_base_month'] === $month && (string)$a['act_base'] !== '')
-          ? strtoupper((string)$a['act_base']) : strtoupper((string)$a['act_prev']);
-        $now = strtoupper((string)$a['act_current']);
-        $change = isset($m['active']) ? 'WOKEN'
-                : (($start === 'ACTIVE' && $now === 'INACTIVE') ? 'LOST' : '');
+        if ($actFromFile) {
+          /* the file's own two columns; an agent the file does not list moved nowhere */
+          $start = isset($actF[$id]) ? $actF[$id][0] : '';
+          $now = isset($actF[$id]) ? $actF[$id][1] : '';
+          $change = !isset($actF[$id]) ? ''
+                  : (($start !== 'ACTIVE' && $now === 'ACTIVE') ? 'WOKEN'
+                  : (($start === 'ACTIVE' && $now !== 'ACTIVE') ? 'LOST' : ''));
+        } else {
+          $start = ((string)$a['act_base_month'] === $month && (string)$a['act_base'] !== '')
+            ? strtoupper((string)$a['act_base']) : strtoupper((string)$a['act_prev']);
+          $now = strtoupper((string)$a['act_current']);
+          $change = isset($m['active']) ? 'WOKEN'
+                  : (($start === 'ACTIVE' && $now === 'INACTIVE') ? 'LOST' : '');
+        }
         $x = isset($accel[$id]) ? $accel[$id] : null;
         $f = isset($float[$id]) ? $float[$id] : 0;
 
@@ -4940,6 +4968,7 @@ try {
                     /* the weights every score on the card was made with */
                     'weights' => $ow['weights'], 'weightsFrom' => $ow['from'],
                     /* which file the float column was read from */
+                    'actFromFile' => $actFromFile,
                     'floatFrom' => $lu ? array('label' => (string)$lu['label'],
                                                'at' => date('j M Y', strtotime($lu['at'])),
                                                'final' => !empty($lu['final'])) : null));

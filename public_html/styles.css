@@ -1283,5 +1283,14 @@ body.light .card.hero-card,body.light .card.hero-card:hover{border:0;box-shadow:
   .grid.cards.bdo-tiles .card.tile:last-child,.grid.cards.dash-tiles .tile.wide{grid-column:1 / -1}
   .card.tile .kpi{font-size:22px}
 }
+/* ---- lists (v1.94): the filters fold away on a phone ---- */
+.fbox-btn{display:none}
+@media (max-width:860px){
+  .fbox-btn{display:inline-flex;align-self:flex-end;flex:0 0 auto;border-radius:999px;gap:6px}
+  .fbox:not(.open)>:not(.fbox-keep):not(.fbox-btn){display:none!important}
+  .fbox>.field.fbox-keep{flex:1 1 0;min-width:0}
+  .fbox>.note.fbox-keep{flex:1 1 100%}
+  .fbox.open .fbox-btn{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+}
 /* the greeting: a quiet line above the title, not a banner */
 body.light .greet{font-family:var(--f-display);font-size:14px;font-weight:700;letter-spacing:0;color:var(--fire2);-webkit-text-fill-color:var(--fire2)}

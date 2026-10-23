@@ -486,6 +486,26 @@ function upgrade_schema($pdo) {
     schema_v33_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "33" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 34) {
+    schema_v34_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "34" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v34: EACH FILE ROW KEEPS BOTH ACTIVENESS COLUMNS.
+ *
+ * The bank reads activeness off the performance file's own two columns - last
+ * month's and this month's - and its net is simply "active now minus active
+ * then". The app only kept this month's, so the report had to measure against
+ * other things (the base file, the month's wake credits) and could not land on
+ * the bank's number. Stored normalised: ACTIVE, INACTIVE or '' (blank).
+ */
+function schema_v34_apply($pdo) {
+  foreach (array("ALTER TABLE service_history ADD COLUMN act_prev VARCHAR(12) NOT NULL DEFAULT ''",
+                 "ALTER TABLE service_history ADD COLUMN act_cur VARCHAR(12) NOT NULL DEFAULT ''") as $sql) {
+    try { $pdo->exec($sql); } catch (Exception $e) { /* exists */ }
+  }
 }
 
 /*

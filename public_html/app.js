@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.79.0';
+  var APP_VERSION = '1.94.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -133,6 +133,7 @@
     'DONE': 'IMEKAMILIKA',
     'GOOD MORNING': 'HABARI ZA ASUBUHI',
     'Good morning': 'Habari za asubuhi',
+    'Filters': 'Vichujio',
     'Good afternoon': 'Habari za mchana',
     'Good evening': 'Habari za jioni',
     'Office achievement': 'Mafanikio ya ofisi',
@@ -2191,6 +2192,18 @@
    * % chip are the attainment, so the tile answers "how far" as well as "how
    * many". With no target it is a plain number with a line under it.
    */
+  /*
+   * FILTERS FOLD AWAY ON A PHONE (v1.94). Nine filter boxes stood between a
+   * BDO and the first agent on his list - the first card started below the
+   * bottom of the screen. On a phone the search box stays, everything else
+   * sits behind one button that says how many filters are on. A computer sees
+   * them all, as before. The open/closed choice survives a re-render.
+   */
+  function fboxButton(active) {
+    return '<button type="button" class="ghost fbox-btn" data-action="fboxToggle" aria-expanded="' +
+      (state._fboxOpen ? 'true' : 'false') + '">' + t('Filters') +
+      (active ? ' <span class="pill fire">' + active + '</span>' : '') + '</button>';
+  }
   /* '2026-10' -> 'October 2026', for headings a person reads */
   function monthWords(ym) {
     var M = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -2909,12 +2922,13 @@
         : t('Master list with live KPI status.')) + '</p>' +
       (isManager() ? branchAssignHtml() : '') +
       (isManager() ? baseDiagHtml() : '') +
-      '<div class="toolbar">' +
+      '<div class="toolbar fbox' + (state._fboxOpen ? ' open' : '') + '">' +
       '<div class="field"><label>' + t('Search in') + '</label><select data-change="agentField">' +
       [['', t('Everything')], ['acc', 'Account'], ['name', 'Name'], ['phone', 'Phone'], ['branch', 'Branch'], ['location', 'Physical Location']].map(function (o) {
         return '<option value="' + o[0] + '"' + ((state._agentField || '') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
       }).join('') + '</select></div>' +
-      '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search (live)') + '</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      '<div class="field fbox-keep" style="flex:1;min-width:160px"><label>' + t('Search (live)') + '</label><input id="agentSearch" placeholder="type to search..." value="' + esc(state._agentSearch || '') + '" autocomplete="off"></div>' +
+      fboxButton([state._agentField, state._fserved, state._fvisit, state._fapk, state._factive, state._fband, state._faccel].filter(Boolean).length) +
       '<div class="field"><label>Served</label><select data-change="fserved">' +
       '<option value="">' + t('Any') + '</option><option value="yes"' + (state._fserved === 'yes' ? ' selected' : '') + '>Served</option><option value="no"' + (state._fserved === 'no' ? ' selected' : '') + '>Not Served</option></select></div>' +
       '<div class="field"><label>Visit</label><select data-change="fvisit">' +
@@ -2939,7 +2953,7 @@
       '<button class="ghost" data-action="agentClear">' + t('Clear') + '</button>' +
       (restricted ? '' : '<button class="ghost mini" data-action="locExport" title="Download all agents that have a physical location">' + svg('pin') + ' Locations</button>') +
       (isManager() ? '<button class="ghost mini" data-action="agentsExport" title="' + esc(t('Every agent, one sheet per BDO')) + '">' + svg('download') + ' ' + t('All agents') + '</button>' : '') +
-      '<div class="spacer"></div><span class="note" id="agentsInfo">Loading...</span></div>' +
+      '<div class="spacer"></div><span class="note fbox-keep" id="agentsInfo">Loading...</span></div>' +
       '<div class="panel wide"><div class="tablewrap tall cardwrap"><table class="cardable"><thead><tr><th>Account</th><th>Name</th><th>Phone</th><th>Branch</th><th>Physical Location</th><th>KPIs &mdash; Served / Visit / APK / Active</th>' +
       '</tr></thead><tbody id="agentsBody"></tbody></table></div>' +
       '<div class="row" style="margin-top:12px;align-items:center"><button class="ghost" id="agentsPrev" data-action="prevPage">Prev</button>' +
@@ -3631,7 +3645,7 @@
 
       v.innerHTML =
         '<h1 class="page-title">' + t('My Agent Base') + '</h1>' +
-        '<p class="page-sub">' + esc(d.month) +
+        '<p class="page-sub">' + esc(monthWords(d.month)) +
         ' &middot; <span class="pill ' + (d.monthStatus === 'OPEN' ? 'gold' : 'dim') + '">' + esc(d.monthStatus || '-') + '</span>' +
         /* it is the branch that makes the round now, so say so here */
         ' &middot; ' + t('Every agent in your branch. The OM assigns the branch; the agents follow it.') +
@@ -3640,7 +3654,6 @@
         card('check', t('My agents'), fmt(all.length)) +
         card('flame', t('High earners'), fmt(all.length - byBand.F), t('LIST A-E')) +
         card('users', t('My branch base'), fmt(d.counts.total)) +
-        card('cal', t('Month'), d.month) +
         '</div>' +
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:8px">' +
         '<h2 style="margin:0">' + svg('phone') + (showNew ? t('Agents no branch holds') : t('My agents')) + ' (' + list.length + ')</h2>' +
@@ -3657,9 +3670,10 @@
         (showNew ? '<p class="note" style="margin:0 0 8px">' +
           t('Agents in the company database whose branch is not assigned to any BDO. Serving one still counts for you, but he joins your round only when the OM gives his branch to you.') + ' ' +
           t('Agents whose physical location nobody has captured are here too - go, find the place and pin it.') + '</p>' : '') +
-        '<div class="row filters" style="margin-bottom:6px">' +
-        '<div class="field" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
+        '<div class="row filters fbox' + (state._fboxOpen ? ' open' : '') + '" style="margin-bottom:6px">' +
+        '<div class="field fbox-keep" style="flex:1;min-width:160px"><label>' + t('Search') + '</label>' +
         '<input id="baseSearch" placeholder="' + esc(t('name, acc, phone, branch, location...')) + '" value="' + esc(state._baseSearch || '') + '" autocomplete="off"></div>' +
+        fboxButton([fld, fk, fs, fl, fbr, fac, state._baseSort && state._baseSort !== 'band' ? 1 : ''].filter(Boolean).length) +
         '<div class="field"><label>' + t('Search in') + '</label><select data-change="baseField">' +
         [['', t('Everything')], ['name', t('Agent')], ['acc', 'Acc'], ['phone', t('Phone')],
          ['branch', t('Branch')], ['location', t('Location')]].map(function (o) {
@@ -4465,7 +4479,9 @@
       kx += 60 + 300;
     });
     /* which file the float column was read from */
-    var note = d.floatFrom ? 'Float: performance file of ' + d.floatFrom.at : 'Float: no performance file yet';
+    var note = d.floatFrom
+      ? (d.actFromFile ? 'Float and activeness' : 'Float') + ': performance file of ' + d.floatFrom.at
+      : 'Float: no performance file yet';
     text(note, W - M, ky, 1000, 30, '#555555', 'right', 600);
     return cv;
   }
@@ -4518,7 +4534,9 @@
     }
     var last = aoa.length;
     aoa.push([]);
-    if (d.floatFrom) aoa.push(['Float served from the performance file uploaded ' + d.floatFrom.at + '.']);
+    if (d.floatFrom) aoa.push([(d.actFromFile ? 'Float served and activeness' : 'Float served') +
+      ' from the performance file uploaded ' + d.floatFrom.at + '.' +
+      (d.actFromFile ? ' Activeness compares that file\'s previous-month and this-month columns.' : '')]);
     /* the weights the scores were made with - the office monthly targets */
     var WN = { serving: 'Served', float: 'Float', visits: 'Visits', apk: 'APK', activeness: 'Activeness', accel: 'Txn Acceleration' };
     var wl = Object.keys(d.weights || {}).filter(function (k) { return Number(d.weights[k]) > 0; })
@@ -7422,6 +7440,13 @@
       return;
     }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
+    if (a === 'fboxToggle') {
+      state._fboxOpen = !state._fboxOpen;
+      var fbx = node.closest('.fbox');
+      if (fbx) fbx.classList.toggle('open', !!state._fboxOpen);
+      node.setAttribute('aria-expanded', state._fboxOpen ? 'true' : 'false');
+      return;
+    }
     if (a === 'fuTab') { state._fuTab = node.getAttribute('data-t'); var fb = elById('fuBox'); if (fb && state._fu) fb.innerHTML = followupHtml(state._fu); return; }
     if (a === 'fuExport') { followupExport(); return; }
     if (a === 'baseScope') { state._baseNew = node.getAttribute('data-v'); renderTab(); return; }

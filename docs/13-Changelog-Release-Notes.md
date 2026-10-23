@@ -5,6 +5,45 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.94.0 — 2026-10-23 · The new look, step 3: lists; activeness the bank's way
+
+### Branch report: activeness now matches the bank
+
+- **What was wrong:** the 22 Oct report showed 28 woken and a net of −16. The bank's figures were 25
+  woken and a net of −24 (2,175 active in October against 2,199 in September). The report counted
+  agents woken through the month's wake credits, which include BDO ticks, and measured "lost" against
+  the base file. The bank reads only the performance file's two columns.
+- **Now the PNG and the Excel read the same two columns, agent by agent.**
+  - Woken: not active last month, active this month.
+  - Lost: active last month, not active this month. A blank status counts as not active.
+  - Net is exactly "active now minus active then", which is the bank's figure.
+- **Each performance-file row now keeps both columns** (schema v34: `service_history.act_prev` and
+  `act_cur`).
+- **Older files:** a file uploaded before this release kept no previous column, so the report uses
+  the old reading until that file is uploaded again. **Re-upload the 22 Oct file once after
+  deploying.**
+- **The notes say where the numbers came from:** the PNG footnote reads "Float and activeness:
+  performance file of …", and the Excel note adds the same.
+
+### Lists: the filters fold away on a phone
+
+- **All Agents and My Agent Base:** the search box stays. The other filters sit behind one
+  **Filters** button, which shows how many filters are on. The first agent now appears on the first
+  screen instead of below it.
+- **A computer still shows every filter,** as before.
+- **My Agent Base:** the "Month" card is gone, because the month already reads "October 2026" under
+  the title.
+
+### Fix: the false "App files do not match" warning
+
+- **The cause:** the app's own version number (`app.js`) had stayed at 1.79.0 since v1.80, while the
+  server moved on. The page compared the two and warned on every release.
+- **The fix:** both numbers now say 1.94.0.
+
+APP_VERSION 1.94.0 (server and app), schema v34, assets bumped to v112.
+
+---
+
 ## v1.93.0 — 2026-10-23 · The new look, step 2: the dashboards
 
 ### OM dashboard: the office result first
