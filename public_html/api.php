@@ -5197,7 +5197,7 @@ try {
       /* the ticks, newest first, counted to the officer who made them */
       $claims = array();
       try {
-        $cq = db()->prepare("SELECT c.agent_id, c.bdo, c.at, c.status, c.target, c.txn, a.name, a.acc, TRIM(a.branch) branch
+        $cq = db()->prepare("SELECT c.agent_id, c.bdo, c.at, c.status, c.target, c.txn, a.name, a.acc, a.phone, TRIM(a.branch) branch
                              FROM accel_claims c JOIN agents a ON a.id = c.agent_id
                              WHERE c.month = ?$ex ORDER BY c.at DESC LIMIT 1500");
         $cq->execute(array($month));
@@ -5211,7 +5211,8 @@ try {
           $aid = (int)$c['agent_id'];
           /* a tick still waiting shows the latest file's reading; a checked one, what checked it */
           $x = ($st === 'pending' && isset($accel[$aid])) ? $accel[$aid] : null;
-          $claims[] = array('agentId' => $aid, 'name' => $c['name'], 'acc' => $c['acc'], 'branch' => (string)$c['branch'],
+          $claims[] = array('agentId' => $aid, 'name' => $c['name'], 'acc' => $c['acc'], 'phone' => (string)$c['phone'],
+                            'branch' => (string)$c['branch'],
                             'bdo' => $b, 'bdoName' => isset($names[$b]) ? $names[$b] : $b,
                             'at' => substr((string)$c['at'], 0, 16), 'today' => $isToday, 'status' => $st,
                             'target' => $x ? $x['target'] : (int)$c['target'], 'txn' => $x ? $x['txn'] : (int)$c['txn']);

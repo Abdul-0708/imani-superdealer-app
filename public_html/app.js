@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.97.0';
+  var APP_VERSION = '1.98.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -920,6 +920,8 @@
     { key: 'dashboard',   label: 'Dashboard',   icon: 'grid' },
     { key: 'mybase',      label: 'My Branch',   icon: 'phone' },
     { key: 'agents',      label: 'Agents',      icon: 'users' },
+    /* the acceleration race (v1.98): its own entry while the officers race */
+    { key: 'race',        label: 'Txn Acceleration', icon: 'zap' },
     { key: 'performance', label: 'Performance', icon: 'percent' },
     { key: 'reports',     label: 'Reports',     icon: 'upload' },
     { key: 'bdos',        label: 'Team',        icon: 'users' },
@@ -1203,6 +1205,7 @@
         return;
       }
       if (m.key === 'dashboard' && (can('dashboard', 'v') || can('mybase', 'v'))) out.push(m);
+      if (m.key === 'race' && (isManager() || can('mybase', 'v'))) out.push(m);
       /* the officer window - the team leader above all, since approving route
        * plans and float shortages is his job */
       if (m.key === 'bdos' && (isManager() || (!isFieldUser() && can('reports', 'v')))) out.push(m);
@@ -1257,7 +1260,7 @@
    * B..."), so the bar gets its own short forms. Same destination, fewer
    * letters - a truncated label teaches nobody anything. */
   var BOTNAV_SHORT = {
-    mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home',
+    mybase: 'My Base', daily: 'Report', agents: 'Agents', dashboard: 'Home', race: 'Txn Acc',
     bdos: 'BDOs', inbox: 'Messages', upload: 'Upload',
     targets: 'Targets', commission: 'Commission', data: 'Settings'
   };
@@ -1397,6 +1400,7 @@
     else if (key === 'agents') viewAgents(v);
     else if (key === 'activeness') viewActiveness(v);
     else if (key === 'followup') viewFollowup(v);
+    else if (key === 'race') viewRace(v);
     else if (key === 'fuel') viewFuel(v);
     else if (key === 'mybase') viewMyBase(v);
     else if (key === 'daily') viewDaily(v);
@@ -2347,6 +2351,126 @@
       toast(e.message, 'err');
     });
   }
+  /*
+   * THE RACE PAGE (v1.98): the board, and for an officer his own agents still
+   * short of their withdraw target - fewest left first, each with the tick -
+   * so he can work the race from one place.
+   */
+  function viewRace(v) {
+    var mine = !isManager() && can('mybase', 'v');
+    v.innerHTML = '<h1 class="page-title">' + t('Txn Acceleration') + '</h1>' +
+      '<p class="page-sub">' + (mine
+        ? t('Tick each agent of yours once he has reached his withdraw target. The next performance file checks every tick.')
+        : t('Every BDO\'s ticks today and this month, checked by each performance file.')) + '</p>' +
+      '<div id="raceBox"><div class="note">' + t('Loading') + '...</div></div>' +
+      (mine ? '<div id="raceMine"></div>' : '');
+    accelRaceLoad();
+    if (mine) raceMineLoad();
+  }
+  function raceMineLoad() {
+    var box = elById('raceMine'); if (!box) return;
+    api('followup', { qs: '&month=' + encodeURIComponent(state.openMonth || curMonth()) }).then(function (d) {
+      if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
+      var b2 = elById('raceMine'); if (!b2) return;
+      b2.innerHTML = raceMineHtml(d);
+      var sb = elById('raceSearch');
+      if (sb) sb.addEventListener('input', function () {
+        var q = sb.value.trim().toLowerCase();
+        b2.querySelectorAll('tbody tr[data-s]').forEach(function (tr) {
+          tr.style.display = !q || tr.getAttribute('data-s').indexOf(q) >= 0 ? '' : 'none';
+        });
+      });
+    }).catch(function (e) { var b3 = elById('raceMine'); if (b3) b3.innerHTML = errBox(e); });
+  }
+  function raceMineHtml(d) {
+    var editable = d.month === (state.openMonth || d.month);
+    var rows = (d.accel || []).map(function (a, i) {
+      return '<tr data-s="' + esc(((a.name || '') + ' ' + (a.acc || '') + ' ' + (a.branch || '')).toLowerCase()) + '">' +
+        '<td class="c-meta" data-l="No.">' + (i + 1) + '</td>' +
+        '<td class="c-name">' + esc(a.name) + ' ' + bandPill(a.band) + '<div class="note">' + esc(a.acc) + '</div></td>' +
+        '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
+        '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
+        '<td class="c-meta" data-l="' + esc(t('Txn / target')) + '">' + fmt(a.txn) + ' / ' + fmt(a.target) + '</td>' +
+        '<td class="c-kpis"><span class="kchip bad-off">' + fmt(a.left) + ' ' + t('left') + '</span>' +
+        accelClaimHtml({ id: a.id, accel: { done: false }, accelClaim: a.claim }, editable) + '</td></tr>';
+    }).join('') || '<tr><td colspan="6">' + emptyState('zap', t('Nobody pending'),
+      d.accelTotal ? t('Every agent with a target has reached it.') : t('No withdraw targets yet this month.')) + '</td></tr>';
+    return '<div class="panel"><h2>' + svg('users') + t('My agents still short') + ' (' + fmt((d.accel || []).length) + ')</h2>' +
+      '<p class="note">' + fmt(d.accelDone) + ' ' + t('of') + ' ' + fmt(d.accelTotal) + ' ' +
+      t('achieved in the file. Fewest transactions left at the top.') + '</p>' +
+      ((d.accel || []).length > 8
+        ? '<div class="field" style="margin-bottom:10px"><label>' + t('Search') + '</label><input id="raceSearch" autocomplete="off" placeholder="' +
+          esc(t('name, acc, branch...')) + '"></div>' : '') +
+      '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>No.</th><th>' + t('Agent') + '</th><th>' + t('Phone') +
+      '</th><th>' + t('Branch') + '</th><th>' + t('Txn / target') + '</th><th>' + t('Left') + '</th></tr></thead><tbody>' + rows +
+      '</tbody></table></div></div>';
+  }
+  /*
+   * THE TICKS AS A WORKBOOK (v1.98): today's by default, the month's when that
+   * list is showing. A summary of every BDO, every tick on one sheet, then one
+   * sheet per BDO with his own agents - the way the office hands lists out.
+   */
+  function raceExcel() {
+    var d = state._race; if (!d) return;
+    if (!xlsxReady()) return;
+    var list = state._raceList === 'month' ? 'month' : 'today';
+    var claims = (d.claims || []).filter(function (c) { return list === 'month' || c.today; });
+    if (!claims.length) { toast(list === 'today' ? t('Nobody ticked yet today') : t('No ticks this month yet'), 'warn'); return; }
+    var ST = { pending: 'Waiting for the file', confirmed: 'Confirmed by the file', short: 'Still short', nofile: 'Not in the file' };
+    var when = list === 'today'
+      ? new Date(d.today + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : d.monthName;
+    var stamp = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Nairobi', day: 'numeric', month: 'short', year: 'numeric',
+                                                   hour: '2-digit', minute: '2-digit' });
+    function top() {
+      return [['HARDWARE SUPERMARKETS – CRDB SUPER AGENT'], ['TRANSACTION ACCELERATION – AGENTS TICKED AS FINISHED'],
+              [(list === 'today' ? 'Day: ' : 'Month: ') + when], ['Downloaded: ' + stamp], []];
+    }
+    var by = {}, order = [];
+    claims.forEach(function (c) { if (!by[c.bdo]) { by[c.bdo] = []; order.push(c.bdo); } by[c.bdo].push(c); });
+    order.sort(function (x, y) { return by[y].length - by[x].length || String(by[x][0].bdoName).localeCompare(by[y][0].bdoName); });
+    function count(cs, st) { return cs.filter(function (c) { return c.status === st; }).length; }
+
+    var sum = top().concat([['No.', 'BDO', 'Agents ticked', 'Confirmed', 'Still short', 'Waiting for the file', 'Not in the file']]);
+    order.forEach(function (b, i) {
+      var cs = by[b];
+      sum.push([i + 1, cs[0].bdoName, cs.length, count(cs, 'confirmed'), count(cs, 'short'), count(cs, 'pending'), count(cs, 'nofile')]);
+    });
+    sum.push(['', 'ALL BDOs', claims.length, count(claims, 'confirmed'), count(claims, 'short'), count(claims, 'pending'), count(claims, 'nofile')]);
+
+    var HEAD = ['No.', 'Agent Acc', 'Agent Name', 'Phone', 'Branch', 'Ticked at', 'Withdraw Txns', 'Withdraw Target', 'Balance', 'Status'];
+    function rowOf(c, i) {
+      return [i + 1, c.acc, c.name, c.phone || '', c.branch, list === 'today' ? c.at.slice(11) : c.at,
+              c.txn, c.target, Math.max(0, c.target - c.txn), ST[c.status] || c.status];
+    }
+    var all = top().concat([['No.', 'BDO'].concat(HEAD.slice(1))]);
+    var n = 0;
+    order.forEach(function (b) { by[b].forEach(function (c) { var r = rowOf(c, n++); all.push([r[0], c.bdoName].concat(r.slice(1))); }); });
+
+    var wb = XLSX.utils.book_new();
+    var cols = [{ wch: 6 }, { wch: 16 }, { wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 15 }, { wch: 9 }, { wch: 20 }];
+    var ws = XLSX.utils.aoa_to_sheet(sum);
+    ws['!cols'] = [{ wch: 6 }, { wch: 26 }, { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 19 }, { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+    ws = XLSX.utils.aoa_to_sheet(all);
+    ws['!cols'] = [{ wch: 6 }, { wch: 22 }].concat(cols.slice(1));
+    XLSX.utils.book_append_sheet(wb, ws, 'All BDOs');
+    var used = { summary: 1, 'all bdos': 1 };
+    order.forEach(function (b) {
+      var cs = by[b];
+      var aoa = top().concat([['BDO: ' + cs[0].bdoName + ' – ' + cs.length + (cs.length === 1 ? ' agent ticked' : ' agents ticked')], [], HEAD]);
+      cs.forEach(function (c, i) { aoa.push(rowOf(c, i)); });
+      /* a sheet name is 31 characters at most and some characters are not allowed */
+      var nm = String(cs[0].bdoName || b).replace(/[\[\]:*?\/\\]/g, ' ').trim().slice(0, 28) || 'BDO';
+      var key = nm.toLowerCase(), k = 2;
+      while (used[key]) { nm = nm.slice(0, 26) + ' ' + k++; key = nm.toLowerCase(); }
+      used[key] = 1;
+      var s2 = XLSX.utils.aoa_to_sheet(aoa);
+      s2['!cols'] = cols;
+      XLSX.utils.book_append_sheet(wb, s2, nm);
+    });
+    XLSX.writeFile(wb, 'Txn acceleration ticks - ' + when + '.xlsx');
+  }
   /* the board on every dashboard: today's count, each officer, and the agents */
   function accelRaceLoad() {
     var box = elById('raceBox'); if (!box) return;
@@ -2412,7 +2536,9 @@
       d.open ? t('Tick an agent from My Branch, the agent list or Follow-up once he has reached his withdraw target.') : '') + '</td></tr>';
     var listHead = '<div class="row" style="gap:6px;margin-bottom:8px">' +
       '<button class="role-chip' + (list === 'today' ? ' active' : '') + '" data-action="raceList" data-v="today">' + t('Today') + ' <b>' + fmt(todays.length) + '</b></button>' +
-      '<button class="role-chip' + (list === 'month' ? ' active' : '') + '" data-action="raceList" data-v="month">' + t('This month') + ' <b>' + fmt(all.length) + '</b></button></div>';
+      '<button class="role-chip' + (list === 'month' ? ' active' : '') + '" data-action="raceList" data-v="month">' + t('This month') + ' <b>' + fmt(all.length) + '</b></button>' +
+      '<div class="spacer"></div><button class="ghost mini race-xl" data-action="raceExcel">' + svg('download') + ' ' +
+      (list === 'today' ? t('Excel - today, per BDO') : t('Excel - this month, per BDO')) + '</button></div>';
     return '<div class="panel race">' + head + hero + board + listHead +
       '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>' + t('Agent') + '</th><th>' + t('Branch') + '</th><th>BDO</th><th>' +
       t('When') + '</th><th>' + t('Txn / target') + '</th><th>' + t('Status') + '</th></tr></thead><tbody>' + agentRows + '</tbody></table></div></div>';
@@ -7643,6 +7769,7 @@
       }).catch(function (e) { toast(e.message, 'err'); });
       return;
     }
+    if (a === 'raceExcel') { raceExcel(); return; }
     if (a === 'raceList') {
       state._raceList = node.getAttribute('data-v');
       var rb = elById('raceBox');

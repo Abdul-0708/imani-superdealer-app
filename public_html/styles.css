@@ -1395,3 +1395,6 @@ body.light :where(#view) :where(input,select,textarea):not(.panel *):not(.card *
   .race-big span{margin-top:0}
   .race-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+/* the Excel button keeps its size beside the Today / This month chips */
+.row>button.ghost.race-xl{flex:0 0 auto}
+@media (max-width:520px){.row>button.ghost.race-xl{flex:1 1 100%}}

@@ -5,6 +5,35 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.98.0 — 2026-10-27 · The race gets its own tab, and an Excel download
+
+### A Txn Acceleration entry in the sidebar
+
+- **Who sees it:** BDOs and the OM.
+- **On a phone** it is one of the four bottom buttons ("Txn Acc"). Flags moves under More, which
+  still carries the Flags badge.
+- **The page:** the race board (today, this month, every BDO and the ticked agents). Below it, a BDO
+  gets **My agents still short**: every agent in his branches below his withdraw target, fewest
+  left first, each with its **Mark finished** tick. A search box appears when the list is long.
+- **The dashboards keep the race panel** as before.
+
+### Excel download of the ticked agents
+
+- **Where:** a button beside **Today / This month** on the race board, on the dashboards and on the
+  new page. It downloads whichever list is showing: today's by default, or the month's.
+- **The workbook:**
+  - **Summary:** every BDO with agents ticked, confirmed, still short, waiting for the file and not
+    in the file, plus an ALL BDOs total.
+  - **All BDOs:** every ticked agent with his BDO.
+  - **One sheet per BDO** with his own agents: acc, name, phone, branch, time ticked, withdraw
+    transactions, target, balance and status.
+- **File name:** "Txn acceleration ticks - 27 Oct 2026.xlsx" or "... - October 2026.xlsx".
+- **Server change:** the race board now also sends each agent's phone.
+
+APP_VERSION 1.98.0, assets bumped to v116. No database change.
+
+---
+
 ## v1.97.0 — 2026-10-27 · The transaction acceleration race (schema v36)
 
 ### The OM opens it
