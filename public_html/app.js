@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.98.0';
+  var APP_VERSION = '1.98.1';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -2330,6 +2330,27 @@
     return '<span class="kchip bad-off" title="' + esc(t('Ticked by') + ' ' + c.by + ' ' + c.at) + '">' +
       (c.status === 'short' ? t('File: still short') : t('Not in the file')) + '</span>' + tick;
   }
+  /*
+   * IS THE RACE OPEN? Said in one line above the lists (v1.98.1). Ticking
+   * starts closed, and while it was closed the Mark finished button simply
+   * did not appear - nothing on the screen said why. The OM gets the switch
+   * right here; an officer is told what to do, or (where always) that it is
+   * the OM who opens it.
+   */
+  function raceBanner(always) {
+    var on = !!state.accelOpen;
+    if (isManager()) {
+      return '<div class="race-banner' + (on ? ' on' : '') + '">' + svg('zap') + '<span>' +
+        (on ? t('Txn acceleration ticking is OPEN - BDOs can mark agents finished.')
+            : t('Txn acceleration ticking is CLOSED - BDOs cannot mark agents finished until you open it.')) + '</span>' +
+        '<button class="' + (on ? 'ghost' : 'btn') + ' mini" data-action="accelToggle" data-open="' + (on ? '0' : '1') + '">' +
+        (on ? t('Close ticking') : t('Open ticking')) + '</button></div>';
+    }
+    if (!can('mybase', 'e') || (!on && !always)) return '';
+    return '<div class="race-banner' + (on ? ' on' : '') + '">' + svg('zap') + '<span>' +
+      (on ? t('Ticking is open: tap Mark finished on an agent once he has reached his withdraw target.')
+          : t('Ticking finished agents is closed for now - your OM opens it.')) + '</span></div>';
+  }
   function claimPill(st, left) {
     if (st === 'confirmed') return '<span class="pill ok">' + t('Confirmed') + '</span>';
     if (st === 'short') return '<span class="pill bad">' + t('Still short') + (left > 0 ? ' ' + fmt(left) : '') + '</span>';
@@ -2362,6 +2383,7 @@
       '<p class="page-sub">' + (mine
         ? t('Tick each agent of yours once he has reached his withdraw target. The next performance file checks every tick.')
         : t('Every BDO\'s ticks today and this month, checked by each performance file.')) + '</p>' +
+      (mine ? '<div id="raceBan">' + raceBanner(true) + '</div>' : '') +
       '<div id="raceBox"><div class="note">' + t('Loading') + '...</div></div>' +
       (mine ? '<div id="raceMine"></div>' : '');
     accelRaceLoad();
@@ -2371,6 +2393,7 @@
     var box = elById('raceMine'); if (!box) return;
     api('followup', { qs: '&month=' + encodeURIComponent(state.openMonth || curMonth()) }).then(function (d) {
       if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
+      var rbn = elById('raceBan'); if (rbn) rbn.innerHTML = raceBanner(true);
       var b2 = elById('raceMine'); if (!b2) return;
       b2.innerHTML = raceMineHtml(d);
       var sb = elById('raceSearch');
@@ -2583,6 +2606,7 @@
       /* the month decides which KPI chips this list draws */
       if (d.activeKpis) state.activeKpis = d.activeKpis;
       if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
+      var rbn = elById('raceBan'); if (rbn) rbn.innerHTML = raceBanner(false);
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var cols = 6;
       var rows = (d.items || []).map(function (a) { return agentRowHtml(a, editable, d.restricted); }).join('')
@@ -3176,6 +3200,7 @@
       '<p class="page-sub">' + (restricted
         ? t('Live KPI status - a KPI already done shows who did it, so nobody repeats it. Work on the ones not ready.')
         : t('Master list with live KPI status.')) + '</p>' +
+      '<div id="raceBan"></div>' +
       (isManager() ? branchAssignHtml() : '') +
       (isManager() ? baseDiagHtml() : '') +
       '<div class="toolbar fbox' + (state._fboxOpen ? ' open' : '') + '">' +
@@ -3919,6 +3944,7 @@
         /* it is the branch that makes the round now, so say so here */
         ' &middot; ' + t('Every agent in your branch. The OM assigns the branch; the agents follow it.') +
         ((d.branches || []).length ? ' &middot; <span class="pill fire">' + esc((d.branches || []).join(', ')) + '</span>' : '') + '</p>' +
+        raceBanner(false) +
         '<div class="grid cards" style="margin-bottom:16px">' +
         card('check', t('My agents'), fmt(all.length)) +
         card('flame', t('High earners'), fmt(all.length - byBand.F), t('LIST A-E')) +
@@ -7765,7 +7791,7 @@
       api('accel_claims_toggle', { body: { open: openIt ? '1' : '0' } }).then(function (r) {
         state.accelOpen = !!r.open;
         toast(r.open ? t('Ticking is open - every BDO can mark finished agents') : t('Ticking is closed'), 'ok');
-        accelRaceLoad();
+        renderTab();
       }).catch(function (e) { toast(e.message, 'err'); });
       return;
     }

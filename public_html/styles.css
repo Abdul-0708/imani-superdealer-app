@@ -1398,3 +1398,10 @@ body.light :where(#view) :where(input,select,textarea):not(.panel *):not(.card *
 /* the Excel button keeps its size beside the Today / This month chips */
 .row>button.ghost.race-xl{flex:0 0 auto}
 @media (max-width:520px){.row>button.ghost.race-xl{flex:1 1 100%}}
+/* is the race open - one line above the lists (v1.98.1) */
+.race-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:14px;margin:0 0 12px;
+  background:var(--sunk,var(--panel2));color:var(--muted);font-size:13px;font-weight:600;line-height:1.35}
+.race-banner svg{width:18px;height:18px;flex:none}
+.race-banner span{flex:1 1 220px}
+.race-banner button{flex:0 0 auto}
+.race-banner.on{background:var(--accent-soft,rgba(255,140,26,.12));color:var(--fire2)}

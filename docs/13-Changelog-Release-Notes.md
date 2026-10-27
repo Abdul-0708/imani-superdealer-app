@@ -5,6 +5,22 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.98.1 — 2026-10-27 · Say when the race is closed
+
+- **The problem:** ticking starts closed, and only the OM opens it. While it was closed, the
+  **Mark finished** button simply did not appear, and nothing said why. The only Open button was on
+  the race panel lower down the OM's dashboard.
+- **OM:** the agent list now opens with one line saying whether ticking is OPEN or CLOSED, with the
+  **Open ticking / Close ticking** button beside it. Opening or closing redraws the screen, so every
+  button and line updates at once.
+- **BDO:** while ticking is open, My Branch and the agent list say so and explain the tick. The Txn
+  Acceleration page always says which it is, so a BDO knows when the OM still has to open it.
+- **No change to how ticking works.**
+
+APP_VERSION 1.98.1, assets bumped to v117. No database change.
+
+---
+
 ## v1.98.0 — 2026-10-27 · The race gets its own tab, and an Excel download
 
 ### A Txn Acceleration entry in the sidebar
