@@ -4,7 +4,7 @@
 
   /* Must match APP_VERSION in lib/helpers.php. If they differ, only SOME files
    * were uploaded - the app says so loudly instead of behaving strangely. */
-  var APP_VERSION = '1.96.0';
+  var APP_VERSION = '1.97.0';
 
   var state = { user: null, perms: {}, tab: 'dashboard', month: null, months: [], openMonth: null, agentPage: 1, agentPer: 50, _agentSeq: 0, _roles: [], _permMatrix: {}, _permRole: 'om' };
 
@@ -1021,7 +1021,7 @@
   function boot() {
     applyTheme();
     watchFieldLabels();   /* ties every field's label to its control, for ever after */
-    api('me').then(function (d) { state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.tab = defaultTab(); render(); })
+    api('me').then(function (d) { state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.accelOpen = !!d.accelClaimsOpen; state.tab = defaultTab(); render(); })
       .catch(function () { state.user = null; render(); });
   }
   function defaultTab() {
@@ -1155,7 +1155,7 @@
   }
   function do2fa() {
     api('login_2fa', { body: { code: elById('lCode').value.trim() } })
-      .then(function (d) { state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.tab = defaultTab(); render(); })
+      .then(function (d) { state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.accelOpen = !!d.accelClaimsOpen; state.tab = defaultTab(); render(); })
       .catch(function (e) { var el = elById('lErr'); if (el) el.textContent = e.message; });
   }
   /* 2FA enrolment: QR (or manual key) + a code to prove the scan worked. */
@@ -1416,7 +1416,7 @@
     api('login', { body: { username: elById('lUser').value.trim(), password: elById('lPass').value } })
       .then(function (d) {
         if (d.need2fa) { render2fa(); return; }
-        state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.tab = defaultTab(); render();
+        state.user = d.user; state.perms = d.perms; state.serverVersion = d.serverVersion; state.accelOpen = !!d.accelClaimsOpen; state.tab = defaultTab(); render();
         /* still on the shared setup password: the server will refuse
          * everything else, so ask for a new one straight away */
         if (d.mustChange) pwdModal(true);
@@ -1768,6 +1768,7 @@
         /* v1.93: his score first, on the one dark card - then his branch */
         (d.performance && !sum ? scoreHero(d.performance, d.month) : '') +
         '<div class="grid cards dash-tiles bdo-tiles">' + cards + '</div>' +
+        '<div id="raceBox"></div>' +
         scorePanel +
         standPanel +
         heScorePanel +
@@ -1775,6 +1776,7 @@
         livePanel.replace(/<\/div>$/, teamBoard + '</div>');
       liveTodayLoad();
       scoreHistoryLoad('myScoreHist', '');
+      accelRaceLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
 
@@ -2161,6 +2163,7 @@
         '<h2 class="sec-head">' + svg('upload') + ' ' + t('THE OFFICE RESULT - FROM THE PERFORMANCE FILE') + '</h2>' +
         '<p class="page-sub">' + t('The office result exactly as the uploaded file reports it. This is the number the commission is settled on.') + '</p>' +
         '<div class="grid cards dash-tiles">' + tiles + '</div>' +
+        '<div id="raceBox"></div>' +
         '<div id="flagAlert"></div>' +
         /* LIVE: what the team is doing today, with times */
         '<div class="panel"><div class="row" style="align-items:center;margin-bottom:6px">' +
@@ -2181,6 +2184,7 @@
         (cb ? combinedSection(cb) : '');
       liveTodayLoad();
       flagAlertLoad();
+      accelRaceLoad();
     }).catch(function (e) { v.innerHTML = errBox(e); });
   }
   function dashSettingsSave() {
@@ -2294,6 +2298,125 @@
       ' <small>' + fmt(x.txn) + '/' + fmt(x.target) + '</small></span>';
   }
   function accelRowCls(a) { return a && a.accel && a.accel.done ? ' class="accel-done"' : ''; }
+  /*
+   * THE ACCELERATION RACE (v1.97): the tick an officer puts on an agent he
+   * believes has reached his withdraw target. Only while the OM has the
+   * ticking open, only on an agent the file does not already show finished.
+   * Once ticked it reads "waiting for the file" until the next performance
+   * upload confirms it or says he is still short - and then he can be ticked
+   * again when he really is there.
+   */
+  function accelClaimHtml(a, editable) {
+    var x = a && a.accel; if (!x || x.done) return '';
+    var c = a.accelClaim;
+    var me = state.user ? state.user.username : '';
+    var tick = (editable && state.accelOpen && can('mybase', 'e') && !isOfficeRole())
+      ? '<button class="kchip todo" data-action="accelClaim" data-id="' + a.id + '">' + svg('check') + ' ' + t('Mark finished') + '</button>'
+      : '';
+    if (!c) return tick;
+    if (c.status === 'pending' || c.status === 'confirmed') {
+      var rm = c.status === 'pending' && ((c.by === me && can('mybase', 'e')) || isManager())
+        ? ' <button class="kchip-x" title="' + esc(t('Remove this tick')) + '" aria-label="' + esc(t('Remove this tick')) + '" data-action="accelUnclaim" data-id="' + a.id + '">&times;</button>'
+        : '';
+      return '<span class="kchip claim' + (c.status === 'confirmed' ? ' ok' : '') + '" title="' + esc(t('Ticked finished by') + ' ' + c.by + ' ' + c.at) + '">' +
+        svg('check') + ' ' + (c.status === 'confirmed' ? t('Finished - file confirms') : t('Ticked finished')) +
+        ' <small>' + esc(c.by) + '</small>' + rm + '</span>';
+    }
+    /* the file disagreed: say so, and let him tick again once the agent is there */
+    return '<span class="kchip bad-off" title="' + esc(t('Ticked by') + ' ' + c.by + ' ' + c.at) + '">' +
+      (c.status === 'short' ? t('File: still short') : t('Not in the file')) + '</span>' + tick;
+  }
+  function claimPill(st, left) {
+    if (st === 'confirmed') return '<span class="pill ok">' + t('Confirmed') + '</span>';
+    if (st === 'short') return '<span class="pill bad">' + t('Still short') + (left > 0 ? ' ' + fmt(left) : '') + '</span>';
+    if (st === 'nofile') return '<span class="pill dim">' + t('Not in the file') + '</span>';
+    return '<span class="pill gold">' + t('Waiting for the file') + '</span>';
+  }
+  function accelClaim(node) {
+    var id = node.getAttribute('data-id');
+    node.disabled = true;
+    api('accel_claim', { body: { agentId: id } }).then(function () {
+      toast(t('Ticked - the next performance file will check it'), 'ok');
+      var me = state.user ? state.user.username : '';
+      node.outerHTML = '<span class="kchip claim">' + svg('check') + ' ' + t('Ticked finished') + ' <small>' + esc(me) + '</small>' +
+        ' <button class="kchip-x" title="' + esc(t('Remove this tick')) + '" aria-label="' + esc(t('Remove this tick')) + '" data-action="accelUnclaim" data-id="' + esc(id) + '">&times;</button></span>';
+      if (elById('raceBox')) accelRaceLoad();
+    }).catch(function (e) {
+      node.disabled = false;
+      if (node.getAttribute('data-label')) node.innerHTML = node.getAttribute('data-label');
+      toast(e.message, 'err');
+    });
+  }
+  /* the board on every dashboard: today's count, each officer, and the agents */
+  function accelRaceLoad() {
+    var box = elById('raceBox'); if (!box) return;
+    api('accel_race').then(function (d) {
+      state._race = d;
+      state.accelOpen = !!d.open;
+      var b2 = elById('raceBox'); if (b2) b2.innerHTML = accelRaceHtml(d);
+    }).catch(function () { var b3 = elById('raceBox'); if (b3) b3.innerHTML = ''; });
+  }
+  function accelRaceHtml(d) {
+    var T = d.totals || {};
+    var mgr = isManager();
+    /* nothing to show an officer while it is closed and nobody has ticked */
+    if (!d.open && !T.month && !mgr) return '';
+    var list = state._raceList === 'month' ? 'month' : 'today';
+    var all = d.claims || [];
+    var todays = all.filter(function (c) { return c.today; });
+    var shown = list === 'month' ? all : todays;
+    function stat(v, label, cls) {
+      return '<div class="race-stat' + (cls ? ' ' + cls : '') + '"><b>' + v + '</b><span>' + label + '</span></div>';
+    }
+    var head = '<div class="row" style="align-items:center;margin-bottom:6px">' +
+      '<h2 style="margin:0">' + svg('zap') + t('Transaction acceleration race') + '</h2>' +
+      (d.open ? '<span class="pill ok">' + t('Ticking open') + '</span>' : '<span class="pill dim">' + t('Ticking closed') + '</span>') +
+      '<div class="spacer"></div>' +
+      (mgr ? '<button class="' + (d.open ? 'ghost' : 'btn') + ' mini" data-action="accelToggle" data-open="' + (d.open ? '0' : '1') + '">' +
+        (d.open ? t('Close ticking') : t('Open ticking')) + '</button>' : '') + '</div>' +
+      '<p class="note" style="margin:0 0 12px">' + (d.open
+        ? t('BDOs tick the agents they believe have reached their withdraw target. The next performance file checks every tick.')
+        : mgr ? t('Open ticking and every BDO can mark the agents he believes have finished their withdraw target. The next performance file checks every tick.')
+              : t('Ticking is closed. These are this month\'s ticks and what the file said about them.')) + '</p>';
+    var hero = '<div class="race-hero"><div class="race-big"><b>' + fmt(T.today || 0) + '</b><span>' +
+      t('agents ticked as finished today') + '</span></div><div class="race-stats">' +
+      stat(fmt(T.month || 0), t('ticked this month')) +
+      stat(fmt(T.confirmed || 0), t('confirmed by the file'), 'ok') +
+      stat(fmt(T.short || 0), t('file: still short'), 'bad') +
+      stat(fmt(T.pending || 0), t('waiting for the file'), 'gold') +
+      stat(fmt(T.achieved || 0) + '<small> / ' + fmt(T.withTarget || 0) + '</small>', t('achieved in the file')) +
+      '</div></div>';
+    var rows = (d.perBdo || []).map(function (p) {
+      var me = p.bdo === d.me;
+      return '<tr' + (me ? ' class="race-me"' : '') + '><td>' + esc(p.name) + (me ? ' <span class="pill fire">' + t('you') + '</span>' : '') + '</td>' +
+        '<td class="race-n">' + fmt(p.today) + '</td><td>' + fmt(p.month) + '</td><td>' + fmt(p.confirmed) + '</td>' +
+        '<td>' + fmt(p.short) + '</td><td>' + fmt(p.pending) + '</td><td>' + fmt(p.achieved) + ' / ' + fmt(p.withTarget) + '</td></tr>';
+    }).join('');
+    var board = '<div class="tablewrap" style="margin-bottom:14px"><table class="race-table"><thead><tr><th>BDO</th><th>' + t('Today') + '</th><th>' +
+      t('This month') + '</th><th>' + t('Confirmed') + '</th><th>' + t('Still short') + '</th><th>' + t('Waiting') + '</th><th>' +
+      t('Achieved in the file') + '</th></tr></thead><tbody>' + rows +
+      '<tr class="race-total"><td>' + t('All BDOs') + '</td><td class="race-n">' + fmt(T.today || 0) + '</td><td>' + fmt(T.month || 0) + '</td><td>' +
+      fmt(T.confirmed || 0) + '</td><td>' + fmt(T.short || 0) + '</td><td>' + fmt(T.pending || 0) + '</td><td>' +
+      fmt(T.achieved || 0) + ' / ' + fmt(T.withTarget || 0) + '</td></tr></tbody></table></div>';
+    var me2 = d.me;
+    var agentRows = shown.map(function (c) {
+      var rm = c.status === 'pending' && (mgr || (c.bdo === me2 && can('mybase', 'e')))
+        ? ' <button class="ghost tiny" data-action="accelUnclaim" data-id="' + c.agentId + '">' + t('Remove') + '</button>' : '';
+      return '<tr><td class="c-name">' + esc(c.name) + '<div class="note">' + esc(c.acc) + '</div></td>' +
+        '<td class="c-meta" data-l="' + esc(t('Branch')) + '">' + esc(c.branch || '-') + '</td>' +
+        '<td class="c-meta" data-l="BDO">' + esc(c.bdoName) + '</td>' +
+        '<td class="c-meta" data-l="' + esc(t('When')) + '">' + esc(list === 'today' ? c.at.slice(11) : c.at) + '</td>' +
+        '<td class="c-meta" data-l="' + esc(t('Txn / target')) + '">' + fmt(c.txn) + ' / ' + fmt(c.target) + '</td>' +
+        '<td class="c-kpis">' + claimPill(c.status, c.target - c.txn) + rm + '</td></tr>';
+    }).join('') || '<tr><td colspan="6">' + emptyState('zap', list === 'today' ? t('Nobody ticked yet today') : t('No ticks this month yet'),
+      d.open ? t('Tick an agent from My Branch, the agent list or Follow-up once he has reached his withdraw target.') : '') + '</td></tr>';
+    var listHead = '<div class="row" style="gap:6px;margin-bottom:8px">' +
+      '<button class="role-chip' + (list === 'today' ? ' active' : '') + '" data-action="raceList" data-v="today">' + t('Today') + ' <b>' + fmt(todays.length) + '</b></button>' +
+      '<button class="role-chip' + (list === 'month' ? ' active' : '') + '" data-action="raceList" data-v="month">' + t('This month') + ' <b>' + fmt(all.length) + '</b></button></div>';
+    return '<div class="panel race">' + head + hero + board + listHead +
+      '<div class="tablewrap cardwrap"><table class="cardable"><thead><tr><th>' + t('Agent') + '</th><th>' + t('Branch') + '</th><th>BDO</th><th>' +
+      t('When') + '</th><th>' + t('Txn / target') + '</th><th>' + t('Status') + '</th></tr></thead><tbody>' + agentRows + '</tbody></table></div></div>';
+  }
   function agentRowHtml(a, editable, restricted) {
     var partnerServed = a.kpi && a.kpi.served && a.kpi.served.by === 'partners';
     /* The pill states the FACT and stops there. Who may act on it is no longer
@@ -2313,7 +2436,7 @@
       '<td class="c-name">' + name + ' ' + bandPill(a.band) + actInfoHtml(a) + '</td>' +
       '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td><td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
       '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
-      '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + '</div></td>' +
+      '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + accelClaimHtml(a, editable) + '</div></td>' +
       '</tr>';
   }
   function agentsBodyLoad() {
@@ -2333,6 +2456,7 @@
       state._agentsMeta = d;
       /* the month decides which KPI chips this list draws */
       if (d.activeKpis) state.activeKpis = d.activeKpis;
+      if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       var cols = 6;
       var rows = (d.items || []).map(function (a) { return agentRowHtml(a, editable, d.restricted); }).join('')
@@ -2401,6 +2525,7 @@
       (isManager() && state._fuBdo ? '&bdo=' + encodeURIComponent(state._fuBdo) : '');
     api('followup', { qs: qs }).then(function (d) {
       state._fu = d;
+      if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
       box.innerHTML = followupHtml(d);
     }).catch(function (e) { box.innerHTML = errBox(e); });
   }
@@ -2442,7 +2567,8 @@
           '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' + who(a) +
           '<td class="c-meta" data-l="target">' + fmt(a.target) + '</td>' +
           '<td class="c-meta" data-l="done">' + fmt(a.txn) + '</td>' +
-          '<td class="c-kpis"><span class="kchip bad-off">' + fmt(a.left) + ' ' + t('left') + '</span></td></tr>';
+          '<td class="c-kpis"><span class="kchip bad-off">' + fmt(a.left) + ' ' + t('left') + '</span>' +
+          accelClaimHtml({ id: a.id, accel: { done: false }, accelClaim: a.claim }, d.month === (state.openMonth || d.month)) + '</td></tr>';
       }).join('') || '<tr><td colspan="' + (all ? 8 : 7) + '">' + emptyState('zap', t('Nobody pending'),
         d.accelTotal ? t('Every agent with a target has reached it.') : t('No withdraw targets yet this month.')) + '</td></tr>';
       body = '<p class="note" style="margin:0 0 8px">' + fmt(d.accelDone) + ' ' + t('of') + ' ' + fmt(d.accelTotal) + ' ' +
@@ -3559,6 +3685,7 @@
       state.month = d.month;
       if (d.activeKpis) state.activeKpis = d.activeKpis;
       if (d.branches) state._myBranches = d.branches;
+      if (d.accelClaimsOpen != null) state.accelOpen = !!d.accelClaimsOpen;
       var editable = can('mybase', 'e') && d.monthStatus === 'OPEN';
       /* NEW = agents the monthly database file brought in that nobody owns yet.
        * He serves one and it joins his round, so this is where his base grows. */
@@ -3641,7 +3768,7 @@
           '<td class="c-meta" data-l="phone">' + telHtml(a.phone) + '</td>' +
           '<td class="c-meta" data-l="location">' + (a.physical_location ? esc(a.physical_location) : '<span class="pill bad">missing</span>') + '</td>' +
           '<td class="c-meta" data-l="branch">' + esc(a.branch || '-') + '</td>' +
-          '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + '</div></td></tr>';
+          '<td class="c-kpis"><div class="kchips">' + kpiChips(a, editable) + accelChip(a) + accelClaimHtml(a, editable) + '</div></td></tr>';
       }).join('') || '<tr><td colspan="6">' + emptyState('phone', t('Nothing here yet'),
         all.length ? t('No agent matches these filters - clear them to see your whole round.')
                    : t('Agents join this list the moment you serve them on the Agents tab.')) + '</td></tr>';
@@ -4848,6 +4975,14 @@
           .filter(function (p) { return kc[p[0]]; })
           .map(function (p) { return fmt(kc[p[0]]) + ' ' + p[1]; }).join(', ') +
         '. ' + t('Erasing this upload puts them back.') + '</div>';
+    }
+    /* v1.97: the acceleration ticks, checked against this file */
+    var ak = d.accelChecked;
+    if (ak && (ak.confirmed || ak.short || ak.nofile)) {
+      s += '<div class="note" style="margin-top:6px"><b>' + t('Acceleration ticks checked against this file') + ':</b> ' +
+        '<span class="pill ok">' + fmt(ak.confirmed) + ' ' + t('confirmed') + '</span> ' +
+        '<span class="pill bad">' + fmt(ak.short) + ' ' + t('still short') + '</span>' +
+        (ak.nofile ? ' <span class="pill dim">' + fmt(ak.nofile) + ' ' + t('not in the file') + '</span>' : '') + '</div>';
     }
     if (d.scoring && d.decides === false) {
       s += '<div class="note" style="margin-top:6px">' +
@@ -7475,6 +7610,45 @@
       return;
     }
     if (a === 'baseBand') { state._baseBand = node.getAttribute('data-b'); renderTab(); return; }
+    if (a === 'accelClaim') {
+      /* tap-and-CONFIRM, like the KPI chips */
+      if (node.getAttribute('data-armed')) {
+        node.removeAttribute('data-armed'); node.classList.remove('arm');
+        accelClaim(node);
+      } else {
+        node.setAttribute('data-armed', '1'); node.setAttribute('data-label', node.innerHTML);
+        node.classList.add('arm'); node.innerHTML = t('Confirm?');
+        setTimeout(function () {
+          if (node.getAttribute('data-armed')) {
+            node.removeAttribute('data-armed'); node.classList.remove('arm');
+            node.innerHTML = node.getAttribute('data-label');
+          }
+        }, 4000);
+      }
+      return;
+    }
+    if (a === 'accelUnclaim') {
+      api('accel_unclaim', { body: { agentId: node.getAttribute('data-id') } }).then(function () {
+        toast(t('Tick removed'), 'ok');
+        renderTab();
+      }).catch(function (e) { toast(e.message, 'err'); });
+      return;
+    }
+    if (a === 'accelToggle') {
+      var openIt = node.getAttribute('data-open') === '1';
+      api('accel_claims_toggle', { body: { open: openIt ? '1' : '0' } }).then(function (r) {
+        state.accelOpen = !!r.open;
+        toast(r.open ? t('Ticking is open - every BDO can mark finished agents') : t('Ticking is closed'), 'ok');
+        accelRaceLoad();
+      }).catch(function (e) { toast(e.message, 'err'); });
+      return;
+    }
+    if (a === 'raceList') {
+      state._raceList = node.getAttribute('data-v');
+      var rb = elById('raceBox');
+      if (rb && state._race) rb.innerHTML = accelRaceHtml(state._race);
+      return;
+    }
     if (a === 'fboxToggle') {
       state._fboxOpen = !state._fboxOpen;
       var fbx = node.closest('.fbox');

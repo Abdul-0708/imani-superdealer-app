@@ -494,6 +494,37 @@ function upgrade_schema($pdo) {
     schema_v35_apply($pdo);
     $pdo->prepare('UPDATE app_settings SET value = "35" WHERE name = "schema_version"')->execute();
   }
+  if ($ver < 36) {
+    schema_v36_apply($pdo);
+    $pdo->prepare('UPDATE app_settings SET value = "36" WHERE name = "schema_version"')->execute();
+  }
+}
+
+/*
+ * v36: THE ACCELERATION RACE.
+ *
+ * One row per agent per month: the officer who ticked him as having reached
+ * his withdraw target, when, and what the next performance file said about
+ * it - pending until a file checks it, then confirmed, short (the file shows
+ * him still below target) or nofile (the file does not list him with a
+ * target). target/txn hold the file's figures once checked.
+ */
+function schema_v36_apply($pdo) {
+  $pdo->exec("CREATE TABLE IF NOT EXISTS accel_claims (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    month CHAR(7) NOT NULL,
+    agent_id INT NOT NULL,
+    bdo VARCHAR(64) NOT NULL,
+    at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(10) NOT NULL DEFAULT 'pending',
+    target INT NOT NULL DEFAULT 0,
+    txn INT NOT NULL DEFAULT 0,
+    checked_upload INT NOT NULL DEFAULT 0,
+    checked_at DATETIME NULL,
+    UNIQUE KEY uq_ac (month, agent_id),
+    INDEX idx_ac_bdo (month, bdo),
+    INDEX idx_ac_up (checked_upload)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 
 /*

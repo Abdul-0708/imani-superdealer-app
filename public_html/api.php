@@ -143,6 +143,7 @@ try {
         'perms' => perms_for_role($u['role']),
         'serverVersion' => APP_VERSION,
         'mustChange' => !empty($_SESSION['must_change']),
+        'accelClaimsOpen' => accel_claims_open(),
       ));
     }
 
@@ -645,12 +646,14 @@ try {
         foreach ($wq->fetchAll() as $r) $wr[$r['agent_id']] = $r['bdo'];
       }
       $accel = $rows ? accel_map($month, $ids) : array();
+      $claims = $rows ? accel_claim_map($month, $ids) : array();
 
       $items = array();
       foreach ($rows as $r) {
         $id = (int)$r['id'];
         $base = array(
           'accel' => isset($accel[$id]) ? $accel[$id] : null,
+          'accelClaim' => isset($claims[$id]) ? $claims[$id] : null,
           'id' => $id, 'acc' => $r['acc'], 'name' => $r['name'], 'phone' => $r['phone'],
           'branch' => $r['branch'], 'physical_location' => $r['physical_location'],
           'kpi' => isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass(),
@@ -671,6 +674,7 @@ try {
                     'pages' => max(1, (int)ceil($total / $limit)),
                     'restricted' => !$full, 'month' => $month, 'monthStatus' => month_status($month),
                     'activeKpis' => kpi_marks_active($month),
+                    'accelClaimsOpen' => accel_claims_open(),
                     'scope' => $scope));
     }
 
@@ -803,9 +807,11 @@ try {
 
       /* transaction acceleration: target, done, left - per agent */
       $accel = accel_map($month, $ids);
+      $claims = accel_claim_map($month, $ids);
       foreach ($agents as &$a) {
         $id = (int)$a['id'];
         $a['accel'] = isset($accel[$id]) ? $accel[$id] : null;
+        $a['accelClaim'] = isset($claims[$id]) ? $claims[$id] : null;
         $a['level'] = isset($prio[$id]) ? 'priority' : (isset($ever[$id]) ? 'new' : 'never');
         $a['kpi'] = isset($kpiMap[$id]) ? $kpiMap[$id] : new stdClass();
         $a['actStatus'] = strtoupper((string)$a['act_current']);
@@ -949,6 +955,7 @@ try {
         /* the nine numbers on his dashboard: where he is and what is left */
         'progress' => base_progress($month, $ids),
         'branches' => $myBranches,
+        'accelClaimsOpen' => accel_claims_open(),
         'agents' => $agents, 'unclaimed' => $uc,
         'performance' => $perf, 'performanceIfCleared' => $perfIfCleared, 'flagCount' => $myFlagCount,
         'standing' => array('base' => $myBase, 'served' => $myServed,
@@ -1743,6 +1750,11 @@ try {
                        WHERE c.cleared_by = ? AND c.kpi = 'active' AND c.source = 'bdo'")->execute(array($id));
         db()->prepare('DELETE FROM kpi_cleared WHERE cleared_by = ?')->execute(array($id));
       } catch (Exception $e) { /* v35 not applied yet */ }
+      /* the race ticks this file checked go back to waiting for a file (v1.97) */
+      try {
+        db()->prepare("UPDATE accel_claims SET status = 'pending', checked_upload = 0, checked_at = NULL WHERE checked_upload = ?")
+            ->execute(array($id));
+      } catch (Exception $e) { /* v36 not applied yet */ }
       db()->prepare('DELETE FROM uploads WHERE id = ?')->execute(array($id));
       /* office snapshot: fall back to the latest remaining upload of that month */
       $lq = db()->prepare('SELECT stats FROM uploads WHERE month = ? ORDER BY id DESC LIMIT 1');
@@ -1769,6 +1781,9 @@ try {
                                      FROM kpi_cleared WHERE source = 'bdo'");
         db()->exec('DELETE FROM kpi_cleared');
       } catch (Exception $e) { /* v35 not applied yet */ }
+      try {
+        db()->exec("UPDATE accel_claims SET status = 'pending', checked_upload = 0, checked_at = NULL");
+      } catch (Exception $e) { /* v36 not applied yet */ }
       $n['uploads'] = db()->exec('DELETE FROM uploads');
       $n['snapshots'] = db()->exec("DELETE FROM app_settings WHERE name LIKE 'month\\_stats\\_%'");
       db()->exec("UPDATE agents SET act_current = '', act_prev = '', act_month = '', partner = 0");
@@ -2902,6 +2917,9 @@ try {
         }
       }
 
+      /* THE RACE: every acceleration tick of the month against this file (v1.97) */
+      $accelChecked = $decides ? accel_claims_verify($month, $uploadId) : null;
+
       /* ================= MONTH-WIDE RECONCILIATION =================
        * Judge every live BDO claim against EVERYTHING the office has reported
        * this month (day 1 onwards), not against the single file being imported.
@@ -3123,7 +3141,8 @@ try {
                     'activeness' => $actSummary,
                     'targetsFixed' => $targetsFixed, 'final' => $isFinal,
                     /* v1.95: what the file took off because it does not show it */
-                    'decides' => $decides, 'kpiCleared' => $kpiCleared));
+                    'decides' => $decides, 'kpiCleared' => $kpiCleared,
+                    'accelChecked' => $accelChecked));
     }
 
     /* ================= TARGETS (typed by OM) ================= */
@@ -5139,6 +5158,162 @@ try {
     }
 
     /*
+     * THE ACCELERATION RACE (v1.97) - the board on every dashboard.
+     *
+     * How many agents were ticked as finished today and this month, each
+     * officer's count beside the total, what the file has confirmed, and the
+     * agents themselves. Office-wide for everybody: the point is that every
+     * officer sees where the others are.
+     */
+    case 'accel_race': {
+      $u = require_auth();
+      $month = open_month();
+      $today = date('Y-m-d');
+      $names = array();
+      foreach (db()->query('SELECT username, name FROM users')->fetchAll() as $r) {
+        $names[$r['username']] = $r['name'] !== '' ? $r['name'] : $r['username'];
+      }
+      $own = branch_owner_map();
+      $ex = perf_station_sql('a', $month);
+      $blank = array('today' => 0, 'month' => 0, 'pending' => 0, 'confirmed' => 0, 'short' => 0, 'nofile' => 0,
+                     'withTarget' => 0, 'achieved' => 0);
+      $per = array();
+      foreach (db()->query('SELECT DISTINCT bdo FROM bdo_branches')->fetchAll() as $r) $per[$r['bdo']] = $blank;
+
+      /* what the file says: agents with a target, and how many reached it, by branch officer */
+      $accel = accel_map($month, null);
+      if (count($accel)) {
+        foreach (db()->query('SELECT a.id, TRIM(a.branch) b FROM agents a WHERE 1' . $ex)->fetchAll() as $r) {
+          $id = (int)$r['id'];
+          if (!isset($accel[$id])) continue;
+          $k = strtolower((string)$r['b']);
+          $o = ($k !== '' && isset($own[$k])) ? $own[$k] : '~';
+          if (!isset($per[$o])) $per[$o] = $blank;
+          $per[$o]['withTarget']++;
+          if ($accel[$id]['done']) $per[$o]['achieved']++;
+        }
+      }
+
+      /* the ticks, newest first, counted to the officer who made them */
+      $claims = array();
+      try {
+        $cq = db()->prepare("SELECT c.agent_id, c.bdo, c.at, c.status, c.target, c.txn, a.name, a.acc, TRIM(a.branch) branch
+                             FROM accel_claims c JOIN agents a ON a.id = c.agent_id
+                             WHERE c.month = ?$ex ORDER BY c.at DESC LIMIT 1500");
+        $cq->execute(array($month));
+        foreach ($cq->fetchAll() as $c) {
+          $b = (string)$c['bdo']; $st = (string)$c['status'];
+          if (!isset($per[$b])) $per[$b] = $blank;
+          $isToday = substr((string)$c['at'], 0, 10) === $today;
+          $per[$b]['month']++;
+          if ($isToday) $per[$b]['today']++;
+          if (isset($per[$b][$st])) $per[$b][$st]++;
+          $aid = (int)$c['agent_id'];
+          /* a tick still waiting shows the latest file's reading; a checked one, what checked it */
+          $x = ($st === 'pending' && isset($accel[$aid])) ? $accel[$aid] : null;
+          $claims[] = array('agentId' => $aid, 'name' => $c['name'], 'acc' => $c['acc'], 'branch' => (string)$c['branch'],
+                            'bdo' => $b, 'bdoName' => isset($names[$b]) ? $names[$b] : $b,
+                            'at' => substr((string)$c['at'], 0, 16), 'today' => $isToday, 'status' => $st,
+                            'target' => $x ? $x['target'] : (int)$c['target'], 'txn' => $x ? $x['txn'] : (int)$c['txn']);
+        }
+      } catch (Exception $e) { /* v36 not applied yet */ }
+
+      $rows = array(); $tot = $blank;
+      foreach ($per as $b => $p) {
+        foreach ($blank as $k => $z) $tot[$k] += $p[$k];
+        if ($b === '~' && !$p['withTarget'] && !$p['month']) continue;
+        $p['bdo'] = $b;
+        $p['name'] = $b === '~' ? 'Unallocated branches' : (isset($names[$b]) ? $names[$b] : $b);
+        $rows[] = $p;
+      }
+      /* the race order: most ticked today, then this month, then what the file confirms */
+      usort($rows, function ($x, $y) {
+        if ($x['bdo'] === '~') return 1;
+        if ($y['bdo'] === '~') return -1;
+        if ($x['today'] !== $y['today']) return $y['today'] - $x['today'];
+        if ($x['month'] !== $y['month']) return $y['month'] - $x['month'];
+        if ($x['achieved'] !== $y['achieved']) return $y['achieved'] - $x['achieved'];
+        return strcmp($x['name'], $y['name']);
+      });
+      respond(array('month' => $month, 'monthName' => date('F Y', strtotime($month . '-01')),
+                    'open' => accel_claims_open(), 'today' => $today, 'me' => $u['username'],
+                    'totals' => $tot, 'perBdo' => $rows, 'claims' => $claims));
+    }
+
+    /* An officer ticks one agent as having reached his withdraw target. */
+    case 'accel_claim': {
+      $u = require_auth();
+      if (!can($u, 'mybase', 'e')) fail('No access', 403);
+      if (!accel_claims_open()) fail('Ticking finished agents is closed - your OM opens it', 403);
+      $month = open_month();
+      if (month_status($month) !== 'OPEN') fail('Month is not open');
+      $agentId = (int)bval('agentId');
+      $aq = db()->prepare('SELECT id, name, branch, station FROM agents WHERE id = ?');
+      $aq->execute(array($agentId));
+      $ag = $aq->fetch();
+      if (!$ag) fail('No such agent', 404);
+      if (in_array(strtoupper(trim((string)$ag['station'])), perf_excluded_stations($month), true)) {
+        fail('This agent is not in a station the office works', 400);
+      }
+      $me = $u['username'];
+      /* an officer who holds branches ticks his own branch agents only */
+      if (count(bdo_branch_list($me))) {
+        $owner = branch_owner($ag['branch']);
+        if ($owner !== $me) fail('He is not in your branches - ' . ($owner !== '' ? $owner : 'the officer of his branch') . ' ticks him', 403);
+      }
+      $ax = accel_map($month, array($agentId));
+      if (!isset($ax[$agentId])) fail('This agent has no withdraw target this month', 400);
+      if ($ax[$agentId]['done']) fail('The performance file already shows him finished', 409);
+      $cq = db()->prepare('SELECT bdo, at, status FROM accel_claims WHERE month = ? AND agent_id = ?');
+      $cq->execute(array($month, $agentId));
+      $c = $cq->fetch();
+      if ($c && in_array($c['status'], array('pending', 'confirmed'), true)) {
+        fail('Already ticked by ' . $c['bdo'] . ' at ' . substr((string)$c['at'], 0, 16), 409);
+      }
+      if ($c) {
+        /* the file said he was not there yet - he can be ticked again once he is */
+        db()->prepare("UPDATE accel_claims SET bdo = ?, at = NOW(), status = 'pending', target = ?, txn = ?,
+                         checked_upload = 0, checked_at = NULL WHERE month = ? AND agent_id = ?")
+            ->execute(array($me, $ax[$agentId]['target'], $ax[$agentId]['txn'], $month, $agentId));
+      } else {
+        db()->prepare('INSERT INTO accel_claims (month, agent_id, bdo, target, txn) VALUES (?,?,?,?,?)')
+            ->execute(array($month, $agentId, $me, $ax[$agentId]['target'], $ax[$agentId]['txn']));
+      }
+      audit($u['id'], 'accel_claim', $me . ' ticked agent=' . $agentId . ' ' . $month);
+      respond(array('ok' => true));
+    }
+
+    /* Take a tick back: the officer his own while it waits for the file, the OM any. */
+    case 'accel_unclaim': {
+      $u = require_auth();
+      $isMgr = is_manager($u);
+      if (!$isMgr && !can($u, 'mybase', 'e')) fail('No access', 403);
+      $month = open_month();
+      $agentId = (int)bval('agentId');
+      $cq = db()->prepare('SELECT bdo, status FROM accel_claims WHERE month = ? AND agent_id = ?');
+      $cq->execute(array($month, $agentId));
+      $c = $cq->fetch();
+      if (!$c) fail('Nothing to remove', 404);
+      if (!$isMgr) {
+        if ($c['bdo'] !== $u['username']) fail('That tick is ' . $c['bdo'] . '\'s - only the OM can remove it', 403);
+        if ($c['status'] !== 'pending') fail('The file has already checked this one - only the OM can remove it', 403);
+      }
+      db()->prepare('DELETE FROM accel_claims WHERE month = ? AND agent_id = ?')->execute(array($month, $agentId));
+      audit($u['id'], 'accel_unclaim', $u['username'] . ' removed tick agent=' . $agentId . ' (was ' . $c['bdo'] . ')');
+      respond(array('ok' => true));
+    }
+
+    /* The OM opens or closes the ticking. */
+    case 'accel_claims_toggle': {
+      $u = require_auth();
+      if (!is_manager($u)) fail('Management access only', 403);
+      $open = (string)bval('open') === '1';
+      setting_set('accel_claims_open', $open ? '1' : '0');
+      audit($u['id'], 'accel_claims', $open ? 'ticking opened' : 'ticking closed');
+      respond(array('ok' => true, 'open' => $open));
+    }
+
+    /*
      * FOLLOW-UP: THE TWO LISTS AN OFFICER WORKS FROM MID-MONTH.
      *
      *   lost   - agents in his branches the month's base file had ACTIVE and
@@ -5227,6 +5402,7 @@ try {
 
       /* short of the Withdraw Target, fewest left first */
       $accelAll = accel_map($month, ($who !== '' && $who !== '~unallocated') ? array_keys($agents) : null);
+      $fuClaims = accel_claim_map($month, array_keys($accelAll));
       $accel = array(); $accelTotal = 0; $accelDone = 0;
       foreach ($accelAll as $id => $x) {
         if (!isset($agents[$id])) continue;
@@ -5234,6 +5410,7 @@ try {
         if ($x['done']) { $accelDone++; continue; }
         $r = $row($agents[$id]);
         $r['target'] = $x['target']; $r['txn'] = $x['txn']; $r['left'] = $x['left']; $r['source'] = $x['source'];
+        $r['claim'] = isset($fuClaims[$id]) ? $fuClaims[$id] : null;
         $accel[] = $r;
       }
       usort($accel, function ($x, $y) {
@@ -5250,7 +5427,8 @@ try {
                    'branches' => ($who !== '' && $who !== '~unallocated') ? bdo_branch_list($who) : array(),
                    'agents' => count($agents),
                    'baseLoaded' => $baseLoaded, 'perfLoaded' => (bool)$perfQ->fetch(),
-                   'lost' => $lost, 'accel' => $accel, 'accelTotal' => $accelTotal, 'accelDone' => $accelDone);
+                   'lost' => $lost, 'accel' => $accel, 'accelTotal' => $accelTotal, 'accelDone' => $accelDone,
+                   'accelClaimsOpen' => accel_claims_open());
       if ($isMgr) {
         $out['bdos'] = array();
         foreach (db()->query('SELECT DISTINCT bdo FROM bdo_branches')->fetchAll() as $r) {

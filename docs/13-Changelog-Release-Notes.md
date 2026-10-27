@@ -5,6 +5,54 @@ Versioning: semantic-ish (feature releases bump minor). Update this file with ev
 
 ---
 
+## v1.97.0 — 2026-10-27 · The transaction acceleration race (schema v36)
+
+### The OM opens it
+
+- **Where:** a new **Transaction acceleration race** panel on the OM dashboard, with an **Open
+  ticking** / **Close ticking** button.
+- **While it is open,** every BDO can tick agents. When it is closed, nobody can tick, and the board
+  still shows the month's ticks and what the file said about them.
+
+### BDOs tick agents they believe have finished
+
+- **Where:** a **Mark finished** button appears beside the acceleration chip in My Branch, All Agents
+  and Follow-up → Acceleration pending.
+- **One tap, then "Confirm?"**, the same as the KPI chips.
+- **Who can be ticked:**
+  - only an agent with a withdraw target this month whom the file does not already show as
+    finished;
+  - a BDO who holds branches can tick only his own branch agents;
+  - one tick per agent per month, and the first BDO to tick him has it.
+- **After ticking,** the chip reads "Ticked finished · name". The BDO can remove his own tick while
+  it waits for the file. The OM can remove any tick.
+
+### Everyone sees the race on the main dashboard
+
+- **Where:** on the OM and BDO dashboards, for every BDO.
+- **The big number:** how many agents were ticked as finished today.
+- **This month:** ticked, confirmed by the file, still short, waiting for the file, and achieved in
+  the file out of all agents with a target.
+- **A table of every BDO:** today, this month, confirmed, still short, waiting, and achieved in the
+  file. It has a total row, and the viewer's own row is highlighted.
+- **The agents themselves,** under **Today** or **This month**: agent, branch, BDO, time, txn and
+  target, and status.
+
+### The performance file checks every tick
+
+- **When:** each performance upload that decides the month re-reads all the month's ticks.
+  - **Confirmed:** the file shows his withdraw transactions at or above his target.
+  - **Still short:** the file shows him below target. He can be ticked again once he gets there.
+  - **Not in the file:** the file does not list him with a target.
+- **The upload result** says how many ticks were confirmed and how many are still short.
+- **Erasing an upload** puts the ticks it checked back to "waiting for the file".
+- **Ticks do not change any score.** Acceleration in the score is still read from the file only.
+
+New table `accel_claims` (schema v36), setting `accel_claims_open`, endpoints `accel_race`,
+`accel_claim`, `accel_unclaim` and `accel_claims_toggle`. APP_VERSION 1.97.0, assets bumped to v115.
+
+---
+
 ## v1.96.0 — 2026-10-23 · The new look, step 4: the forms, and the rest
 
 This is the last screen-by-screen pass. Every remaining screen was checked on a phone (375px), a

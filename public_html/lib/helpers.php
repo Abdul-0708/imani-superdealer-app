@@ -10,7 +10,7 @@ date_default_timezone_set('Africa/Dar_es_Salaam');
 /* Bumped with every release. The browser compares it against its own copy and
  * warns loudly if only SOME files were uploaded (the classic half-deploy that
  * makes buttons mysteriously stop working). */
-define('APP_VERSION', '1.96.0');
+define('APP_VERSION', '1.97.0');
 ini_set('display_errors', '0');
 
 function respond($data, $status = 200) {
@@ -876,6 +876,70 @@ function accel_map($month, $ids) {
                       'left' => max(0, $a['t'] - $a['x']), 'done' => $a['x'] >= $a['t'],
                       'source' => $a['src']);
   }
+  return $out;
+}
+
+/*
+ * THE ACCELERATION RACE (v1.97).
+ *
+ * The OM opens it; while it is open an officer can tick an agent he believes
+ * has reached his withdraw target, and the whole team watches the count on
+ * the dashboard. A tick is a claim and nothing more: the score still reads
+ * acceleration off the performance file alone, and the next file checks
+ * every tick (accel_claims_verify) so the board shows which ones held.
+ */
+function accel_claims_open() { return setting_get('accel_claims_open', '0') === '1'; }
+
+/* agent id => his tick this month, for the lists */
+function accel_claim_map($month, $ids) {
+  $out = array();
+  if (!count($ids)) return $out;
+  try {
+    $ids = array_values($ids);
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    $q = db()->prepare("SELECT agent_id, bdo, at, status, target, txn FROM accel_claims WHERE month = ? AND agent_id IN ($in)");
+    $q->execute(array_merge(array($month), $ids));
+    foreach ($q->fetchAll() as $r) {
+      $out[(int)$r['agent_id']] = array('by' => $r['bdo'], 'at' => substr((string)$r['at'], 0, 16),
+                                        'status' => (string)$r['status'], 'target' => (int)$r['target'], 'txn' => (int)$r['txn']);
+    }
+  } catch (Exception $e) { /* v36 not applied yet */ }
+  return $out;
+}
+
+/*
+ * EVERY TICK OF THE MONTH AGAINST THE FILE JUST UPLOADED.
+ *
+ * confirmed - the file gives him a target and his transactions reach it
+ * short     - the file gives him a target he has not reached yet
+ * nofile    - the file does not list him with a target at all
+ *
+ * All of the month's ticks are read again, not only the new ones: the file
+ * is month-to-date, so its word is the latest word on every agent.
+ */
+function accel_claims_verify($month, $uploadId) {
+  $out = array('confirmed' => 0, 'short' => 0, 'nofile' => 0);
+  try {
+    $file = array();
+    $fq = db()->prepare('SELECT agent_id, wd_target, wd_txn FROM service_history WHERE upload_id = ? AND wd_target > 0 ORDER BY id');
+    $fq->execute(array((int)$uploadId));
+    foreach ($fq->fetchAll() as $r) $file[(int)$r['agent_id']] = array((int)$r['wd_target'], (int)$r['wd_txn']);
+    $cq = db()->prepare('SELECT id, agent_id FROM accel_claims WHERE month = ?');
+    $cq->execute(array($month));
+    $setFile = db()->prepare('UPDATE accel_claims SET status = ?, target = ?, txn = ?, checked_upload = ?, checked_at = NOW() WHERE id = ?');
+    $setNone = db()->prepare("UPDATE accel_claims SET status = 'nofile', checked_upload = ?, checked_at = NOW() WHERE id = ?");
+    foreach ($cq->fetchAll() as $c) {
+      $aid = (int)$c['agent_id'];
+      if (isset($file[$aid])) {
+        $st = $file[$aid][1] >= $file[$aid][0] ? 'confirmed' : 'short';
+        $setFile->execute(array($st, $file[$aid][0], $file[$aid][1], (int)$uploadId, (int)$c['id']));
+      } else {
+        $st = 'nofile';
+        $setNone->execute(array((int)$uploadId, (int)$c['id']));
+      }
+      $out[$st]++;
+    }
+  } catch (Exception $e) { /* v36 not applied yet */ }
   return $out;
 }
 
